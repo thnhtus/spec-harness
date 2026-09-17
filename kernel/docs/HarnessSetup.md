@@ -44,12 +44,14 @@ Cài dependency: `npm install`. Danh sách lệnh kiểm tra hợp lệ (one-sho
 ```json
 {
   "mcpServers": {
-    "clickup": { "type": "http", "url": "https://mcp.clickup.com/mcp" },
-    "gitlab":  { "type": "http", "url": "https://<git-host>/api/v4/mcp" },
-    "figma":   { "type": "http", "url": "https://mcp.figma.com/mcp" }
+    "tracker":  { "type": "http", "url": "https://mcp.clickup.com/mcp" },
+    "git-host": { "type": "http", "url": "https://gitlab.example.com/api/v4/mcp" },
+    "design":   { "type": "http", "url": "https://mcp.figma.com/mcp" }
   }
 }
 ```
+
+> **URL phải parse được, kể cả khi đang là placeholder.** `https://<git-host>/…` làm CLI chết bằng `ERR_INVALID_URL` ngay lúc khởi động — trước cả khi bạn kịp sửa, vì `<` `>` không hợp lệ trong hostname. Dùng một hostname thật như `example.com` cho tới khi điền giá trị đúng.
 
 `.mcp.json` là **project-scoped**: commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Sau khi sửa: gõ `/mcp` trong phiên để login OAuth từng server; kiểm bằng `claude mcp list`.
 
