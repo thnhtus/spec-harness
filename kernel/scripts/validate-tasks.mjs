@@ -84,6 +84,7 @@ const REQUIRED_AT_STAGE = CFG.requiredAtStage ?? [];
 const GATE4_DONE = new Set(CFG.gate4Statuses ?? []);
 const ROUTING = CFG.routing ?? { field: "branchType", map: {} };
 const GATE4_ARTIFACTS = CFG.gate4Artifacts ?? {};
+const REPOS = CFG.repos ?? [];
 const AC_TRACE = CFG.acTrace ?? { declaredIn: null, reachedIn: [], since: "9999-12-31" };
 const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
 // Commands that count as a real verification run (project test/lint/build stack).
@@ -265,6 +266,11 @@ if (args.has("--self-check")) {
   assert.ok(STAGE_ORDER.length, "config.stages is empty");
   assert.ok(GATE4_DONE.size, "config.gate4Statuses is empty");
   assert.ok(GATE4_ARTIFACTS.evidence, "config.gate4Artifacts.evidence is required");
+  if (STAGE_ORDER.includes("adversarial_review"))
+    assert.ok(
+      GATE4_ARTIFACTS.adversarial,
+      'config.stages has "adversarial_review" but gate4Artifacts.adversarial is missing — Gate 5 would never be enforced',
+    );
   for (const r of REQUIRED_AT_STAGE)
     assert.ok(STAGE_ORDER.includes(r.stage), `requiredAtStage stage "${r.stage}" not in config.stages`);
   assert.ok(STAGE_ORDER.includes("implementation"), 'config.stages must contain "implementation"');
@@ -275,6 +281,24 @@ if (args.has("--self-check")) {
     "config.evidenceCommandPattern missing — no command would ever count as evidence",
   );
   assert.ok(CFG.tracker?.urlPattern, "config.tracker.urlPattern is required (task URL shape)");
+  assert.ok(
+    CFG.layers?.length,
+    'config.layers is required (e.g. ["frontend"]) — without it any layer value passes',
+  );
+  // repos: where the CODE lives, relative to the config root. One entry with
+  // path "." means harness and code share a repo; several entries mean the
+  // harness sits above them (workspace layout) and task docs are NOT inside
+  // the repo being edited — which changes how worktrees work (Agents.md §0).
+  assert.ok(CFG.repos?.length, 'config.repos is required (at least one { name, path, layer })');
+  for (const r of CFG.repos) {
+    assert.ok(r.name && r.path && r.layer, `config.repos entry needs name+path+layer: ${JSON.stringify(r)}`);
+    assert.ok(CFG.layers.includes(r.layer), `config.repos "${r.name}": layer "${r.layer}" not in config.layers`);
+  }
+  assert.equal(
+    new Set(CFG.repos.map((r) => r.name)).size,
+    CFG.repos.length,
+    "config.repos names must be unique (task.agent.json repoName points at one)",
+  );
   // docsPath regex is built from tasksDir + groupPrefix: a mismatch here would
   // reject every correctly-placed task folder, so check it against a real path.
   const sampleDocsPath = `${CFG.tasksDir ?? "docs/tasks"}/${GROUP_PREFIX}3/ABC-1-slug`;
@@ -315,6 +339,11 @@ const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
 const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 if (CFG.tracker?.urlPattern && schema.properties?.clickupUrl)
   schema.properties.clickupUrl.pattern = CFG.tracker.urlPattern;
+// layer: the kernel ships no fixed value — a FE-only project declares ["frontend"],
+// a BE or monorepo project declares its own. Without this the schema would reject
+// every non-frontend task.
+if (CFG.layers?.length && schema.properties?.layer)
+  schema.properties.layer.enum = CFG.layers;
 if (schema.properties?.docsPath)
   schema.properties.docsPath.pattern = `^${esc(CFG.tasksDir ?? "docs/tasks")}/${esc(GROUP_PREFIX)}.+/.+/?$`;
 const folders = findTaskFolders();
@@ -349,6 +378,12 @@ for (const { sprint, task, path } of folders) {
   const sprintNum = Number(sprint.replace(GROUP_PREFIX, ""));
   if (data[GROUP_FIELD] !== sprintNum)
     errors.push(`${GROUP_FIELD}=${data[GROUP_FIELD]} but folder is ${sprint}`);
+  // repoName must name a declared repo: in a workspace layout the agent has to
+  // know which repo to edit, and a typo here silently points it at nothing.
+  if (REPOS.length && data.repoName && !REPOS.some((r) => r.name === data.repoName))
+    errors.push(
+      `repoName="${data.repoName}" not in config.repos [${REPOS.map((r) => r.name).join(", ")}]`,
+    );
   if (data.taskId && !task.startsWith(data.taskId))
     errors.push(`taskId="${data.taskId}" does not match folder "${task}"`);
   if (data.docsPath && !data.docsPath.includes(`${sprint}/${task}`))
@@ -406,6 +441,10 @@ for (const { sprint, task, path } of folders) {
       errors.push(`${evName} has no real command+result evidence (Gate 4 honesty)`);
     if (GATE4_ARTIFACTS.notes && !existsSync(join(path, GATE4_ARTIFACTS.notes)))
       warnings.push(`status=${data.status} but ${GATE4_ARTIFACTS.notes} missing`);
+    // Gate 5: reviewing means the adversary passed it, so its review must exist.
+    // Without this, an implementer can jump straight to reviewing and skip the gate.
+    if (GATE4_ARTIFACTS.adversarial && !existsSync(join(path, GATE4_ARTIFACTS.adversarial)))
+      errors.push(`status=${data.status} but ${GATE4_ARTIFACTS.adversarial} missing (Gate 5 skipped)`);
 
     // 8. AC traceability: declaredIn → every doc in reachedIn
     const acs = AC_TRACE.declaredIn ? declaredACs(join(path, AC_TRACE.declaredIn)) : [];
