@@ -1,5 +1,4 @@
 {
-  "$schema": "./kernel/harness.config.schema.json",
   "tasksDir": "kernel/docs/tasks",
   "groupPrefix": "sprint-",
   "groupField": "sprintNumber",
