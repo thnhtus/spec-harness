@@ -1,0 +1,16 @@
+# spec-harness gate ở CI — chỗ `git commit --no-verify` không với tới được.
+# Cài: cp adapters/ci/validate-tasks.yml .github/workflows/
+name: spec-harness
+
+on: [push, pull_request]
+
+jobs:
+  validate-tasks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      # --self-check trước: config tự mâu thuẫn thì mọi check sau im lặng no-op.
+      - run: node scripts/validate-tasks.mjs --self-check
+      - run: node scripts/validate-tasks.mjs
