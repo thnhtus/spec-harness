@@ -41,7 +41,10 @@
       "type": "string",
       "enum": ["feature", "hotfix", "bugfix"]
     },
-    "layer": { "type": "string", "const": "frontend" },
+    "layer": {
+      "type": "string",
+      "$comment": "Allowed values injected from harness.config.json → layers. A FE-only project declares [\"frontend\"]; a monorepo or BE project declares its own."
+    },
     "taskComplexity": {
       "type": "string",
       "enum": ["trivial", "normal", "high"]
@@ -54,6 +57,7 @@
         "fsd_review",
         "technical_plan",
         "implementation",
+        "adversarial_review",
         "reviewing"
       ]
     },
@@ -118,7 +122,8 @@
         "fsd-reviewer",
         "technical-planner",
         "fe-implementer",
-        "fe-fix"
+        "fe-fix",
+        "adversary"
       ]
     },
     "createdAt": { "type": "string", "minLength": 1 },

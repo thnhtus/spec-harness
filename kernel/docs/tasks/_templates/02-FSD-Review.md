@@ -1,6 +1,6 @@
 # 02 — FSD Review: {taskName}
 
-> Sinh bởi `fsd-reviewer` (stage `fsd_review`, **Gate 2**). Đọc `01-FSD.md` (do `fsd-writer` soạn) + ClickUp + Figma qua MCP; trích ID `FR-`/`NFR-`/`FSD-` từ `srs/` + `fsd/`. Append-only, tiếng Việt. Trường MCP thiếu → ghi "unavailable", không bịa.
+> Sinh bởi `fsd-reviewer` (stage `fsd_review`, **Gate 2**). Đọc `01-FSD.md` (do `fsd-writer` soạn) + tracker + thiết kế qua MCP; trích ID `FR-`/`NFR-`/`FSD-` từ `srs/` + `fsd/`. Append-only, tiếng Việt. Trường MCP thiếu → ghi "unavailable", không bịa.
 
 ## Tiêu chí nghiệm thu (AC)
 

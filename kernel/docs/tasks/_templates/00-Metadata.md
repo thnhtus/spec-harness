@@ -6,8 +6,8 @@
 
 | Field | Giá trị |
 | --- | --- |
-| ClickUp ID | `{taskId}` |
-| ClickUp URL | {clickupUrl} |
+| Task ID | `{taskId}` |
+| Task URL | {clickupUrl} |
 | Tên task | {taskName} |
 | Sprint | {sprintNumber} |
 | Repo | <repo> |
@@ -30,6 +30,6 @@
 ## Pre-flight (orchestrator)
 
 - [ ] MCP sẵn sàng — đủ server khai ở ProjectRules §1 (`claude mcp list`)
-- [ ] Đúng repo đích (ProjectRules §3), nhánh hiện tại không phải protected
+- [ ] `cwd` đúng repo của `repoName` (config `repos`), nhánh hiện tại không phải protected
 - [ ] git user đã cấu hình
 - [ ] Suy ra đủ metadata (taskId, sprint, branchType)

@@ -1,10 +1,10 @@
 # {role} — handoff
 
-> Khuôn mẫu handoff giữa các stage. Copy thành `.agent-memory/{role}.md` cho từng role tham gia (vd `orchestrator.md`, `fsd-writer.md`, `fsd-reviewer.md`, `technical-planner.md`, `fe-implementer.md`, `fe-fix.md`). Append-only, tiếng Việt.
+> Khuôn mẫu handoff giữa các stage. Copy thành `.agent-memory/{role}.md` cho từng role tham gia (vd `orchestrator.md`, `fsd-writer.md`, `fsd-reviewer.md`, `technical-planner.md`, `fe-implementer.md`, `fe-fix.md`, `adversary.md`). Append-only, tiếng Việt.
 
 ## Next Handoff → {next-role}
 
-- **Inputs**: tài liệu / dữ liệu đã đọc (doc nào, ClickUp/Figma field nào).
+- **Inputs**: tài liệu / dữ liệu đã đọc (doc nào, field nào của tracker/thiết kế).
 - **Decisions**: quyết định đã chốt (ID `D-…` nếu có).
 - **Risks**: risk / giả định còn mở (ID `R-…`).
 - **Changed Files**: file đã chạm (nếu là stage implementation).

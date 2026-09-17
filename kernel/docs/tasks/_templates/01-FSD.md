@@ -1,6 +1,6 @@
 # 01 — FSD (IEEE): {taskName}
 
-> Sinh bởi `fsd-writer` (stage `fsd_write`, **Gate 1**). Soạn theo chuẩn IEEE bằng cách tái dùng skill `document-to-ieee-srs`; nguồn là mô tả task ClickUp + Figma (qua MCP), trỏ ngược ID `FR-`/`NFR-`/`FSD-` từ `srs/` + `fsd/`. Append-only, tiếng Việt. Trường MCP thiếu → ghi "unavailable", không bịa.
+> Sinh bởi `fsd-writer` (stage `fsd_write`, **Gate 1**). Soạn theo chuẩn IEEE bằng cách tái dùng skill `document-to-ieee-srs`; nguồn là mô tả task từ tracker + thiết kế (qua MCP), trỏ ngược ID `FR-`/`NFR-`/`FSD-` từ `srs/` + `fsd/`. Append-only, tiếng Việt. Trường MCP thiếu → ghi "unavailable", không bịa.
 
 ## 1. Introduction
 
@@ -15,7 +15,7 @@
 
 ## 3. External Interface Requirements
 
-- **3.1 User Interfaces:** màn hình / flow (Figma: `<frame>` | unavailable)
+- **3.1 User Interfaces:** màn hình / flow (thiết kế: `<frame>` | unavailable)
 - **3.2 Software Interfaces:** endpoint FE phụ thuộc → `../../../api/<resource>.md` | unavailable
 
 ## 4. Functional Requirements
@@ -24,7 +24,7 @@
 
 | FSD ID | Requirement (The system shall …) | Source | Status |
 | --- | --- | --- | --- |
-| FSD-<MOD>-001 |  | `FR-…` / `Figma: <frame>` / `ClickUp: <mục>` | confirmed / assumed |
+| FSD-<MOD>-001 |  | `FR-…` / `thiết kế: <frame>` / `tracker: <mục>` | confirmed / assumed |
 
 ## 5. Non-functional Requirements
 

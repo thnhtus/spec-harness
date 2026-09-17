@@ -20,7 +20,8 @@
     "fsd-reviewer": { "status": "pending" },
     "technical-planner": { "status": "pending" },
     "fe-implementer": { "status": "pending" },
-    "fe-fix": { "status": "pending" }
+    "fe-fix": { "status": "pending" },
+    "adversary": { "status": "pending" }
   },
   "createdAt": "",
   "updatedAt": ""

@@ -10,7 +10,7 @@
 
 ## Contract API phụ thuộc (góc nhìn client)
 
-> Repo FE đơn — đây là contract FE **tiêu thụ**, không phải hiện thực server. Nguồn: `docs/api/*.md`.
+> Contract mà repo này **tiêu thụ**, không phải hiện thực server. Nguồn theo thang bậc TechnicalPlanner §3.2: `docs/api/` → source BE trong `repos` (read-only) → Swagger → `unavailable`.
 
 | Endpoint | Method | Request | Response | Status Codes | Source (`docs/api/`) |
 | --- | --- | --- | --- | --- | --- |

@@ -20,6 +20,7 @@ docs/tasks/
         ├── 03-Technical-Plan.md           # technical-planner — Gate 3 (≤ 200 dòng)
         ├── 06-FE-Implementation-Notes.md  # fe-implementer | fe-fix — Gate 4
         ├── 08-Test-Evidence.md            # evidence thật (lệnh ProjectRules §7 + kết quả)
+        ├── 09-Adversarial-Review.md       # adversary — Gate 5 (tự chạy lại, không tin 08)
         ├── 01a-…/02a-…-Appendix.md        # (tuỳ chọn) phần tràn trần — stage sau KHÔNG tự đọc
         └── .agent-memory/{role}.md        # handoff (≤ 30 dòng/block)
 ```
@@ -36,6 +37,7 @@ Trần kích thước là điều kiện gate — định nghĩa tại [`../agen
 | `02-FSD-Review.md` | fsd-reviewer | Gate 2 |
 | `03-Technical-Plan.md` | technical-planner | Gate 3 |
 | `06-…` + `08-…` | fe-implementer \| fe-fix | Gate 4 |
+| `09-Adversarial-Review.md` | adversary | Gate 5 |
 | `.agent-memory/{role}.md` | từng role | — |
 
 ## 3. Cách dùng template
