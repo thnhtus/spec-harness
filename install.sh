@@ -118,6 +118,14 @@ if [ "${1:-}" = "--self-test" ]; then
     || { echo "✖ self-test: template mất mục §7 (kernel trỏ chéo bằng số)"; exit 1; }
   python3 -c "import json,sys;json.load(open('$T/.mcp.json'))" \
     || { echo "✖ self-test: .mcp.json không phải JSON hợp lệ"; exit 1; }
+  # Một URL không parse được làm CLI chết bằng ERR_INVALID_URL ngay lúc khởi
+  # động — trước cả khi user kịp sửa. Placeholder phải là hostname hợp lệ.
+  node -e '
+    const m = require(process.argv[1]).mcpServers || {};
+    for (const [k, v] of Object.entries(m)) {
+      try { new URL(v.url); } catch { console.error(`  ${k}: ${v.url}`); process.exit(1); }
+    }' "$T/.mcp.json" \
+    || { echo "✖ self-test: .mcp.json có URL không parse được (ERR_INVALID_URL khi CLI khởi động)"; exit 1; }
   [ -e "$T/.git/hooks/pre-commit" ]          || { echo "✖ self-test: repo trống mà không cắm được hook"; exit 1; }
   # cài lại lần 2: adapter phải được giữ
   echo 'MARKER' >> "$T"/docs/agents/ProjectRules.md
