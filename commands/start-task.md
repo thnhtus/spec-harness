@@ -39,103 +39,77 @@ session chạy `git stash push -u` để lấy baseline test, quét luôn task f
 (còn untracked) của session kia → planner phải chạy lại. Worktree loại bỏ hẳn
 lớp lỗi đó.
 
-1. Lấy `taskId` + `taskName` từ ClickUp (`mcp__clickup__getTaskById`, chỉ đọc
-   summary) rồi suy ra `slug` = kebab-case không dấu của `taskName` — **cùng
-   `slug`** mà orchestrator dùng cho `docsPath`/`branch`
-   ([`docs/agents/SharedRules.md` §3](../../docs/agents/SharedRules.md)), để tên
-   worktree, thư mục task doc và nhánh đọc khớp nhau.
-2. Gọi `EnterWorktree` với `name: task-{taskId}-{slug}` → worktree nằm tại
-   `.claude/worktrees/task-{taskId}-{slug}/` (thư mục `.claude/worktrees/` do
-   tool cố định, không cấu hình được).
+**Trước hết: xác định bố cục** (`harness.config.json → repos`, chi tiết
+[`docs/Agents.md` §0](../../docs/Agents.md)). Worktree luôn tạo **trong repo
+sẽ bị sửa**, không phải trong repo chứa config:
 
-   Ví dụ: `86d3ukd1v` + "Filter trạng thái biểu mẫu" →
-   `task-86d3ukd1v-filter-trang-thai-bieu-mau`.
+| `repos` | Repo sẽ sửa | Task docs |
+| --- | --- | --- |
+| một entry `path: "."` | chính repo này | đi theo worktree |
+| nhiều entry, có `path: "."` | entry khớp `repoName` | đi theo worktree nếu đó là `"."`, ngược lại ở lại repo harness |
+| không entry nào `path: "."` (harness đứng riêng) | entry khớp `repoName` | **ở lại repo harness**, không vào worktree |
 
-   `slug` quá dài thì cắt bớt để cả tên ≤ 64 ký tự (giới hạn của
-   `EnterWorktree`); `taskId` luôn giữ nguyên vì nó là phần tra ngược.
-3. **Sửa nhánh ngay sau khi vào worktree — bắt buộc.** `EnterWorktree` chỉ
-   nhận `name` (tên thư mục); nó tự đặt tên nhánh `worktree-{name}` và
-   `worktree.baseRef: fresh` cho nhánh mọc từ `origin/HEAD` — mà `origin/HEAD`
-   ở repo này trỏ `origin/main`, **không** phải `develop`. Cả hai đều lệch
-   [`SharedRules §3`](../../docs/agents/SharedRules.md). Chạy ngay:
+Nhiều repo mà user không nói rõ sửa repo nào → **hỏi, đừng đoán**. Đó là
+`repoName` của task và không sửa lại được sau bootstrap.
+
+1. Lấy `taskId` + `taskName` từ tracker (tool đọc task của server tracker khai
+   ở ProjectRules §1 — tự tìm, đừng hardcode tên; chỉ đọc summary) rồi suy ra
+   `slug` = kebab-case không dấu của `taskName` — **cùng `slug`** mà
+   orchestrator dùng cho `docsPath`/`branch`, để tên worktree, thư mục task doc
+   và nhánh đọc khớp nhau.
+
+2. Vào repo sẽ sửa rồi tạo worktree tên `task-{taskId}-{slug}`.
+
+   - Repo đó **là** repo hiện tại → `EnterWorktree` với `name: task-{taskId}-{slug}`.
+   - Repo đó **khác** (bố cục C) → `EnterWorktree` với `path:` trỏ worktree của
+     repo kia, hoặc `git -C <repo-path> worktree add` rồi làm việc tại đó.
+
+   `slug` quá dài thì cắt để cả tên ≤ 64 ký tự; `taskId` luôn giữ nguyên vì nó
+   là phần tra ngược.
+
+3. **Sửa nhánh ngay sau khi vào worktree — bắt buộc.** `EnterWorktree` tự đặt
+   tên nhánh `worktree-{name}` mọc từ `origin/HEAD`, mà `origin/HEAD` thường
+   trỏ `origin/main`. Cả tên lẫn gốc đều có thể lệch ProjectRules §3. Chạy ngay:
 
    ```bash
-   git status --porcelain          # phải rỗng — worktree vừa tạo, chưa có gì
+   git status --porcelain          # phải rỗng — worktree vừa tạo
    git fetch origin
-   git switch -C tubt/t/{taskId}-{slug} origin/develop
+   git switch -C <công-thức-nhánh ProjectRules §3> origin/<nhánh-đích>
    git branch -D worktree-task-{taskId}-{slug}
    ```
 
-   `switch -C` an toàn ở đây và **chỉ** ở đây: worktree vừa sinh ra, tree rỗng
-   nên không có gì để mất. Nếu `git status --porcelain` có output thì **dừng**,
-   hỏi user — đừng chuyển nhánh đè lên thay đổi của họ.
+   `switch -C` an toàn ở đây và **chỉ** ở đây: worktree vừa sinh, tree rỗng nên
+   không có gì để mất. `git status --porcelain` có output → **dừng, hỏi user**.
 
-   Kiểm lại: `git branch --show-current` = `tubt/t/{taskId}-{slug}` và
-   `git log --oneline -1` = tip của `origin/develop`.
-4. Trong worktree mới, chép `node_modules` (thứ duy nhất không có trong git mà
-   agent chép được):
+4. **Dựng thứ không nằm trong git mà worktree cần** (dependency đã cài, file
+   env). Cách làm phụ thuộc stack — ProjectRules §7. Hai luật chung:
 
-   ```bash
-   cp -c -R <đường-dẫn-repo-gốc>/node_modules node_modules   # APFS copy-on-write: ~6s, ~0 disk thật
-   ```
+   - **Đừng symlink thư mục dependency** nếu toolchain ghi state build tăng
+     tiến vào trong đó (vd `tsBuildInfoFile`, cache biên dịch): hai worktree
+     dùng chung state → lỗi ảo. Clone copy-on-write (`cp -c` trên APFS,
+     `cp --reflink=auto` trên Linux) rẻ tương đương mà không chia sẻ file.
+   - **File env**: symlink được vì nó tĩnh và đã nằm trong `.gitignore`.
+     **Cảnh báo bảo mật:** symlink làm nội dung env tới được mọi tiến trình
+     agent khởi động. Đừng để secret không được phép lộ trong file đó.
 
-   **Không symlink `node_modules`** — `tsconfig.app.json` ghi `tsBuildInfoFile`
-   vào `./node_modules/.tmp/`; symlink làm hai worktree dùng chung state
-   incremental của `tsc -b` → lỗi type ảo. `cp -c` là clone CoW, rẻ như symlink
-   mà không chia sẻ file.
+   Gate tĩnh (type-check, lint, unit scope) thường **không** cần env — chỉ e2e
+   chạm API thật mới cần.
 
-   `.env` thì **symlink**, không `cp` — `cp` phải *đọc* file nên bị
-   `permissions.deny` + `sandbox.filesystem.denyRead` (`.claude/settings.json`)
-   từ chối, còn `ln -s` chỉ *tạo* link nên chạy được:
+5. Xong task (`status = reviewing`) → `ExitWorktree` với `action: "keep"`, báo
+   user đường dẫn worktree. Bố cục C: nhắc rõ **task doc ở repo harness, code ở
+   worktree** — hai lần commit, hai repo khác nhau.
 
-   ```bash
-   ln -sfn <đường-dẫn-repo-gốc>/.env .env   # KHÔNG dùng cp — cp bị deny
-   ```
-
-   Lệnh này cần rule `Bash(ln -sfn */.env .env)` trong `permissions.allow`
-   (đã có ở `~/.claude/settings.json`). Symlink an toàn ở đây (khác
-   `node_modules` bên trên): `.env` là file tĩnh chỉ-đọc, không có state
-   incremental nào để hai worktree giẫm lên nhau; `.env` cũng đã nằm trong
-   `.gitignore` nên symlink không bao giờ bị commit.
-
-   Có symlink thì `npx vite` trong worktree tự nạp `VITE_API` — không cần
-   truyền tay nữa (đã kiểm chứng 2026-08-28).
-
-   **Chạy e2e API thật:** vite chỉ nạp `.env` cho code trình duyệt, tiến trình
-   vitest thì không — mà `helpers/auth.ts` đọc `VITE_E2E_CREDENTIAL_USERNAME`/
-   `_PASSWORD` từ `process.env`. Nạp vào shell trước khi chạy (`--env-file`
-   **không** dùng được trong `NODE_OPTIONS`, node từ chối):
-
-   ```bash
-   set -a; . ./.env; set +a
-   E2E_BASE_URL=http://localhost:<port> npm run test:e2e:run -- <file>
-   ```
-
-   **Cảnh báo bảo mật — đọc kỹ.** Symlink làm nội dung `.env` (kể cả
-   `GITLAB_TOKEN`, credentials) tới được **mọi tiến trình agent khởi động**:
-   vite, vitest, script node. Đó chính là thứ làm e2e chạy được, không phải
-   tác dụng phụ. Ngoài ra nếu `permissions.allow` có `Read(./.env)` thì agent
-   đọc thẳng được nội dung — user allow thắng project deny; xoá dòng `Read`
-   đó nếu chỉ muốn symlink (bỏ `Read` **không** làm hỏng symlink). Đừng để
-   secret không được phép lộ với tiến trình test trong `.env`.
-
-   Vẫn không bắt buộc cho gate: `tsc -b`, `npm run lint`, `npm run test:scope`
-   không cần `.env`.
-5. Xong task (`status = reviewing`) → `ExitWorktree` với `action: "keep"`, rồi
-   báo user đường dẫn worktree để họ tự commit/push/MR ở đó.
-
-   Xoá worktree bỏ đi thì `ExitWorktree` cảnh báo kiểu "Removing will discard
-   N commits" với N rất lớn (vd 1111) — đó là khoảng cách so với `origin/main`,
-   **không** phải công việc của bạn. Kiểm `git status --porcelain` rỗng và
-   `git log --oneline -1` = tip `origin/develop` là biết an toàn; xoá xong nhớ
-   `git branch -D tubt/t/{taskId}-{slug}` vì nhánh vẫn còn lại.
+   `ExitWorktree` có thể cảnh báo "Removing will discard N commits" với N rất
+   lớn — đó là khoảng cách so với `origin/HEAD`, không phải công việc của bạn.
+   `git status --porcelain` rỗng và `git log --oneline -1` = tip nhánh đích là
+   an toàn.
 
 Bỏ qua step 0 chỉ khi user nói rõ "làm ngay trên tree hiện tại".
 
-> **Test vẫn xếp hàng giữa các worktree** — `scripts/test-locked.mjs` lock theo
-> máy (`tmpdir()`), cố ý: OOM là giới hạn RAM máy, không phải RAM/worktree.
-> Worktree cách ly *file*, không cách ly CPU/RAM. Đây là hành vi đúng, không
-> phải bug — đừng "sửa" bằng cách bỏ lock.
+> **Lock test dùng chung máy, không dùng chung worktree.** Project nào chặn
+> chạy song song bằng lock toàn máy (chống OOM) thì worktree **không** gỡ được
+> lock đó — worktree cách ly *file*, không cách ly CPU/RAM. Đấy là hành vi
+> đúng, đừng "sửa" bằng cách bỏ lock.
 
 ## Stage dispatch table
 
@@ -157,9 +131,13 @@ Dispatch with the Agent tool, `subagent_type` = the role name (registered in
 | 3 | fsd_review → Gate 2 | `fsd-reviewer` | `docs/agents/FSDReviewer.md` | `docsPath` |
 | 4 | technical_plan → Gate 3 | `technical-planner` | `docs/agents/TechnicalPlanner.md` | `docsPath` |
 | 5 | implementation → Gate 4 | `fe-implementer` (branchType feature/hotfix) or `fe-fix` (bugfix) | `docs/agents/FEImplementer.md` / `docs/agents/FEFix.md` | `docsPath`; remind: only files in the Gate-3 list; one-shot commands only |
-| 6 | reviewing | — (you) | — | see below |
+| 6 | adversarial_review → Gate 5 | `adversary` | `docs/agents/Adversary.md` | `docsPath`; remind: mặc định FAIL, **tự chạy lại** lệnh ProjectRules §7 chứ không tin `08`, không sửa `src/` |
+| 7 | reviewing | — (you) | — | see below |
 
-Step 6 (you, no subagent): confirm `task.agent.json` has `status = reviewing`,
+Gate 5 FAIL → re-dispatch implementer (step 5) **một lần** với finding từ `09`;
+vẫn FAIL lần hai → dừng, báo user (Gate-fail handling). Không lặp vô hạn.
+
+Step 7 (you, no subagent): confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
 errors (it enforces the AC traceability chain, SharedRules §9), then post the
 final summary: what changed (from the implementer's handoff), test evidence
@@ -200,9 +178,8 @@ When any gate fails (`status = blocked` or `needs_clarification`,
   to re-login via `/mcp`.
 - Never modify `docs/srs/`, `docs/fsd/`, `docs/api/` content, the
   `docs/tasks/_templates/` originals, or `.claude/settings*.json`.
-- Watch-mode commands (`npm run dev`, `npm run test`, `npm run test:ui`,
-  `npm run test:e2e`, `npm run preview`) are never run by you or any
-  subagent.
+- Watch-mode commands (dev server, test watch, preview — liệt kê ở
+  ProjectRules §7) are never run by you or any subagent.
 - No working-tree-destroying git command, ever — no `git stash` (incl.
   `push -u`), `git checkout -- …`, `git restore`, `git reset --hard`,
   `git clean`. That is the exact command that lost a stage. Need a clean tree
@@ -210,27 +187,28 @@ When any gate fails (`status = blocked` or `needs_clarification`,
 
 ## Step 7 — dọn worktree đã merge (sau khi báo user, trước khi dừng)
 
-`ExitWorktree action:"keep"` không dọn gì, nên worktree tích lại: đo ngày
-2026-08-31 được **108 worktree / 65 GB**, trong đó **79 branch đã merge vào
-`origin/develop`** (việc xong, giữ vô nghĩa). Mỗi worktree mới `cp -c`
-`node_modules` trên nền đó → càng lúc càng chậm.
+`ExitWorktree action:"keep"` không dọn gì, nên worktree tích lại — một máy đã
+từng tích **108 worktree / 65 GB**, trong đó 79 nhánh đã merge (việc xong, giữ
+vô nghĩa). Mỗi worktree mới clone lại dependency trên nền đó → càng lúc càng chậm.
 
-Chạy dry-run rồi báo user con số, **không tự xoá**:
+Chạy dry-run rồi báo user con số, **không tự xoá**. Với mỗi repo trong
+`harness.config.json → repos`:
 
 ```bash
-git fetch origin -q
-for w in $(git worktree list --porcelain | awk '/^worktree /{print $2}' | grep '/.claude/worktrees/'); do
+TARGET=origin/<nhánh-đích ProjectRules §3>
+git -C <repo-path> fetch origin -q
+for w in $(git -C <repo-path> worktree list --porcelain | awk '/^worktree /{print $2}'); do
   b=$(git -C "$w" branch --show-current 2>/dev/null) || continue
   [ -z "$b" ] && continue
-  # đã merge develop + tree sạch = an toàn để xoá
-  git merge-base --is-ancestor "$b" origin/develop 2>/dev/null \
+  # đã merge nhánh đích + tree sạch = an toàn để xoá
+  git -C <repo-path> merge-base --is-ancestor "$b" "$TARGET" 2>/dev/null \
     && [ -z "$(git -C "$w" status --porcelain)" ] \
     && echo "$w  [$b]"
 done
 ```
 
-Danh sách in ra là **ứng viên** — chỉ những worktree mà commit đã nằm trong
-`origin/develop` *và* tree sạch. User tự quyết xoá:
+Danh sách in ra là **ứng viên** — commit đã nằm trong nhánh đích *và* tree sạch.
+User tự quyết xoá:
 
 ```bash
 git worktree remove <path> && git branch -d <branch>   # -d, KHÔNG -D: -d từ chối nếu chưa merge
