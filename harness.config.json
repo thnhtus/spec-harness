@@ -97,8 +97,8 @@
   "acTrace": {
     "declaredIn": "02-FSD-Review.md",
     "reachedIn": [
-      "03-Technical-Plan.md",
-      "08-Test-Evidence.md"
+      { "doc": "03-Technical-Plan.md", "fromStage": "implementation" },
+      { "doc": "08-Test-Evidence.md", "fromStage": "adversarial_review" }
     ],
     "since": "2026-07-28"
   },
