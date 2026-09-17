@@ -25,7 +25,7 @@
 
 ## API Integration Notes
 
-Endpoint FE chạm tới + file `src/api/*.api.ts` / `src/queries/*.queries.ts`. Nếu đổi contract FE↔API → làm tươi `docs/api/` bằng skill `api-docs-sync` (chỉ rewrite vùng AUTOGEN) và tóm tắt contract FE phụ thuộc ngay tại mục này.
+Endpoint FE chạm tới + file `src/api/*.api.ts` / `src/queries/*.queries.ts`. Nếu đổi contract FE↔API → làm tươi `docs/api/` theo cách project quy định (ProjectRules §1) và tóm tắt contract FE phụ thuộc ngay tại mục này.
 
 ## Routing / State / UI Notes
 
