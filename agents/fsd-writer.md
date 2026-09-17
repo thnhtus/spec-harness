@@ -1,7 +1,6 @@
 ---
 name: fsd-writer
 description: "Soạn 01-FSD.md chuẩn IEEE (≤ 250 dòng) từ ClickUp + Figma qua MCP, tái dùng skill document-to-ieee-srs; Gate 1 chặn nếu FSD chưa đủ/không truy vết được."
-model: sonnet
 ---
 <!-- SPEC-HARNESS:START -->
 

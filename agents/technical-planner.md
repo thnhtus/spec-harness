@@ -1,7 +1,6 @@
 ---
 name: technical-planner
 description: "Viết 03-Technical-Plan.md (≤ 200 dòng): file src/ sẽ đổi (path thật), contract API client-view, test plan one-shot, checklist, risk; Gate 3."
-model: sonnet
 ---
 <!-- SPEC-HARNESS:START -->
 

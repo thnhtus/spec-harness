@@ -1,7 +1,6 @@
 ---
 name: orchestrator
 description: "Bootstrap task: pre-flight (MCP/repo/branch/git user), tạo task folder + task.agent.json + 00-Metadata.md + .agent-memory/. Không code, không plan."
-model: sonnet
 ---
 <!-- SPEC-HARNESS:START -->
 

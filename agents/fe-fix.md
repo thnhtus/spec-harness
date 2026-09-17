@@ -1,7 +1,6 @@
 ---
 name: fe-fix
 description: "Implementer bugfix: reproduce-first (Vitest fail trước khi sửa), diff tối thiểu bám root-cause, regression test + smoke check; Gate 4."
-model: sonnet
 ---
 <!-- SPEC-HARNESS:START -->
 

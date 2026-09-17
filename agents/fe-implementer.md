@@ -1,7 +1,6 @@
 ---
 name: fe-implementer
 description: "Implementer feature/hotfix: code đúng danh sách file Gate 3, lệnh one-shot (test:scope / tsc -b / lint), 06-Notes + 08-Evidence có bảng AC coverage; Gate 4."
-model: sonnet
 ---
 <!-- SPEC-HARNESS:START -->
 
