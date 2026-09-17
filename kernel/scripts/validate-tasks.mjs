@@ -173,6 +173,23 @@ function oversizedHandoffBlocks(memDir) {
   return offenders;
 }
 
+// Complexity is DERIVED, never asserted: the agent fills the vector, this formula
+// decides the label (Agents.md §5.1.1). Risk floors matter because a one-file fix
+// in auth middleware is not "trivial" however small the diff is.
+const RANK = ["trivial", "normal", "high"];
+const EFFORT_KEYS = ["scope", "uncertainty", "dependency", "dataImpact", "integration", "testing"];
+
+function deriveComplexity(vector) {
+  const effort = EFFORT_KEYS.reduce((n, k) => n + (vector[k] ?? 0), 0);
+  const base = effort <= 2 ? "trivial" : effort <= 6 ? "normal" : "high";
+  const { blastRadius = 0, reversibility = 0 } = vector;
+  const riskFloor =
+    blastRadius >= 3 || reversibility >= 3 ? "high"
+    : blastRadius >= 2 || reversibility >= 2 ? "normal"
+    : "trivial";
+  return { effort, label: RANK[Math.max(RANK.indexOf(base), RANK.indexOf(riskFloor))] };
+}
+
 // --- pure text predicates (self-checked below via --self-check) -------------
 
 // "Real evidence": a command was run AND a pass/exit signal recorded.
@@ -289,6 +306,13 @@ if (args.has("--self-check")) {
   // path "." means harness and code share a repo; several entries mean the
   // harness sits above them (workspace layout) and task docs are NOT inside
   // the repo being edited — which changes how worktrees work (Agents.md §0).
+  // models: tier -> whatever the host CLI calls it. The kernel never names a
+  // vendor model; a Codex/Gemini user maps the same three tiers to their own.
+  // Empty object is legal: it means "let the harness use its default".
+  for (const tier of ["cheap", "mid", "strong"])
+    if (CFG.models && Object.keys(CFG.models).length)
+      assert.ok(CFG.models[tier], `config.models.${tier} is required once config.models is set`);
+
   assert.ok(CFG.repos?.length, 'config.repos is required (at least one { name, path, layer })');
   for (const r of CFG.repos) {
     assert.ok(r.name && r.path && r.layer, `config.repos entry needs name+path+layer: ${JSON.stringify(r)}`);
@@ -307,6 +331,17 @@ if (args.has("--self-check")) {
     new RegExp(`^${esc0(CFG.tasksDir ?? "docs/tasks")}/${esc0(GROUP_PREFIX)}.+/.+/?$`).test(sampleDocsPath),
     `docsPath pattern would reject a valid folder like "${sampleDocsPath}"`,
   );
+
+  // deriveComplexity: effort thresholds + risk floors. These are the cases the
+  // formula exists for — a small diff in a blast-radius-3 area is not trivial.
+  const v = (o) => ({ scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0, ...o });
+  assert.equal(deriveComplexity(v({})).label, "trivial", "all zero → trivial");
+  assert.equal(deriveComplexity(v({ scope: 2, testing: 1 })).label, "normal", "effort 3 → normal");
+  assert.equal(deriveComplexity(v({ scope: 2, dependency: 2, testing: 2, integration: 1 })).label, "high", "effort 7 → high");
+  assert.equal(deriveComplexity(v({ scope: 1, blastRadius: 3 })).label, "high", "tiny diff, system-wide blast → high");
+  assert.equal(deriveComplexity(v({ reversibility: 4 })).label, "high", "irreversible → high even at effort 0");
+  assert.equal(deriveComplexity(v({ scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 2, testing: 2 })).effort, 12, "effort maxes at 12");
+  assert.equal(deriveComplexity(v({ blastRadius: 2 })).label, "normal", "feature-wide blast floors at normal");
 
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
@@ -395,6 +430,26 @@ for (const { sprint, task, path } of folders) {
     arr.push({ folder: folderRel, subTaskKey: data.subTaskKey ?? null });
     taskIdMap.set(data.taskId, arr);
   }
+
+  // 2b. Complexity: the label must match what the vector derives, or the vector
+  // is decoration and the model/flow routing downstream is based on a guess.
+  if (data.complexity?.vector) {
+    const { effort, label } = deriveComplexity(data.complexity.vector);
+    if (data.taskComplexity && data.taskComplexity !== label)
+      errors.push(
+        `taskComplexity="${data.taskComplexity}" but complexity.vector derives "${label}" (effort=${effort}) — Agents.md §5.1.1`,
+      );
+    if (data.complexity.effort !== undefined && data.complexity.effort !== effort)
+      errors.push(`complexity.effort=${data.complexity.effort} but vector sums to ${effort}`);
+  } else if (STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("bootstrap")) {
+    warnings.push("complexity.vector missing — taskComplexity is an unchecked guess (Agents.md §5.1)");
+  }
+
+  // 2c. Rework: a stage that ran more than twice means the gate kept bouncing it.
+  // Not an error (sometimes the task is just hard) but it is the signal worth
+  // reading when tuning prompts or splitting tasks.
+  for (const [stage, n] of Object.entries(data.attempts ?? {}))
+    if (n >= 3) warnings.push(`stage "${stage}" ran ${n}× — gate kept sending it back; worth a look`);
 
   // 3. Required artifacts for reached stage
   const stageIdx = STAGE_ORDER.indexOf(data.currentStage);
