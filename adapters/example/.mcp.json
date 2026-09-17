@@ -1,7 +1,8 @@
 {
+  "_comment": "Khai MCP server của project. Xoá dòng không dùng, đổi URL cho đúng, rồi gõ /mcp để login. Placeholder cố ý dùng hostname hợp lệ (example.com) — một URL không parse được sẽ làm CLI lỗi ERR_INVALID_URL ngay khi khởi động, trước cả khi bạn kịp sửa.",
   "mcpServers": {
-    "clickup": { "type": "http", "url": "https://mcp.clickup.com/mcp" },
-    "gitlab": { "type": "http", "url": "https://<git-host>/api/v4/mcp" },
-    "figma": { "type": "http", "url": "https://mcp.figma.com/mcp" }
+    "tracker": { "type": "http", "url": "https://mcp.clickup.com/mcp" },
+    "git-host": { "type": "http", "url": "https://gitlab.example.com/api/v4/mcp" },
+    "design": { "type": "http", "url": "https://mcp.figma.com/mcp" }
   }
 }

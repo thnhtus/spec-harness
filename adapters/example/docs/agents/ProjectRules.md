@@ -12,7 +12,7 @@
 | MCP server | Vai trò | Dùng để |
 | --- | --- | --- |
 | **ClickUp** | Nguồn yêu cầu | `taskId`, tên task, mô tả, AC của BA, comment làm rõ |
-| **GitLab** (`https://<git-host>/api/v4/mcp`) | Nguồn nhánh / MR | Kiểm tra nhánh, MR, nhánh protected |
+| **GitLab** (`https://gitlab.example.com/api/v4/mcp`) | Nguồn nhánh / MR | Kiểm tra nhánh, MR, nhánh protected |
 | **Figma** | Nguồn thiết kế | Node/screen, spacing, trạng thái UI khớp màn hình `fsd/` |
 
 Quy tắc:
