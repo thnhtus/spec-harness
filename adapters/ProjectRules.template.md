@@ -26,7 +26,7 @@
 
 | Bậc | Có ở project này? | Khai ở đây |
 | --- | --- | --- |
-| 2. Repo BE nằm cùng cấp | `<có / không>` | đường dẫn tương đối: `<../be-repo>` · thứ tự đọc: `<route → use-case → DTO → enum>` · **read-only**, không sửa gì ngoài repo đích |
+| 2. Repo BE khai trong `harness.config.json → repos` | `<có / không>` | thứ tự đọc: `<route → use-case → DTO → enum>` · **read-only** khi nó không phải `repoName` của task |
 | 3. Swagger/OpenAPI | `<có / không>` | skill `api-docs-sync`, URL service khai trong `.claude/skills/api-docs-sync/services.json` |
 
 ---
@@ -85,6 +85,8 @@ Ràng buộc xuyên suốt:
 > Các lệnh trên phải khớp `evidenceCommandPattern` trong `harness.config.json` — sai là Gate 4 không nhận evidence. Kiểm bằng `node scripts/validate-tasks.mjs --self-check`.
 
 **Lệnh watch/server — CHỈ user chạy tay, agent KHÔNG bao giờ chạy** (không tự kết thúc → treo phiên): `<dev server, test watch, preview…>`
+
+**Tầng chạy thật khi verify** (skill `pre-qc-gate` §4): `<browser | api | cli | none>`. Repo không có UI thì tầng này là gọi HTTP/CLI/hàm public thật, **không** phải bỏ qua. Harness kiểm tích hợp sẵn có: `<đường dẫn, vd e2e/ hoặc test/integration/>` — không có thì ghi "không có", đừng dựng mới lúc verify.
 
 Quy tắc trung thực: không tuyên bố "pass" khi chưa chạy lệnh thật trong phiên; dán output thật (lệnh, số pass/fail, exit code) vào `08-Test-Evidence.md`; test fail → `status = blocked`, không tắt/skip test để "làm xanh".
 
