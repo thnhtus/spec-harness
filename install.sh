@@ -42,13 +42,15 @@ install_into() {
   local P=$1
   command -v node >/dev/null || { echo "✖ cần Node 20+ để chạy validator"; exit 1; }
 
-  mkdir -p "$P"/{docs,scripts,hooks} "$P"/.claude/{agents,commands}
+  mkdir -p "$P"/{docs,scripts,hooks} "$P"/.claude/{agents,commands,skills}
 
   # kernel — luôn ghi đè, đây là phần dùng chung
   cp -R "$SRC"/kernel/docs/*                  "$P"/docs/
   cp    "$SRC"/kernel/scripts/validate-tasks.mjs "$P"/scripts/
   cp    "$SRC"/agents/*.md                    "$P"/.claude/agents/
   cp    "$SRC"/hooks/pre-commit               "$P"/hooks/ && chmod +x "$P"/hooks/pre-commit
+  # skill fsd-writer gọi ở Gate 1 — thiếu nó thì stage fsd_write gọi hụt
+  cp -R "$SRC"/skills/*                       "$P"/.claude/skills/
 
   # adapter + command — của user, không đè
   keep "$SRC"/adapters/example/.mcp.json                   "$P"/.mcp.json
@@ -89,6 +91,11 @@ if [ "${1:-}" = "--self-test" ]; then
   [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
   [ -e "$T/.claude/commands/init-project-rules.md" ] \
     || { echo "✖ self-test: thiếu lệnh /init-project-rules"; exit 1; }
+  # kernel gọi skill nào thì skill đó phải được cài kèm
+  for sk in $(grep -rho 'skill `[a-z0-9-]*`' "$SRC"/kernel/docs | sed 's/.*`\(.*\)`/\1/' | sort -u); do
+    [ -f "$T/.claude/skills/$sk/SKILL.md" ] \
+      || { echo "✖ self-test: kernel gọi skill '$sk' nhưng không cài kèm"; exit 1; }
+  done
   grep -q 'CHƯA-ĐIỀN' "$T"/docs/agents/ProjectRules.md \
     || { echo "✖ self-test: ProjectRules không phải template rỗng"; exit 1; }
   grep -q '^## 7\.' "$T"/docs/agents/ProjectRules.md \
