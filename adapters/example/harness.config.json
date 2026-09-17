@@ -16,6 +16,11 @@
     "mr_created",
     "done"
   ],
+  "models": {
+    "cheap": "haiku",
+    "mid": "sonnet",
+    "strong": "opus"
+  },
   "repos": [
     {
       "name": "<repo-name>",
