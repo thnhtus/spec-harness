@@ -15,7 +15,7 @@ User **chưa** nói vậy mà đưa link ClickUp → dùng `/start-task`.
 ## Flow
 
 ### 1. Đọc task (đừng đoán)
-`mcp__clickup__getTaskById` với id (bỏ tiền tố `#`, `CU-`, URL). Đọc description,
+Tool đọc task của tracker MCP (tự tìm trong tool của phiên — ProjectRules §1) với id (bỏ tiền tố `#`, `CU-`, URL). Đọc description,
 comment, parent. Thiếu thông tin để quyết định → **hỏi user**, đừng bịa AC.
 
 Ghi lại trong đầu: AC là gì, màn hình nào, file nào có khả năng đụng.
@@ -94,8 +94,8 @@ Chỉ Playwright: neo lỗi/không có, hoặc luồng đã có sẵn file e2e.
 **neo:**
 
 ```
-mcp__browseros-neo__name_session   → nhãn 2-3 từ + category
-mcp__browseros-neo__run            → mở tab, điều hướng, điền, đọc, khẳng định
+<browser-mcp>__name_session   → nhãn 2-3 từ + category (nếu server có)
+<browser-mcp>__run            → mở tab, điều hướng, điền, đọc, khẳng định
 ```
 
 `run` gói cả vòng lặp (`browser.pages.newPage` → `observe().snapshot()` →

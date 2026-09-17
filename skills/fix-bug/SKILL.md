@@ -14,7 +14,7 @@ Feature/task chung (không phải bug) → dùng `quick-task` hoặc `/start-tas
 
 ## 1. Ticket
 
-`mcp__clickup__getTaskById` với id (bỏ `#`, `CU-`, phần URL). Đọc description +
+Tool đọc task của tracker MCP (tự tìm trong tool của phiên — ProjectRules §1) với id (bỏ tiền tố `#`, `CU-`, phần URL). Đọc description +
 comment: **expected vs actual** và **các bước tái hiện**. Thiếu repro → hỏi
 user, đừng đoán triệu chứng.
 
@@ -97,7 +97,7 @@ npm run lint
 `develop` có sẵn ~164 test fail — so **tập file fail**, đừng so tổng số.
 
 **E2E API thật — setup y hệt §5b của skill `quick-task`**, không chép lại ở đây:
-dev server riêng trên cổng trống, rồi **BrowserOS neo** (`mcp__browseros-neo__run`)
+dev server riêng trên cổng trống, rồi một MCP điều khiển browser nếu phiên có (vd BrowserOS neo, Playwright)
 và **Playwright** (`test:e2e:run`) theo đúng phân vai ở đó. `.env` đã symlink ở
 §2 nên credential có sẵn.
 
