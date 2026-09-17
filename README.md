@@ -46,35 +46,41 @@ Kernel cũng không gắn với một CLI: file role không khai `model:`, khôn
 
 Chọn một trong hai trường hợp — khác nhau ở chỗ `harness.config.json` nằm đâu, kéo theo task docs nằm đâu.
 
+`install.sh` nhận **một tham số: thư mục đích** — nơi harness được cài vào. Thư mục đó phải tồn tại và nên là một git repo (gate cần git hook). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
+
 ### Trường hợp A — cài **vào trong** repo code
 
 Một repo (FE hoặc BE), task docs nằm cùng chỗ với code. Đây là mặc định.
 
 ```bash
+cd ~/code/my-app          # ← repo code của bạn, đứng sẵn ở đây
+
 # không cần clone (repo phải public)
-curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- /path/to/my-app
+curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- .
 
 # hoặc từ bản clone
-git clone --depth 1 https://github.com/thnhtus/spec-harness
-bash spec-harness/install.sh /path/to/my-app
+git clone --depth 1 https://github.com/thnhtus/spec-harness /tmp/spec-harness
+bash /tmp/spec-harness/install.sh .
 ```
 
-Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
+Dấu `.` cuối là thư mục đích = repo bạn đang đứng. Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
 
 ### Trường hợp B — cài **cạnh** các repo code
 
-Nhiều repo (FE + BE), hoặc muốn task docs tách khỏi code. Harness là một repo riêng ngang hàng.
+Nhiều repo (FE + BE), hoặc muốn task docs tách khỏi code. Harness là một repo riêng ngang hàng — **tự tạo nó trước**, vì nó chưa tồn tại:
 
 ```bash
+cd ~/code/my-workspace    # ← thư mục đang chứa fe/ và be/
 mkdir harness && cd harness && git init
-bash /path/to/spec-harness/install.sh .
+
+curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- .
 ```
 
 ```
-workspace/
-├── harness/     ← cài ở đây; task docs, spec, evidence
-├── fe/
-└── be/
+my-workspace/
+├── harness/     ← vừa tạo, cài vào đây; task docs, spec, evidence
+├── fe/          ← code, không bị đụng
+└── be/          ← code, không bị đụng
 ```
 
 Task docs ở `harness/docs/tasks/`, code ở `fe/` + `be/`. `repos` trỏ `../fe`, `../be`. Commit task doc và commit code là **hai repo, hai lần commit**.
