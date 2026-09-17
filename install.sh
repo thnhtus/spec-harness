@@ -59,6 +59,10 @@ install_into() {
   keep "$SRC"/commands/start-task.md                       "$P"/.claude/commands/start-task.md
   cp   "$SRC"/commands/init-project-rules.md               "$P"/.claude/commands/
 
+  # CI: hook ở máy dev bypass được bằng --no-verify. Workflow thì không.
+  mkdir -p "$P"/.github/workflows
+  keep "$SRC"/adapters/ci/validate-tasks.yml "$P"/.github/workflows/spec-harness.yml
+
   # Pre-commit hook là TUỲ CHỌN — một chỗ cắm gate, không phải điều kiện chạy.
   # Validator vẫn gọi được tay hoặc từ CI. Cắm được thì cắm, không thì ghi lý do.
   # Đường dẫn hook hỏi git (tôn trọng core.hooksPath của husky/lefthook), không đoán ".git/".
@@ -89,6 +93,8 @@ if [ "${1:-}" = "--self-test" ]; then
     && { echo "✖ self-test: validator ĐÁNG LẼ phải fail task thiếu artifact"; exit 1; }
   [ -e "$T/.claude/agents/orchestrator.md" ] || { echo "✖ self-test: thiếu subagent"; exit 1; }
   [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
+  [ -e "$T/.github/workflows/spec-harness.yml" ] \
+    || { echo "✖ self-test: thiếu CI workflow — gate chỉ tồn tại ở máy dev"; exit 1; }
   [ -e "$T/.claude/commands/init-project-rules.md" ] \
     || { echo "✖ self-test: thiếu lệnh /init-project-rules"; exit 1; }
   # Kernel/skill không được hardcode tên tool MCP: khoá harness vào đúng một
@@ -166,13 +172,20 @@ GATE
 fi
 cat <<'TODO'
 
-còn 3 việc tay trước task đầu tiên:
-  1. harness.config.json      → evidenceCommandPattern + evidenceSampleCommand (lệnh test thật),
-                                tracker.urlPattern, acTrace.since = hôm nay
-  2. .mcp.json                → khai MCP server thật (tracker / git host / design tool),
-                                xoá dòng nào không dùng. Rồi gõ /mcp trong Claude Code để login.
-  3. docs/agents/ProjectRules.md → mở Claude Code trong project, gõ /init-project-rules
-                                (dò repo rồi điền §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh;
-                                 nó cập nhật luôn evidenceCommandPattern ở việc 1)
-  rồi: node scripts/validate-tasks.mjs --self-check  +  claude mcp list
+⚠️  CHƯA CHẠY ĐƯỢC — config và ProjectRules cài ra là khung rỗng.
+
+BẮT BUỘC: mở CLI agent trong thư mục vừa cài rồi gõ
+
+      /init-project-rules
+
+  Nó dò repo (.mcp.json, manifest package, git branch, CI workflow, repo anh em)
+  rồi điền:
+    · docs/agents/ProjectRules.md  §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh
+    · harness.config.json          repos · layers · models · evidenceCommandPattern
+
+Hai việc nó KHÔNG làm được, bạn tự sửa:
+    · .mcp.json                    URL server thật, rồi /mcp để login
+    · acTrace.since                = ngày bật harness (task cũ hơn chỉ warning)
+
+Xong thì:  node scripts/validate-tasks.mjs --self-check     ← phải xanh
 TODO
