@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spec-harness/kernel/task.agent.schema.json",
+  "title": "task.agent.json — FlowHub Studio FE harness task state",
+  "description": "Machine-readable state for one ClickUp task. Normative field list: docs/agents/SharedRules.md §6.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "taskId",
+    "taskName",
+    "clickupUrl",
+    "repoName",
+    "sprintNumber",
+    "developer",
+    "branchType",
+    "layer",
+    "taskComplexity",
+    "currentStage",
+    "status",
+    "branch",
+    "docsPath",
+    "agents",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "taskId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ClickUp task id, e.g. 86d2x6jc0"
+    },
+    "taskName": { "type": "string", "minLength": 1 },
+    "clickupUrl": {
+      "type": "string",
+      "pattern": "^https://app\\.clickup\\.com/t/.+"
+    },
+    "repoName": { "type": "string", "minLength": 1 },
+    "sprintNumber": { "type": "integer", "minimum": 1 },
+    "developer": { "type": "string", "minLength": 1 },
+    "branchType": {
+      "type": "string",
+      "enum": ["feature", "hotfix", "bugfix"]
+    },
+    "layer": { "type": "string", "const": "frontend" },
+    "taskComplexity": {
+      "type": "string",
+      "enum": ["trivial", "normal", "high"]
+    },
+    "currentStage": {
+      "type": "string",
+      "enum": [
+        "bootstrap",
+        "fsd_write",
+        "fsd_review",
+        "technical_plan",
+        "implementation",
+        "reviewing"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "DRAFT",
+        "in_progress",
+        "blocked",
+        "needs_clarification",
+        "reviewing",
+        "mr_created",
+        "done"
+      ]
+    },
+    "branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Conventional branch name per ProjectRules §3 — same slug as docsPath. Deliberately not pattern-enforced: projects change their branch convention over time and older tasks must stay valid."
+    },
+    "branchActual": {
+      "type": "string",
+      "description": "Optional. Real working branch when it differs from the conventional `branch` (user-managed branch exception, SharedRules §3)."
+    },
+    "parentTaskId": {
+      "type": "string",
+      "description": "Optional. Parent ClickUp task id, empty string when none."
+    },
+    "subTaskKey": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional. Distinct slug disambiguating multiple folders that share one ClickUp taskId (separate sub-bugs of the same ClickUp item). Required to be distinct per folder when a taskId is reused."
+    },
+    "docsPath": {
+      "type": "string",
+      "pattern": "^docs/tasks/sprint-.+/.+/?$"
+    },
+    "agents": {
+      "type": "object",
+      "description": "Per-role status. Six canonical FE roles required; extra roles allowed.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "done",
+              "not_applicable",
+              "blocked",
+              "needs_clarification",
+              "skipped"
+            ]
+          }
+        }
+      },
+      "required": [
+        "orchestrator",
+        "fsd-writer",
+        "fsd-reviewer",
+        "technical-planner",
+        "fe-implementer",
+        "fe-fix"
+      ]
+    },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "updatedAt": { "type": "string", "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "$comment": "Branch type must match implementer: feature/hotfix => fe-implementer active; bugfix => fe-fix active.",
+      "if": {
+        "properties": { "branchType": { "const": "bugfix" } }
+      },
+      "then": {
+        "properties": {
+          "agents": {
+            "properties": {
+              "fe-implementer": {
+                "properties": {
+                  "status": { "const": "not_applicable" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

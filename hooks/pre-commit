@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# spec-harness gate: task docs must satisfy the harness conventions before they
+# enter history. This is the boundary that turns the validator from advisory
+# into blocking — without it, every gate in docs/ is honour-system.
+#
+# Install:  ln -sf ../../.claude/plugins/spec-harness/hooks/pre-commit .git/hooks/pre-commit
+#           (or copy it; chain it after an existing hook if you have one)
+set -euo pipefail
+
+root=$(git rev-parse --show-toplevel)
+validator="$root/scripts/validate-tasks.mjs"
+[ -f "$validator" ] || validator="$root/.claude/plugins/spec-harness/kernel/scripts/validate-tasks.mjs"
+
+if [ ! -f "$validator" ]; then
+  echo "spec-harness: validator not found — skipping (install it at scripts/validate-tasks.mjs)"
+  exit 0
+fi
+
+# --no-warn: only errors block. Warnings are backlog, not a reason to stop work.
+if ! node "$validator" --no-warn --quiet; then
+  echo
+  echo "✖ spec-harness: task docs have errors (see above). Commit blocked."
+  echo "  Fix them, or bypass deliberately with: git commit --no-verify"
+  exit 1
+fi

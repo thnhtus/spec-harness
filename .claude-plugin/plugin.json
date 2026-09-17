@@ -1,0 +1,5 @@
+{
+  "name": "spec-harness",
+  "description": "Spec-driven agent harness: 6 roles, 4 code-enforced gates, AC traceability from spec to test evidence. Project-agnostic kernel + per-project adapter.",
+  "version": "0.1.0"
+}

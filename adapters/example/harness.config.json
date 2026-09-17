@@ -1,0 +1,83 @@
+{
+  "$schema": "./kernel/harness.config.schema.json",
+  "tasksDir": "docs/tasks",
+  "groupPrefix": "sprint-",
+  "groupField": "sprintNumber",
+  "stages": [
+    "bootstrap",
+    "fsd_write",
+    "fsd_review",
+    "technical_plan",
+    "implementation",
+    "reviewing"
+  ],
+  "gate4Statuses": [
+    "reviewing",
+    "mr_created",
+    "done"
+  ],
+  "roles": [
+    "orchestrator",
+    "fsd-writer",
+    "fsd-reviewer",
+    "technical-planner",
+    "fe-implementer",
+    "fe-fix"
+  ],
+  "routing": {
+    "field": "branchType",
+    "map": {
+      "feature": "fe-implementer",
+      "hotfix": "fe-implementer",
+      "bugfix": "fe-fix"
+    }
+  },
+  "lineCaps": {
+    "00-Metadata.md": 80,
+    "01-FSD.md": 250,
+    "02-FSD-Review.md": 150,
+    "03-Technical-Plan.md": 200
+  },
+  "handoffBlockCap": 30,
+  "requiredAtStage": [
+    {
+      "stage": "bootstrap",
+      "files": [
+        "task.agent.json",
+        "00-Metadata.md"
+      ]
+    },
+    {
+      "stage": "fsd_review",
+      "files": [
+        "01-FSD.md"
+      ]
+    },
+    {
+      "stage": "technical_plan",
+      "files": [
+        "02-FSD-Review.md"
+      ]
+    },
+    {
+      "stage": "implementation",
+      "files": [
+        "03-Technical-Plan.md"
+      ]
+    }
+  ],
+  "gate4Artifacts": {
+    "evidence": "08-Test-Evidence.md",
+    "notes": "06-FE-Implementation-Notes.md"
+  },
+  "acTrace": {
+    "declaredIn": "02-FSD-Review.md",
+    "reachedIn": [
+      "03-Technical-Plan.md",
+      "08-Test-Evidence.md"
+    ],
+    "since": "2026-07-28"
+  },
+  "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
+  "evidenceSampleCommand": "npm run test:scope -- src/test/x"
+}

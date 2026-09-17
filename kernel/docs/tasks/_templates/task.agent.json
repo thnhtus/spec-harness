@@ -1,0 +1,27 @@
+{
+  "taskId": "",
+  "taskName": "",
+  "clickupUrl": "",
+  "repoName": "<repo>",
+  "sprintNumber": 0,
+  "developer": "",
+  "branchType": "feature",
+  "layer": "frontend",
+  "taskComplexity": "normal",
+  "currentStage": "bootstrap",
+  "status": "in_progress",
+  "branch": "",
+  "branchActual": "",
+  "parentTaskId": "",
+  "docsPath": "docs/tasks/sprint-{n}/{taskId}-{slug}/",
+  "agents": {
+    "orchestrator": { "status": "pending" },
+    "fsd-writer": { "status": "pending" },
+    "fsd-reviewer": { "status": "pending" },
+    "technical-planner": { "status": "pending" },
+    "fe-implementer": { "status": "pending" },
+    "fe-fix": { "status": "pending" }
+  },
+  "createdAt": "",
+  "updatedAt": ""
+}
