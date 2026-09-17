@@ -2,7 +2,9 @@
 
 Spec-driven agent harness, tách từ một harness đã chạy thật **240 task / 17 sprint** trên một codebase production.
 
-6 role · 4 gate · mọi AC truy vết được từ spec tới test evidence — và gate được enforce bằng **exit code**, không phải bằng lời nhắc trong prompt.
+7 role · 5 gate · mọi AC truy vết được từ spec tới test evidence — và gate được enforce bằng **exit code**, không phải bằng lời nhắc trong prompt.
+
+Gate 5 là **agent đối kháng**: Gate 1–4 do chính người làm tự chấm, nên có thêm một role mặc định FAIL, tự chạy lại lệnh thay vì tin `08-Test-Evidence.md`, đọc `git diff` thật thay vì đọc mô tả diff, và hỏi "đổi hằng số thì test có đỏ không".
 
 ## Kernel vs adapter
 
@@ -17,6 +19,8 @@ kernel/                              ← dùng chung, không sửa khi sang proj
 
 skills/                              ← ship kèm, cài vào .claude/skills/
 ├── document-to-ieee-srs             fsd-writer gọi ở Gate 1 (ISO/IEC/IEEE 29148:2018)
+├── pre-qc-gate                      adversary gọi ở Gate 5 khi UI load-bearing (drive app thật)
+├── humanizer                        cắt giọng AI khỏi văn xuôi task doc (SharedRules §5)
 ├── api-docs-sync                    Swagger/OpenAPI → docs/api/ (bậc 3 của thang contract API)
 ├── documents-sync                   tracker doc → docs/srs/ + docs/fsd/
 ├── build-and-mr                     build → push → tạo MR
@@ -54,12 +58,24 @@ Xong còn 3 việc tay:
 | File | Sửa gì |
 | --- | --- |
 | `.mcp.json` | khai MCP server thật (tracker / git host / design tool), xoá dòng không dùng → rồi `/mcp` login. Project-scoped, commit được cho cả team |
-| `harness.config.json` | `evidenceCommandPattern` + `evidenceSampleCommand` (lệnh test thật, sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` = ngày bật harness |
+| `harness.config.json` | `repos` (repo nào agent được sửa — xem dưới), `layers`, `evidenceCommandPattern` + `evidenceSampleCommand` (sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` = ngày bật harness |
 | `docs/agents/ProjectRules.md` | cài ra là **template rỗng**. Mở Claude Code trong project rồi gõ `/init-project-rules` — nó dò `.mcp.json`, `package.json`, `git branch`, CI workflow, `CLAUDE.md` để điền §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh, hỏi đúng phần không dò được, rồi cập nhật luôn `evidenceCommandPattern` ở dòng trên. Giữ nguyên số mục **1/2/3/7** — kernel trỏ chéo bằng số |
 
 Rồi `node scripts/validate-tasks.mjs --self-check` phải xanh trước task đầu tiên.
 
 `.claude/commands/start-task.md` step 0 còn hardcode quy ước nhánh/worktree của harness gốc (`tubt/t/`, `origin/develop`, `node_modules`, `.env`) — sửa theo ProjectRules §3 của bạn.
+
+### Ba bố cục repo
+
+`repos` khai repo mà agent được sửa, `path` tính từ chỗ đặt `harness.config.json`:
+
+| Bố cục | `repos` | Task docs | Worktree |
+| --- | --- | --- | --- |
+| Harness trong repo code | `[{ path: "." }]` | cùng repo | worktree của chính repo đó |
+| Trong repo FE, đọc BE anh em | `[{ path: "." }, { path: "../be" }]` | repo chính | như trên; BE read-only |
+| Harness ngang hàng FE + BE | `[{ path: "../fe" }, { path: "../be" }]` | **repo harness** | worktree trong repo đang sửa; task doc ở lại |
+
+`repoName` của task chỉ một entry — đó là repo được sửa; repo khác trong `repos` là **read-only**; repo không khai thì không đụng. Sai tên → validator chặn. Chi tiết: `docs/Agents.md` §0.
 
 `docs/srs/`, `docs/fsd/`, `docs/api/` cài ra là **rỗng** (chỉ có README làm mục lục). Project tự đổ nội dung, hoặc xoá nếu không dùng — kernel chỉ trỏ tới, không bắt buộc có file.
 
