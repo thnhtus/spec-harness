@@ -20,7 +20,7 @@ Tham số (tuỳ chọn trừ `task`):
 | --- | --- | --- |
 | `task` | URL/ID task trên tracker (**bắt buộc**) | — (chặn) |
 | `sprint` | Số sprint | suy từ tracker; không có → chặn |
-| `repo` | Tên repo | repo đích ở [`./ProjectRules.md` §3](./ProjectRules.md) |
+| `repo` | `name` của một entry trong `harness.config.json → repos` | entry duy nhất nếu chỉ khai một; nhiều entry → **chặn**, phải chỉ rõ |
 | `branchType` | `feature` \| `bugfix` \| `hotfix` | suy từ task type tracker; không có → chặn |
 | `target` | Nhánh đích | `develop` |
 
@@ -33,10 +33,10 @@ Tham số (tuỳ chọn trừ `task`):
 | # | Kiểm tra | Cách | Fail thì |
 | --- | --- | --- | --- |
 | 1 | MCP sẵn sàng | `claude mcp list` (đủ server khai ở [`./ProjectRules.md` §1](./ProjectRules.md)) | báo user connect MCP; chặn |
-| 2 | Đúng repo | `git remote get-url origin` khớp repo đích ([`./ProjectRules.md` §3](./ProjectRules.md)) | chặn |
+| 2 | Đúng repo | `cwd` nằm trong repo khớp `repoName` (đối chiếu `repos[].path` + `git remote get-url origin`) | chặn |
 | 3 | Nhánh hiện tại không protected | `git rev-parse --abbrev-ref HEAD` ∉ {`main`,`develop`,`staging`,`release/*`} | yêu cầu user rẽ nhánh; chặn |
 | 4 | Git user đã set | `git config user.name` / `user.email` khác rỗng | hướng dẫn `git config`; chặn |
-| 5 | tracker đọc được | lệnh đọc task của tracker MCP với `detail_level: "summary"` (kỷ luật payload: [`./SharedRules.md` §8](./SharedRules.md)) | chặn |
+| 5 | tracker đọc được | tool đọc task của tracker MCP (tự tìm — [`./SharedRules.md` §8](./SharedRules.md)), bản summary | chặn |
 
 > Orchestrator **không** `git checkout` sang nhánh mới — việc chọn/tạo nhánh thuộc implementer ([`./SharedRules.md` §3](./SharedRules.md)). Orchestrator chỉ ghi tên nhánh dự kiến (và `branchActual` nếu user đang đứng sẵn trên nhánh làm việc riêng).
 
@@ -73,6 +73,7 @@ Copy từ `docs/tasks/_templates/` (chỉ tạo mới, không clobber) sang `doc
 ├── 03-Technical-Plan.md       # khung cho technical-planner
 ├── 06-FE-Implementation-Notes.md
 ├── 08-Test-Evidence.md
+├── 09-Adversarial-Review.md
 └── .agent-memory/orchestrator.md
 ```
 

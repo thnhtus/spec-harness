@@ -51,7 +51,7 @@
 | 8 | Bảng **AC coverage** đủ mọi AC của `02`; root-cause thật khác AC → Amendment log ([`./SharedRules.md` §9](./SharedRules.md)) |
 
 FAIL → `status = blocked` / `needs_clarification`, ghi blocker vào `06`/`08` + `.agent-memory/fe-fix.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
-PASS → `status = reviewing`, dừng chờ user duyệt commit/push/MR.
+PASS → `currentStage = adversarial_review`, `status = in_progress`, handoff → [`adversary`](./Adversary.md). **Không tự đặt `reviewing`** — Gate 5 mới là chỗ chuyển sang đó.
 
 ## 6. Ví dụ rút gọn
 

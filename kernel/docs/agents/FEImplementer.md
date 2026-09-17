@@ -57,7 +57,7 @@ Cập nhật `task.agent.json`: `agents.fe-implementer.status`, `currentStage`, 
 - [ ] Blocker/risk mở đã ghi vào doc + `.agent-memory/fe-implementer.md`.
 
 FAIL → `status = blocked`, ghi blocker, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
-PASS → `status = reviewing` — **dừng chờ user** duyệt commit/push/MR ([`../Instructions.md` §1](../Instructions.md)).
+PASS → `currentStage = adversarial_review`, `status = in_progress`, handoff → [`adversary`](./Adversary.md). **Không tự đặt `reviewing`** — Gate 5 mới là chỗ chuyển sang đó.
 
 ## 7. Handoff
 

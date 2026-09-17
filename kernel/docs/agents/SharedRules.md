@@ -28,11 +28,11 @@ Mỗi role kết thúc stage phải append một block (bắt đầu bằng `###
 
 ```markdown
 ## Next Handoff
-- **Inputs**: nguồn đã dùng (URL ClickUp, node Figma, ID FR-/FSD-, file đã đọc)
+- **Inputs**: nguồn đã dùng (URL task tracker, node thiết kế, ID FR-/FSD-, file đã đọc)
 - **Decisions**: quyết định đã chốt + lý do ngắn
 - **Risks**: rủi ro / giả định / "unavailable"
 - **Changed Files**: path tương đối (rỗng nếu chưa đụng code)
-- **Evidence**: bằng chứng (output test, trích AC, node Figma)
+- **Evidence**: bằng chứng (output test, trích AC, node thiết kế)
 - **Next agent**: role kế tiếp (hoặc "skipped: <reason>")
 - **Continue automation**: yes | no (no ⇒ kèm lý do + status)
 ```
@@ -52,15 +52,27 @@ Task doc nằm tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + template
 | File | Người ghi | Nội dung |
 | --- | --- | --- |
 | `task.agent.json` | orchestrator tạo; mọi role cập nhật | Metadata máy đọc (§6) |
-| `00-Metadata.md` | orchestrator | Tóm tắt task, link ClickUp/Figma, sprint, branchType |
+| `00-Metadata.md` | orchestrator | Tóm tắt task, link tracker/thiết kế, sprint, branchType |
 | `01-FSD.md` | fsd-writer | FSD IEEE cấp task (skill `document-to-ieee-srs`) |
 | `02-FSD-Review.md` | fsd-reviewer | AC, câu hỏi BA, risk |
 | `03-Technical-Plan.md` | technical-planner | File sẽ đổi, test plan, checklist, risk |
 | `06-FE-Implementation-Notes.md` | fe-implementer / fe-fix | Quyết định khi code, file đã sửa |
 | `08-Test-Evidence.md` | fe-implementer / fe-fix | Output thật của lệnh ProjectRules §7 |
+| `09-Adversarial-Review.md` | adversary | Kiểm đối kháng: tự chạy lại lệnh, soi diff + test, finding (Gate 5) |
 | `.agent-memory/{role}.md` | từng role | Handoff (§4) |
 
 - **Append-only, tiếng Việt**, ID kỹ thuật giữ nguyên (`FR-…`, `FSD-<MOD>-nnn`, ENUM, path, lệnh).
+
+**Văn xuôi phải đọc được — dùng skill `humanizer`.** Task doc có người đọc: BA đọc `02`, dev khác đọc `06`, reviewer đọc `09`. Trước khi đóng stage, chạy `humanizer` trên **phần văn xuôi** mình vừa viết:
+
+| Áp cho | Không áp cho |
+| --- | --- |
+| `02` §3.1 business intent · cột lý do trong các bảng | `01` requirement — `shall`/`phải` là **construct bắt buộc** của IEEE 29148, formulaic có chủ đích |
+| `06` Decisions · Plan Deviations · Known Limitations | ID, path, lệnh, output test dán nguyên văn |
+| `09` mô tả finding · mục "đã soi những gì" | Bảng thuần dữ liệu (AC coverage, Changed Files) |
+| Block handoff `.agent-memory/` · message báo gate fail | |
+
+Hay gặp nhất trong doc của agent: câu chốt một dòng lặp lại ý vừa nói, "không phải X mà là Y", bộ ba gượng, bold trang trí ở mọi đầu mục, và mở bài dàn cảnh trước khi vào việc. Cắt chúng làm doc ngắn lại — ngắn thì đỡ chạm trần §8.
 - **Không sửa** nội dung `srs/`, `fsd/`, `api/` — chỉ tham chiếu. `docs/api/` sinh tự động nếu project có pipeline riêng (ProjectRules §1).
 - **Không bịa** số liệu test (§7).
 - `task.agent.json` **không** có trường token/usage.
@@ -79,7 +91,7 @@ Trường chính: `taskId, taskName, clickupUrl, repoName, sprintNumber, develop
 | `in_progress` | stage đang chạy bình thường | tiếp tục workflow |
 | `blocked` | gate fail vì lý do kỹ thuật | ghi blocker, dừng, báo to (§4) |
 | `needs_clarification` | thiếu dữ liệu MCP / AC mơ hồ | ghi câu hỏi, chờ BA/user, báo to (§4) |
-| `reviewing` | mọi gate pass, diff sạch | chờ user duyệt commit/push + MR |
+| `reviewing` | mọi gate pass **kể cả Gate 5**, diff sạch | chờ user duyệt commit/push + MR |
 | `mr_created` | user đã push, MR đã tạo | theo dõi review/CI |
 | `done` | MR merged | đóng task |
 
@@ -105,9 +117,15 @@ Chỉ user chuyển `reviewing → mr_created` (push + MR thật).
 
 **Kỷ luật MCP payload:**
 
-- **ClickUp:** gọi `clickup_get_task` với `detail_level: "summary"` trước; chỉ gọi `detailed` khi summary thiếu thông tin chặn việc. Chỉ mở attachment/ảnh khi mô tả text **không đủ** để viết requirement (ảnh rất tốn token).
-- **Figma:** gọi `get_metadata` trước để xác định node **nhỏ nhất** liên quan; rồi mới `get_design_context` đúng node đó. Không gọi design context cho cả page/file. Chỉ lấy screenshot khi hành vi UI là load-bearing và text không mô tả được.
-- **GitLab:** chỉ truy vấn nhánh/MR của đúng task.
+> **Không hardcode tên tool.** Kernel không biết project cắm MCP server nào — ClickUp hay Jira, Figma hay Penpot, GitLab hay GitHub. Agent **tự tìm tool phù hợp** trong danh sách tool của phiên, theo vai trò khai ở [`ProjectRules.md` §1](./ProjectRules.md). Tên tool có tiền tố theo server (`mcp__<server>__<tool>`), nên viết cứng một tên là khoá harness vào đúng một tracker.
+>
+> Cách tìm: khớp **vai trò → động từ** trong tên tool. Cần đọc task từ tracker → tool của server tracker có `get`/`read`/`task` trong tên. Cần tìm → `search`. Cần bình luận → `comment`. Không chắc tool nào đúng, hoặc không có tool nào khớp vai trò → **dừng, hỏi user**, không đoán và không bịa dữ liệu thay thế.
+
+Áp cho mọi server, không phụ thuộc tên:
+
+- **Tracker:** gọi bản **summary/rút gọn** trước (tool thường có tham số kiểu `detail_level`, `fields`, hoặc một tool `get` nhẹ riêng); chỉ lấy bản đầy đủ khi summary thiếu thông tin chặn việc. Chỉ mở attachment/ảnh khi mô tả text **không đủ** để viết requirement (ảnh rất tốn token).
+- **Design tool:** lấy **metadata trước** để xác định node **nhỏ nhất** liên quan, rồi mới lấy design context của đúng node đó. Không lấy context cho cả page/file. Screenshot chỉ khi hành vi UI là load-bearing và text không mô tả được.
+- **Git host:** chỉ truy vấn nhánh/MR của đúng task.
 
 **Kỷ luật đọc tài liệu nội bộ:**
 
