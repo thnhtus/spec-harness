@@ -2,7 +2,7 @@
 
 > **Tài liệu:** `docs/agents/ProjectRules.md` — normative home cho 4 mục mà kernel **không** biết: §1 nguồn sự thật, §2 architecture guardrail, §3 quy tắc nhánh, §7 lệnh kiểm tra.
 > **Quan hệ:** [`../Instructions.md`](../Instructions.md) > [`SharedRules.md`](./SharedRules.md) (kernel) > file này > role file.
-> **Đây là bản MẪU của FlowHub Studio FE.** Copy sang project mới rồi thay toàn bộ: stack, MCP server, tên nhánh, lệnh test đều khác.
+> **Đây là bản MẪU** (một FE React/TS). Copy sang project mới rồi thay toàn bộ: stack, MCP server, tên nhánh, lệnh test đều khác.
 > **Số mục giữ nguyên 1/2/3/7** để mọi tham chiếu chéo `SharedRules §n` trong kernel vẫn trỏ đúng.
 
 ---
@@ -12,14 +12,14 @@
 | MCP server | Vai trò | Dùng để |
 | --- | --- | --- |
 | **ClickUp** | Nguồn yêu cầu | `taskId`, tên task, mô tả, AC của BA, comment làm rõ |
-| **GitLab** (`https://gitlab.exceltech.vn/api/v4/mcp`) | Nguồn nhánh / MR | Kiểm tra nhánh, MR, nhánh protected |
+| **GitLab** (`https://<git-host>/api/v4/mcp`) | Nguồn nhánh / MR | Kiểm tra nhánh, MR, nhánh protected |
 | **Figma** | Nguồn thiết kế | Node/screen, spacing, trạng thái UI khớp màn hình `fsd/` |
 
 Quy tắc:
 
 - **Không bịa dữ liệu MCP.** Trường không lấy được → ghi nguyên văn `unavailable`; nếu trường đó chặn gate → `status = needs_clarification`.
 - **Trích dẫn, không diễn giải tự do:** nêu yêu cầu phải kèm nguồn (URL ClickUp, node Figma, ID `FR-`/`FSD-`).
-- **Không phỏng đoán contract API — đọc BE trước khi ghi `unavailable`.** `docs/api/` sinh từ Swagger nên hầu như **không có response body** (chỉ `- 200`). Endpoint thiếu shape → đọc source BE tại `../flowhub-workflow-service/` (cùng cấp repo FE; từ worktree là `../../../../flowhub-workflow-service/`) theo thứ tự: `src/controller/**/*.controller.ts` (route) → `src/application/usecases/` (use case) → `src/application/dto/` (response DTO) → `src/domain/enums/` (enum). Ghi `unavailable` **chỉ khi** đã tra BE mà vẫn không thấy; trích dẫn `file:line` BE làm nguồn, ngang hàng `docs/api/`. BE là read-only — không sửa file nào ngoài repo FE.
+- **Không phỏng đoán contract API — đọc BE trước khi ghi `unavailable`.** `docs/api/` sinh từ Swagger nên hầu như **không có response body** (chỉ `- 200`). Endpoint thiếu shape → đọc source BE tại `../<be-repo>/` (cùng cấp repo FE; từ worktree là `../../../../<be-repo>/`) theo thứ tự: `src/controller/**/*.controller.ts` (route) → `src/application/usecases/` (use case) → `src/application/dto/` (response DTO) → `src/domain/enums/` (enum). Ghi `unavailable` **chỉ khi** đã tra BE mà vẫn không thấy; trích dẫn `file:line` BE làm nguồn, ngang hàng `docs/api/`. BE là read-only — không sửa file nào ngoài repo FE.
 - **Không cache ngầm:** BA cập nhật ClickUp giữa chừng → đọc lại trước gate kế tiếp.
 - **Đối chiếu chéo:** yêu cầu ClickUp phải khớp ID trong [`../srs/`](../srs/README.md) (`FR-`/`NFR-`/`EXT-`/`DATA-`/`BR-`) và [`../fsd/`](../fsd/README.md) (`FSD-<MOD>-nnn`, mới: `🆕 FSD-<MOD>-NEW-nnn`). Lệch → ghi risk, không tự quyết.
 - **MCP hết hạn auth giữa chừng:** nếu một lời gọi MCP fail vì authentication/authorization → `status = blocked`, báo user chạy `/mcp` đăng nhập lại server tương ứng, **dừng** — không retry vòng lặp, không bịa dữ liệu thay thế.
