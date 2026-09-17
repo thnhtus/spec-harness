@@ -1,14 +1,36 @@
 #!/usr/bin/env bash
 # spec-harness installer — cài kernel + adapter + agent + gate vào một project.
 #
-#   bash install.sh <project-root>
+# Từ bản clone:        bash install.sh <project-root>
+# Không cần clone:     curl -fsSL <raw-url>/install.sh | bash -s -- <project-root>
+#   (tự tải tarball về thư mục tạm rồi cài; repo phải public, hoặc đặt
+#    SPEC_HARNESS_REF=<tag|branch> để ghim phiên bản)
+#
 #   bash install.sh --self-test     # cài thử vào repo tạm rồi kiểm, không đụng gì
 #
 # Chạy lại được: file bạn đã sửa (harness.config.json, ProjectRules.md,
 # .claude/commands/start-task.md) KHÔNG bị đè — nâng kernel không mất adapter.
 set -euo pipefail
 
+REPO=${SPEC_HARNESS_REPO:-thnhtus/spec-harness}
+REF=${SPEC_HARNESS_REF:-master}
+
 SRC=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# Chạy qua `curl | bash` thì $SRC là cwd ngẫu nhiên, không có kernel/ để copy.
+# Tải tarball về tmp và cài từ đó — giống `specify init`, không để lại bản clone.
+if [ ! -d "$SRC/kernel" ]; then
+  command -v curl >/dev/null || { echo "✖ cần curl để tải khi không chạy từ bản clone"; exit 1; }
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  echo "→ tải $REPO@$REF …"
+  curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$REF" \
+    | tar xz -C "$tmp" 2>/dev/null \
+    || curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/tags/$REF" | tar xz -C "$tmp" \
+    || { echo "✖ không tải được $REPO@$REF (repo private? sai ref?) — clone rồi chạy install.sh trong đó"; exit 1; }
+  SRC=$(echo "$tmp"/*/)
+  [ -d "$SRC/kernel" ] || { echo "✖ tarball không có kernel/ — sai repo?"; exit 1; }
+fi
+
 kept=()
 
 # Copy chỉ khi đích chưa có. Đây là thứ giữ adapter sống qua lần cài lại.
