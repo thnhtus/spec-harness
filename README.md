@@ -58,7 +58,7 @@ Xong còn 3 việc tay:
 | File | Sửa gì |
 | --- | --- |
 | `.mcp.json` | khai MCP server thật (tracker / git host / design tool), xoá dòng không dùng → rồi `/mcp` login. Project-scoped, commit được cho cả team |
-| `harness.config.json` | `repos` (repo nào agent được sửa — xem dưới), `layers`, `evidenceCommandPattern` + `evidenceSampleCommand` (sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` = ngày bật harness |
+| `harness.config.json` | `repos` (repo nào agent được sửa — xem dưới), `layers`, `models` (ánh xạ tier `cheap`/`mid`/`strong` → tên model của CLI bạn dùng; `{}` = dùng mặc định), `evidenceCommandPattern` + `evidenceSampleCommand` (sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` |
 | `docs/agents/ProjectRules.md` | cài ra là **template rỗng**. Mở Claude Code trong project rồi gõ `/init-project-rules` — nó dò `.mcp.json`, `package.json`, `git branch`, CI workflow, `CLAUDE.md` để điền §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh, hỏi đúng phần không dò được, rồi cập nhật luôn `evidenceCommandPattern` ở dòng trên. Giữ nguyên số mục **1/2/3/7** — kernel trỏ chéo bằng số |
 
 Rồi `node scripts/validate-tasks.mjs --self-check` phải xanh trước task đầu tiên.
