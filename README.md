@@ -46,7 +46,7 @@ Kernel cũng không gắn với một CLI: file role không khai `model:`, khôn
 
 Chọn một trong hai trường hợp — khác nhau ở chỗ `harness.config.json` nằm đâu, kéo theo task docs nằm đâu.
 
-`install.sh` nhận **một tham số: thư mục đích** — nơi harness được cài vào. Thư mục đó phải tồn tại và nên là một git repo (gate cần git hook). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
+`install.sh` nhận **một tham số: thư mục đích** — nơi harness được cài vào. Thư mục đó phải tồn tại; git repo thì tốt hơn nhưng không bắt buộc (xem ghi chú cuối mục). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
 
 ### Trường hợp A — cài **vào trong** repo code
 
@@ -67,11 +67,12 @@ Dấu `.` cuối là thư mục đích = repo bạn đang đứng. Task docs và
 
 ### Trường hợp B — cài **cạnh** các repo code
 
-Nhiều repo (FE + BE), hoặc muốn task docs tách khỏi code. Harness là một repo riêng ngang hàng — **tự tạo nó trước**, vì nó chưa tồn tại:
+Nhiều repo (FE + BE), hoặc muốn task docs tách khỏi code. Harness đứng riêng ngang hàng — **tự tạo thư mục trước**, vì nó chưa tồn tại:
 
 ```bash
 cd ~/code/my-workspace    # ← thư mục đang chứa fe/ và be/
-mkdir harness && cd harness && git init
+mkdir harness && cd harness
+git init                  # tuỳ chọn — xem "Có cần git init không?" bên dưới
 
 curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- .
 ```
@@ -120,6 +121,16 @@ Cách `curl` tự tải tarball vào thư mục tạm rồi xoá — không đ�
 Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`.
 
 **Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.sh`, không phải chạy lại `/init-project-rules`.
+
+**Có cần `git init` không?** Không bắt buộc — harness cài được vào thư mục thường, validator vẫn chạy, `--self-check` vẫn xanh. Nhưng thiếu git thì mất ba thứ:
+
+| Mất | Vì sao đáng tiếc |
+| --- | --- |
+| Hook pre-commit | Gate không chạy lúc commit; phải nhớ gọi validator bằng tay |
+| CI | Workflow được cài nhưng không có repo để push → không bao giờ chạy |
+| Lịch sử task doc | Task doc là append-only theo thiết kế; không có git thì không tra ngược được ai sửa gì, lúc nào |
+
+Trường hợp A luôn có git sẵn (nó là repo code của bạn). Trường hợp B thì `git init` là khuyến nghị mạnh — task doc và evidence là thứ đáng có lịch sử, đó gần như là toàn bộ nội dung của repo đó. Không init thì installer vẫn cài và in một dòng ghi chú.
 
 **Gate chạy ở hai chỗ, pre-commit là tuỳ chọn.** CI (`.github/workflows/spec-harness.yml`) là chỗ `git commit --no-verify` không với tới. Hook pre-commit chỉ để biết sớm hơn: repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook); project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú.
 
