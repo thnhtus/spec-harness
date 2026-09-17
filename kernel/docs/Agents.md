@@ -248,6 +248,52 @@ Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** l
 
 **Dùng nó để sửa vector, đừng để nó nằm im.** Task nào cũng `implementation: 2` thì hoặc `scope` đang bị chấm thấp, hoặc Gate 3 chưa liệt kê đủ file. Đó là dữ liệu thật để hiệu chỉnh §5.1, thay cho việc đoán trọng số.
 
+### 5.6. Đóng vòng: `outcome` + `--calibrate`
+
+`vector` là ước lượng **trước**, `attempts` là rework **trong** quá trình. Cả hai đều không biết task có thật sự ổn sau khi ship hay không. Thứ đó là `outcome`, điền khi task đóng:
+
+```json
+"outcome": {
+  "escapedBugs": 1,
+  "reworkAfterReview": 0,
+  "closedAt": "2026-09-10",
+  "note": "AC-03 thiếu trường hợp user không có phòng ban"
+}
+```
+
+- `escapedBugs` — bug tìm thấy **sau** khi task rời harness (QC, staging, production). `> 0` nghĩa là gate đã cho qua thứ lẽ ra phải chặn.
+- `reworkAfterReview` — số lần task quay lại sửa code sau `reviewing`.
+- `note` — một dòng: ước lượng đã bỏ sót gì.
+
+Không điền thì harness không học được gì. Đây là điểm duy nhất con người phải nhập tay, và là điểm đắt nhất nếu bỏ qua.
+
+**Đọc lại định kỳ** (cuối sprint, hoặc mỗi ~20 task):
+
+```bash
+node scripts/validate-tasks.mjs --calibrate
+```
+
+Nó đối chiếu ước lượng với kết quả và chỉ ra ngưỡng nào đang sai:
+
+```
+trivial  n=1  escaped=1  rework=0  stage-retries=1
+normal   n=3  escaped=0  rework=1  stage-retries=3
+
+findings:
+• 75% of closed tasks retried "implementation" (4 extra runs) — "scope" is likely scored too low at bootstrap
+• 1 bug(s) escaped from "trivial" tasks — the riskFloor thresholds (§5.1.1) are letting real risk through
+```
+
+**Nó in bằng chứng, không tự sửa ngưỡng.** Một luật mà harness âm thầm viết lại là luật không ai review — và ngưỡng ở §5.1.1 quyết định model, độ nặng gate, worktree. Con người đọc finding rồi sửa §5.1.1 bằng một commit, có lý do ghi lại. Đó là vòng lặp đóng, không phải tự động hoá mù.
+
+Ba cách sửa thường gặp:
+
+| Finding | Sửa gì |
+| --- | --- |
+| stage nào đó bị chạy lại nhiều | chiều tương ứng đang chấm thấp — sửa **mô tả thang** ở §5.1 cho rõ hơn, không phải sửa công thức |
+| bug lọt từ `trivial` | ngưỡng `riskFloor` quá lỏng — hạ mốc `blastRadius`/`reversibility` ở §5.1.1 |
+| nhiều `high` mà không rework, không bug lọt | ngưỡng `high` quá dễ kích hoạt — đang trả tiền model mạnh mà không mua được gì |
+
 ---
 
 ## 6. Liên kết

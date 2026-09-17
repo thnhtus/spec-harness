@@ -15,10 +15,16 @@
  *   5. routing field -> implementer role (config.routing)
  *   6. When Gate 4 reached: evidence artifact must contain a real command+result
  *   7. No duplicate tracker taskId across folders
- *   8. AC traceability: every AC-nn declared reaches every config.acTrace.reachedIn doc
+ *   8. AC traceability per stage: each acTrace.reachedIn doc is checked as soon
+ *      as its fromStage is reached (a dropped AC fails at Gate 3, not at review)
+ *   9. Handoff present for every role marked done (Next agent + Continue automation)
+ *  10. Gate 2: no blocking question left open past fsd_review
+ *  11. Stage/status coherence: `reviewing` requires currentStage=reviewing and
+ *      every role finished
+ *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --config <path>
+ * Flags: --json, --no-warn, --quiet, --self-check, --calibrate, --config <path>
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
@@ -32,6 +38,7 @@ const args = new Set(argv);
 const AS_JSON = args.has("--json");
 const NO_WARN = args.has("--no-warn");
 const QUIET = args.has("--quiet");
+const CALIBRATE = args.has("--calibrate");
 
 const CONFIG_NAME = "harness.config.json";
 
@@ -86,6 +93,13 @@ const ROUTING = CFG.routing ?? { field: "branchType", map: {} };
 const GATE4_ARTIFACTS = CFG.gate4Artifacts ?? {};
 const REPOS = CFG.repos ?? [];
 const AC_TRACE = CFG.acTrace ?? { declaredIn: null, reachedIn: [], since: "9999-12-31" };
+// reachedIn entries may be a bare filename (checked only once Gate 4 is reached,
+// the old behaviour) or { doc, fromStage } — checked as soon as that stage is
+// reached. The latter is why a dropped AC surfaces at Gate 3 instead of after
+// the implementer already wrote code against an incomplete plan.
+const AC_REACHED = (AC_TRACE.reachedIn ?? []).map((e) =>
+  typeof e === "string" ? { doc: e, fromStage: null } : e,
+);
 const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
 // Commands that count as a real verification run (project test/lint/build stack).
 const EVIDENCE_RE = new RegExp(CFG.evidenceCommandPattern ?? "(?!)");
@@ -154,6 +168,39 @@ function countLines(file) {
 
 function rel(p) {
   return relative(REPO_ROOT, p);
+}
+
+// Gate 2 says a blocking question left open blocks the gate. Rows look like
+// "| Q-01 | … | blocking | open | …" — a table scan is enough to catch the case
+// the gate exists for, and it is the one a model most often waves through.
+function openBlockingQuestions_test(lines) {
+  return lines
+    .filter((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.test(l) && /(?<![\w-])blocking\b/i.test(l) && /\bopen\b/i.test(l))
+    .map((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.exec(l)[1]);
+}
+
+function openBlockingQuestions(file) {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.test(l) && /(?<![\w-])blocking\b/i.test(l) && /\bopen\b/i.test(l))
+    .map((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.exec(l)[1]);
+}
+
+// A finished role must leave a usable handoff: the coordinator routes on
+// "Continue automation", and a role that silently skipped its block hands the
+// next stage nothing. Checks presence, not prose.
+function handoffDefects(memDir, role) {
+  const f = join(memDir, `${role}.md`);
+  if (!existsSync(f)) return [`.agent-memory/${role}.md missing (SharedRules §4)`];
+  const text = readFileSync(f, "utf8");
+  const defects = [];
+  if (!/^###\s/m.test(text)) defects.push(`.agent-memory/${role}.md has no "### " handoff block`);
+  if (!/Continue automation\s*\**\s*:/i.test(text))
+    defects.push(`.agent-memory/${role}.md missing "Continue automation" — coordinator routes on it`);
+  if (!/Next agent\s*\**\s*:/i.test(text))
+    defects.push(`.agent-memory/${role}.md missing "Next agent"`);
+  return defects;
 }
 
 // Returns array of {file, lines} for handoff blocks exceeding the cap.
@@ -271,12 +318,18 @@ if (args.has("--self-check")) {
       [],
       `${AC_TRACE.declaredIn} template declares no real AC`,
     );
-  for (const n of AC_TRACE.reachedIn ?? [])
+  for (const { doc, fromStage } of AC_REACHED) {
     assert.deepEqual(
-      acsMissingIn(tpl(n), ["AC-01"]),
+      acsMissingIn(tpl(doc), ["AC-01"]),
       ["AC-01"],
-      `${n} template must not pre-cover a real AC`,
+      `${doc} template must not pre-cover a real AC`,
     );
+    if (fromStage)
+      assert.ok(
+        STAGE_ORDER.includes(fromStage),
+        `acTrace.reachedIn "${doc}": fromStage "${fromStage}" not in config.stages — the check would never fire`,
+      );
+  }
 
   // Config wiring: the pieces the kernel reads from harness.config.json must be
   // present and internally consistent, or every later check silently no-ops.
@@ -343,8 +396,106 @@ if (args.has("--self-check")) {
   assert.equal(deriveComplexity(v({ scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 2, testing: 2 })).effort, 12, "effort maxes at 12");
   assert.equal(deriveComplexity(v({ blastRadius: 2 })).label, "normal", "feature-wide blast floors at normal");
 
+  // openBlockingQuestions: table row only, both flags on the same row.
+  assert.deepEqual(
+    openBlockingQuestions_test(["| Q-01 | x | blocking | open |", "| Q-02 | y | blocking | answered |", "| Q-03 | z | non-blocking | open |", "prose blocking open"]),
+    ["Q-01"],
+  );
+
+  // handoffDefects: presence of the two fields the coordinator routes on.
+  {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const d = mkdtempSync(join(tmpdir(), "sh-"));
+    assert.equal(handoffDefects(d, "x").length, 1, "missing file is one defect");
+    writeFileSync(join(d, "x.md"), "### 2026-01-01 — x\n- **Next agent**: y\n- **Continue automation**: yes\n");
+    assert.deepEqual(handoffDefects(d, "x"), [], "complete handoff passes");
+    writeFileSync(join(d, "y.md"), "### 2026-01-01 — y\n- **Next agent**: z\n");
+    assert.equal(handoffDefects(d, "y").length, 1, "missing Continue automation is caught");
+    writeFileSync(join(d, "z.md"), "chỉ là văn xuôi, không có block\n");
+    assert.equal(handoffDefects(d, "z").length, 3, "no block, no fields");
+  }
+
+  // calibrate: the findings are the whole point — a rule that never fires is
+  // decoration, and one that fires on noise is worse.
+  {
+    const t = (o) => ({ taskComplexity: "normal", attempts: {}, outcome: { closedAt: "2026-01-01" }, ...o });
+    assert.equal(calibrate([]).tasks, 0, "no closed task → nothing to say");
+    assert.equal(calibrate([{ taskComplexity: "high" }]).tasks, 0, "unclosed task is not evidence");
+
+    // 3 of 4 tasks retried implementation → scope is scored too low
+    const retried = calibrate([
+      t({ attempts: { implementation: 2 } }),
+      t({ attempts: { implementation: 3 } }),
+      t({ attempts: { implementation: 2 } }),
+      t({}),
+    ]);
+    assert.ok(
+      retried.findings.some((f) => f.includes("scope")),
+      "repeated implementation retries should point at scope",
+    );
+
+    // a bug escaping a "trivial" task means the risk floors are too loose
+    const escaped = calibrate([t({ taskComplexity: "trivial", outcome: { closedAt: "2026-01-01", escapedBugs: 1 } })]);
+    assert.ok(escaped.findings.some((f) => f.includes("riskFloor")), "escaped bug from trivial → riskFloor finding");
+
+    // clean, low-retry history must NOT invent a finding
+    assert.deepEqual(calibrate([t({}), t({})]).findings, [], "clean history → no finding");
+  }
+
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// --calibrate: read closed tasks and report where the estimate was wrong.
+//
+// The vector (§5.1) is a guess made before the work; `attempts` and `outcome`
+// are what happened. This compares them. It prints evidence, never edits the
+// thresholds: a rule the harness silently rewrote is a rule nobody reviewed.
+// ---------------------------------------------------------------------------
+function calibrate(tasks) {
+  const closed = tasks.filter((t) => t.outcome?.closedAt);
+  if (!closed.length) return { tasks: 0, note: "no task has outcome.closedAt yet — nothing to learn from" };
+
+  const byLabel = {};
+  for (const t of closed) {
+    const l = t.taskComplexity ?? "unknown";
+    const b = (byLabel[l] ??= { n: 0, escaped: 0, rework: 0, retries: 0 });
+    b.n++;
+    b.escaped += t.outcome.escapedBugs ?? 0;
+    b.rework += t.outcome.reworkAfterReview ?? 0;
+    b.retries += Object.values(t.attempts ?? {}).reduce((n, v) => n + (v - 1), 0);
+  }
+
+  // A stage that keeps bouncing points at the dimension that feeds it.
+  const STAGE_DIM = {
+    fsd_review: "uncertainty",
+    technical_plan: "uncertainty",
+    implementation: "scope",
+    adversarial_review: "testing",
+  };
+  const retriesByStage = {};
+  for (const t of closed)
+    for (const [stage, n] of Object.entries(t.attempts ?? {}))
+      if (n > 1) (retriesByStage[stage] ??= { tasks: 0, extra: 0 }), (retriesByStage[stage].tasks++, retriesByStage[stage].extra += n - 1);
+
+  const findings = [];
+  for (const [stage, r] of Object.entries(retriesByStage)) {
+    const share = r.tasks / closed.length;
+    if (share >= 0.3 && STAGE_DIM[stage])
+      findings.push(
+        `${Math.round(share * 100)}% of closed tasks retried "${stage}" (${r.extra} extra runs) — "${STAGE_DIM[stage]}" is likely scored too low at bootstrap`,
+      );
+  }
+  for (const [label, b] of Object.entries(byLabel)) {
+    if (label === "trivial" && b.escaped > 0)
+      findings.push(`${b.escaped} bug(s) escaped from "trivial" tasks — the riskFloor thresholds (§5.1.1) are letting real risk through`);
+    if (label === "high" && b.n >= 5 && b.escaped === 0 && b.retries === 0)
+      findings.push(`${b.n} "high" tasks closed with no rework and no escaped bugs — the high threshold may be too eager (cost without benefit)`);
+  }
+
+  return { tasks: closed.length, byLabel, retriesByStage, findings };
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +534,7 @@ if (schema.properties?.docsPath)
   schema.properties.docsPath.pattern = `^${esc(CFG.tasksDir ?? "docs/tasks")}/${esc(GROUP_PREFIX)}.+/.+/?$`;
 const folders = findTaskFolders();
 const results = []; // {folder, errors:[], warnings:[]}
+const allTasks = []; // parsed task.agent.json, for --calibrate
 const taskIdMap = new Map(); // taskId -> [folder rel paths]
 
 for (const { sprint, task, path } of folders) {
@@ -487,6 +639,59 @@ for (const { sprint, task, path } of folders) {
   for (const o of oversizedHandoffBlocks(join(path, ".agent-memory")))
     warnings.push(`.agent-memory/${o.file}: ${o.lines} lines exceeds ${HANDOFF_BLOCK_CAP}`);
 
+  // 5a. Gate 2: no blocking question may stay open past fsd_review.
+  if (AC_TRACE.declaredIn && stageIdx > STAGE_ORDER.indexOf("fsd_review")) {
+    const open = openBlockingQuestions(join(path, AC_TRACE.declaredIn));
+    if (open.length)
+      errors.push(
+        `Gate 2: blocking question still open past fsd_review: ${open.join(", ")} — Agents.md §3`,
+      );
+  }
+
+  // 5c. Stage/status coherence: `reviewing` means every gate ran. Jumping
+  // straight there leaves the gates as decoration.
+  if (data.status === "reviewing" && data.currentStage !== "reviewing")
+    errors.push(`status=reviewing but currentStage="${data.currentStage}" — gates were skipped`);
+  if (GATE4_DONE.has(data.status)) {
+    const unfinished = (CFG.roles ?? []).filter(
+      (r) => ag[r] && !["done", "not_applicable", "skipped"].includes(ag[r].status),
+    );
+    if (unfinished.length)
+      errors.push(
+        `status=${data.status} but roles not finished: ${unfinished.map((r) => `${r}=${ag[r].status}`).join(", ")}`,
+      );
+  }
+
+  // A closed task with no outcome teaches nothing: --calibrate has no ground
+  // truth to compare the estimate against. Warning, not error — the work is
+  // already shipped, blocking a commit now helps no one.
+  if (data.status === "done" && !data.outcome?.closedAt)
+    warnings.push("status=done but outcome.closedAt missing — --calibrate cannot learn from this task (Agents.md §5.6)");
+
+  // 5b. Handoff: every role marked done must have left one.
+  for (const [role, info] of Object.entries(ag))
+    if (info?.status === "done")
+      for (const d of handoffDefects(join(path, ".agent-memory"), role)) errors.push(d);
+
+  // 8. AC traceability, checked per stage. An AC that never reached the plan is
+  // a Gate 3 failure; waiting for `reviewing` to say so means the implementer
+  // already built from a plan missing it.
+  const declared = AC_TRACE.declaredIn ? declaredACs(join(path, AC_TRACE.declaredIn)) : [];
+  if (declared.length) {
+    const sink = (data.updatedAt ?? "") >= AC_TRACE_SINCE ? errors : warnings;
+    for (const { doc, fromStage } of AC_REACHED) {
+      const due = fromStage
+        ? stageIdx >= STAGE_ORDER.indexOf(fromStage)
+        : GATE4_DONE.has(data.status);
+      if (!due) continue;
+      const miss = acsMissingFrom(join(path, doc), declared);
+      if (miss.length)
+        sink.push(
+          `AC not traced into ${doc} (${miss.length}/${declared.length}): ${miss.join(", ")} — SharedRules §9.1`,
+        );
+    }
+  }
+
   // 6. Gate-4 evidence when implementation is reported complete
   if (GATE4_DONE.has(data.status)) {
     const evName = GATE4_ARTIFACTS.evidence;
@@ -500,22 +705,10 @@ for (const { sprint, task, path } of folders) {
     // Without this, an implementer can jump straight to reviewing and skip the gate.
     if (GATE4_ARTIFACTS.adversarial && !existsSync(join(path, GATE4_ARTIFACTS.adversarial)))
       errors.push(`status=${data.status} but ${GATE4_ARTIFACTS.adversarial} missing (Gate 5 skipped)`);
-
-    // 8. AC traceability: declaredIn → every doc in reachedIn
-    const acs = AC_TRACE.declaredIn ? declaredACs(join(path, AC_TRACE.declaredIn)) : [];
-    if (acs.length) {
-      const sink = (data.updatedAt ?? "") >= AC_TRACE_SINCE ? errors : warnings;
-      for (const doc of AC_TRACE.reachedIn ?? []) {
-        const miss = acsMissingFrom(join(path, doc), acs);
-        if (miss.length)
-          sink.push(
-            `AC not traced into ${doc} (${miss.length}/${acs.length}): ${miss.join(", ")} — SharedRules §9.1`,
-          );
-      }
-    }
   }
 
   results.push({ folder: folderRel, errors, warnings });
+  allTasks.push(data);
 }
 
 // 7. Duplicate task ids (post-pass)
@@ -543,6 +736,22 @@ for (const [id, entries] of taskIdMap) {
 // ---------------------------------------------------------------------------
 const totalErr = results.reduce((s, r) => s + r.errors.length, 0);
 const totalWarn = results.reduce((s, r) => s + r.warnings.length, 0);
+
+if (CALIBRATE) {
+  const c = calibrate(allTasks);
+  if (AS_JSON) console.log(JSON.stringify(c, null, 2));
+  else {
+    console.log(`\n── calibration · ${c.tasks} closed task(s) ──`);
+    if (c.note) console.log(`   ${c.note}`);
+    for (const [label, b] of Object.entries(c.byLabel ?? {}))
+      console.log(`   ${label.padEnd(8)} n=${b.n}  escaped=${b.escaped}  rework=${b.rework}  stage-retries=${b.retries}`);
+    if (c.findings?.length) {
+      console.log("\n   findings:");
+      for (const f of c.findings) console.log(`   • ${f}`);
+    } else if (c.tasks) console.log("\n   no threshold looks wrong yet");
+  }
+  process.exit(0);
+}
 
 if (AS_JSON) {
   console.log(JSON.stringify({ tasks: results.length, totalErr, totalWarn, results }, null, 2));

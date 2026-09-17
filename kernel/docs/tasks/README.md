@@ -68,6 +68,10 @@ Chạy `node scripts/validate-tasks.mjs` (không cần dependency; đọc `harne
 - Trần dòng [§8](../agents/SharedRules.md) (00≤80, 01≤250, 02≤150, 03≤200, block handoff ≤30).
 - `branchType` ↔ implementer (feature/hotfix → `fe-implementer`; bugfix → `fe-fix`).
 - Khi `status ∈ {reviewing, mr_created, done}`: `08-Test-Evidence.md` phải có bằng chứng thật (lệnh + kết quả pass/exit) — chống claim test giả ([Gate 4](../Agents.md) §3).
-- **Truy vết AC** ([SharedRules §9.1](../agents/SharedRules.md)): mọi `AC-nn` khai trong bảng AC của `02-FSD-Review.md` phải xuất hiện ở `03-Technical-Plan.md` **và** `08-Test-Evidence.md`. Task có `updatedAt ≥ 2026-07-28` → **error**; task cũ hơn → **warning** (backlog, mốc `AC_TRACE_SINCE` trong script).
+- **Truy vết AC theo stage** ([SharedRules §9.1](../agents/SharedRules.md)): mỗi đích trong `acTrace.reachedIn` được kiểm **ngay khi stage của nó tới** — AC rơi khỏi `03-Technical-Plan.md` fail ở **Gate 3**, không đợi tới lúc review. Task có `updatedAt ≥ mốc` → **error**; cũ hơn → **warning**.
+- **Handoff** ([SharedRules §4](../agents/SharedRules.md)): role nào `status = done` thì `.agent-memory/{role}.md` phải có block `### ` kèm `Next agent` + `Continue automation` — coordinator route dựa vào đó.
+- **Gate 2**: không còn câu hỏi `blocking` + `open` sau khi qua `fsd_review`.
+- **Stage/status khớp nhau**: `reviewing` đòi `currentStage = reviewing` và mọi role đã kết thúc — không nhảy cóc qua gate.
+- **Độ phức tạp**: `taskComplexity` phải khớp thứ `complexity.vector` suy ra ([Agents.md §5.1.1](../Agents.md)).
 
 Exit code `1` nếu có error → dùng được trong **pre-commit hook** hoặc **CI**. Flag: `--json` (máy đọc), `--no-warn`, `--quiet`, `--self-check` (kiểm chính logic của script, không đọc task).

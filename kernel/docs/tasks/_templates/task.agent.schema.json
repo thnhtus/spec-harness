@@ -150,6 +150,24 @@
         "adversary"
       ]
     },
+    "outcome": {
+      "type": "object",
+      "description": "What actually happened after the task shipped. This is the only ground truth the harness gets: everything else is an estimate made before the work. Filled when the task closes (status=done), by whoever closes it.",
+      "properties": {
+        "escapedBugs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Bugs found after this task left the harness (QC, staging, production). >0 means the gates passed something they should have caught."
+        },
+        "reworkAfterReview": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Times the task came back for code changes after status=reviewing (review comments, MR rejections)."
+        },
+        "closedAt": { "type": "string", "minLength": 1 },
+        "note": { "type": "string", "description": "One line: what the estimate missed, in plain words." }
+      }
+    },
     "attempts": {
       "type": "object",
       "description": "How many times each stage actually ran. Optimal is 1; >1 means a gate sent it back. This is the harness's Step Efficiency signal — rework is measured, not estimated.",

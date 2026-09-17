@@ -81,7 +81,7 @@ Hay gặp nhất trong doc của agent: câu chốt một dòng lặp lại ý v
 
 ## 6. Giá trị `status` trong `task.agent.json`
 
-Trường chính: `taskId, taskName, clickupUrl, repoName, sprintNumber, developer, branchType, layer, taskComplexity, currentStage, status, branch, docsPath, agents.{role}.status, createdAt, updatedAt`. Trường **tuỳ chọn**: `branchActual` (nhánh thật khi khác `branch` quy ước — §3), `parentTaskId` (task cha trên tracker nếu có), `complexity` (vector — [`../Agents.md` §5.1](../Agents.md)), `attempts` (số lần mỗi stage chạy lại — §5.5).
+Trường chính: `taskId, taskName, clickupUrl, repoName, sprintNumber, developer, branchType, layer, taskComplexity, currentStage, status, branch, docsPath, agents.{role}.status, createdAt, updatedAt`. Trường **tuỳ chọn**: `branchActual` (nhánh thật khi khác `branch` quy ước — §3), `parentTaskId` (task cha trên tracker nếu có), `complexity` (vector — [`../Agents.md` §5.1](../Agents.md)), `attempts` (số lần mỗi stage chạy lại — §5.5), `outcome` (kết quả sau khi ship — §5.6, **người điền khi đóng task**).
 
 `taskComplexity ∈ {trivial, normal, high}` — **dẫn xuất** từ `complexity.vector` bằng công thức [`../Agents.md` §5.1.1](../Agents.md), không tự phán; validator tính lại và chặn nếu lệch. Quyết định độ nặng Gate 1/2 (§5.2), model mỗi stage (§5.3), và điểm dừng hỏi người (§5.4). Role sau chỉ được **nâng**, không được hạ.
 
@@ -96,6 +96,8 @@ Trường chính: `taskId, taskName, clickupUrl, repoName, sprintNumber, develop
 | `done` | MR merged | đóng task |
 
 Chỉ user chuyển `reviewing → mr_created` (push + MR thật).
+
+Khi chuyển sang `done`: điền `outcome` ([`../Agents.md` §5.6](../Agents.md)) — `escapedBugs`, `reworkAfterReview`, `closedAt`. Bỏ trống thì `--calibrate` không có gì để đối chiếu, và ngưỡng §5.1.1 mãi là phỏng đoán ban đầu.
 
 ---
 
