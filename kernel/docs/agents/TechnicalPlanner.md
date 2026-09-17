@@ -15,7 +15,8 @@ Biến AC đã rõ thành **kế hoạch chạy được**: file `src/` sẽ đ�
 1. Đọc `02-FSD-Review.md` (một lần). Gate 2 chưa qua / AC mơ hồ → **không lập plan**, trả về `fsd-reviewer`.
 2. Mở **đúng** màn hình [`../fsd/`](../fsd/README.md) + contract [`../api/`](../api/README.md) liên quan (tra README trước, không đọc cả thư mục).
 3. Khảo sát `src/` thật (Glob/Grep) để xác nhận path — **không đoán**.
-4. Điền 4 bảng (§3) vào `03-Technical-Plan.md`.
+4. **Đối chiếu lại `complexity.vector`** ([`../Agents.md` §5.1.3](../Agents.md)): khảo sát `src/` xong mà task rộng hơn hẳn (thêm tầng phụ thuộc, migration, đổi contract) → cập nhật vector, `assessedAt: "technical_plan"`, tính lại `taskComplexity`. Chỉ nâng, không hạ. `reversibility ≥ 3` → Risk bắt buộc kèm **cách rollback**; không có cách rollback → `needs_clarification`.
+5. Điền 4 bảng (§3) vào `03-Technical-Plan.md`.
 5. Đánh giá Gate 3 (§4), handoff (§5).
 
 ## 3. Cấu trúc `03-Technical-Plan.md` (4 bảng, đúng thứ tự)

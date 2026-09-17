@@ -53,7 +53,7 @@ Từ tracker (MCP) + payload:
 - `branch` — theo công thức tên nhánh ở [`./ProjectRules.md` §3](./ProjectRules.md) (cùng `slug` với `docsPath`); nếu user đang đứng sẵn trên nhánh làm việc không-protected → thêm `branchActual` = nhánh hiện tại.
 - `parentTaskId` — task cha tracker nếu có (tuỳ chọn).
 - `docsPath` — `docs/tasks/sprint-{sprintNumber}/{taskId}-{slug}/`.
-- `taskComplexity` — `trivial` \| `normal` \| `high` (mặc định `normal`; định nghĩa + skip rule: [`../Agents.md`](../Agents.md) §5).
+- `complexity.vector` — trích **8 chiều** theo [`../Agents.md` §5.1](../Agents.md) (6 chiều công sức + `blastRadius` + `reversibility`), ghi vào `task.agent.json` **và** `00-Metadata.md`. `taskComplexity` **không tự phán** — tính bằng công thức §5.1.1; validator kiểm lại, lệch là error. Mô tả task quá mỏng để trích → chấm chiều đó `1` và ghi lý do ở `complexity.note`.
 
 ### Gate khởi tạo
 

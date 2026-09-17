@@ -91,6 +91,30 @@
       "minLength": 1,
       "description": "Optional. Distinct slug disambiguating multiple folders that share one ClickUp taskId (separate sub-bugs of the same ClickUp item). Required to be distinct per folder when a taskId is reused."
     },
+    "complexity": {
+      "type": "object",
+      "description": "Complexity vector (Agents.md §5.1). taskComplexity is DERIVED from it by formula §5.1.1 — the validator recomputes and rejects a mismatch.",
+      "required": ["vector"],
+      "properties": {
+        "vector": {
+          "type": "object",
+          "required": ["scope", "uncertainty", "dependency", "dataImpact", "integration", "testing", "blastRadius", "reversibility"],
+          "properties": {
+            "scope": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "uncertainty": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "dependency": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "dataImpact": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "integration": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "testing": { "type": "integer", "minimum": 0, "maximum": 2 },
+            "blastRadius": { "type": "integer", "minimum": 0, "maximum": 4 },
+            "reversibility": { "type": "integer", "minimum": 0, "maximum": 4 }
+          }
+        },
+        "effort": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "assessedAt": { "type": "string", "minLength": 1 },
+        "note": { "type": "string" }
+      }
+    },
     "docsPath": {
       "type": "string",
       "$comment": "pattern injected from harness.config.json → tasksDir + groupPrefix"
@@ -125,6 +149,11 @@
         "fe-fix",
         "adversary"
       ]
+    },
+    "attempts": {
+      "type": "object",
+      "description": "How many times each stage actually ran. Optimal is 1; >1 means a gate sent it back. This is the harness's Step Efficiency signal — rework is measured, not estimated.",
+      "additionalProperties": { "type": "integer", "minimum": 1 }
     },
     "createdAt": { "type": "string", "minLength": 1 },
     "updatedAt": { "type": "string", "minLength": 1 }

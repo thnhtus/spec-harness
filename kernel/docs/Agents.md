@@ -106,13 +106,147 @@ Quy tắc nhánh (tạo từ `develop` với `--ff-only`, ngoại lệ nhánh us
 
 ---
 
-## 5. Quy tắc skip
+## 5. Đánh giá độ phức tạp → chọn độ nặng luồng & model
 
-`taskComplexity ∈ {trivial, normal, high}` (định nghĩa tại [`agents/SharedRules.md` §6](./agents/SharedRules.md)). Khi `taskComplexity = trivial`:
+`taskComplexity` quyết định **hai** thứ: Gate 1/2 chạy đầy hay light, và role nào đáng dùng model đắt. Đoán sai theo hướng thấp thì gate thành hình thức; đoán sai theo hướng cao thì đốt tiền vào task sửa một dòng CSS.
 
-- **`fsd-writer` chạy light:** `01-FSD.md` đủ khung IEEE tối thiểu (Introduction + Functional Requirements có `shall` + trace), rút gọn mục non-functional/data khi task không chạm. Gate 1 vẫn phải PASS.
-- **`fsd-reviewer` chạy light:** vẫn trích AC tối thiểu + ID liên quan; bỏ được phân tích risk dài + câu hỏi BA nếu intent đã rõ. Gate 2 vẫn phải PASS.
-- `orchestrator`, `technical-planner`, implementer, `adversary` **không** được skip.
+### 5.1. Chấm điểm — LLM trích, công thức tính
+
+**Agent không tự phán "task này 7/10".** Con số đó không kiểm lại được và không debug được. Agent chỉ **trích từng chiều**; điểm và phân loại do **công thức** ra. Vector lưu vào `task.agent.json → complexity`, validator kiểm công thức khớp phân loại.
+
+**Sáu chiều công sức**, mỗi chiều `0` (không) · `1` (vừa) · `2` (nhiều):
+
+| Chiều | `0` | `1` | `2` |
+| --- | --- | --- | --- |
+| `scope` | 1 file | vài file, một module | nhiều module / nhiều tầng |
+| `uncertainty` | yêu cầu rõ hết | vài chỗ suy ra được | phải hỏi BA mới làm được |
+| `dependency` | không phụ thuộc | phụ thuộc module có sẵn | phụ thuộc service/repo khác |
+| `dataImpact` | không chạm dữ liệu | đọc/ghi qua API sẵn có | đổi schema · migration · đổi shape dùng chung |
+| `integration` | không | gọi API sẵn có | thêm/đổi contract · hệ thống ngoài |
+| `testing` | test sẵn phủ được | thêm test thường | khó tái hiện · cần e2e/thủ công |
+
+`effort = tổng` (0–12).
+
+**Hai chiều rủi ro**, tách riêng vì chúng **không đi cùng kích thước**:
+
+| Chiều | Ý nghĩa | Thang |
+| --- | --- | --- |
+| `blastRadius` | hỏng thì lan tới đâu | `0` một chỗ · `1` một module · `2` một feature · `3` một service · `4` toàn hệ thống |
+| `reversibility` | rollback khó tới đâu | `0` sửa lại là xong · `1` revert commit · `2` cần deploy lại · `3` phải sửa dữ liệu · `4` không lùi được (migration xoá cột, tiền đã chuyển) |
+
+### 5.1.1. Công thức (deterministic — không phải LLM quyết)
+
+```
+effort = scope + uncertainty + dependency + dataImpact + integration + testing   # 0–12
+
+base        = trivial khi effort ≤ 2 · normal khi effort ≤ 6 · high khi effort ≥ 7
+riskFloor   = high     khi blastRadius ≥ 3  hoặc reversibility ≥ 3
+            = normal   khi blastRadius ≥ 2  hoặc reversibility ≥ 2
+            = trivial  còn lại
+
+taskComplexity = max(base, riskFloor)          # trivial < normal < high
+```
+
+`riskFloor` là lý do bug race condition trong websocket không bị chấm `trivial`: `effort` có thể là 2 (sửa một file) nhưng `blastRadius = 3` kéo lên `high`. Ngược lại, đổi copy ở 12 file là `effort` cao mà `blastRadius = 0` — vẫn chỉ `normal`, không đáng đốt model đắt.
+
+### 5.1.2. Ghi vào `task.agent.json`
+
+```json
+"complexity": {
+  "vector": { "scope": 2, "uncertainty": 1, "dependency": 2, "dataImpact": 2,
+              "integration": 1, "testing": 3, "blastRadius": 2, "reversibility": 1 },
+  "effort": 9,
+  "assessedAt": "bootstrap",
+  "note": "chạm resolver nhân viên + notification; test cần mock queue"
+}
+```
+
+`taskComplexity` (trường cũ) vẫn là nơi đọc nhanh; `complexity.vector` là **cơ sở** của nó. Validator tính lại công thức từ vector — lệch với `taskComplexity` là **error**. Đó là chỗ "deterministic" có răng: agent không ghi được vector thấp rồi tuyên bố `high`, hay ngược lại.
+
+### 5.1.3. Đánh giá lại sau khi khảo sát
+
+Đánh giá ở bootstrap dựa trên mô tả task, mà mô tả task hay nói thiếu. `technical-planner` khảo sát `src/` xong **phải** đối chiếu lại vector:
+
+- Vector cũ vẫn đúng → không làm gì.
+- Rộng hơn hẳn (phát hiện thêm tầng phụ thuộc, migration, contract đổi) → **cập nhật vector**, ghi `assessedAt: "technical_plan"` + lý do, tính lại `taskComplexity`.
+
+Chỉ được **nâng**. Hạ để chạy nhẹ đi là né gate — muốn hạ thì `needs_clarification`, hỏi user.
+
+Vector tăng lên `high` sau khảo sát → stage sau dùng model theo cột `high` (§5.3), và nếu `blastRadius ≥ 3` thì planner nêu ở Risk để user biết trước khi implementer chạy.
+
+### 5.2. Độ nặng luồng
+
+Không mức nào bỏ được stage hay gate. `trivial` chỉ làm Gate 1/2 **ngắn lại**:
+
+| | `trivial` | `normal` | `high` |
+| --- | --- | --- | --- |
+| `fsd-writer` | khung IEEE tối thiểu: Introduction + Functional Requirements có `shall` + trace. Rút gọn non-functional/data khi task không chạm | đầy đủ | đầy đủ + soi kỹ ràng buộc & phụ thuộc |
+| `fsd-reviewer` | AC tối thiểu + ID liên quan; bỏ được risk dài/câu hỏi BA nếu intent đã rõ | đầy đủ | thêm phân tích risk + đối chiếu chéo spec |
+| `technical-planner` · implementer · `adversary` | **không** rút gọn | **không** rút gọn | **không** rút gọn |
+
+Gate 1 và Gate 2 vẫn phải PASS ở cả ba mức.
+
+### 5.3. Chọn model theo **tier**, không theo tên hãng
+
+Kernel không biết bạn chạy Claude Code, Codex, hay CLI khác — nên nó chỉ nói **ba tier**. Ánh xạ tier → tên model thật nằm ở `harness.config.json → models`:
+
+```json
+"models": { "cheap": "haiku", "mid": "sonnet", "strong": "opus" }
+```
+
+Đổi CLI thì đổi đúng ba dòng đó (`gpt-5-mini` / `gpt-5` / `gpt-5-pro`, `gemini-flash` / `gemini-pro` / …). Toàn bộ bảng dưới không đổi. Để `models` rỗng `{}` = dùng mặc định của CLI, không định tuyến gì.
+
+Nguyên tắc: **tier rẻ cho việc đọc-và-chép, tier mạnh cho việc phán đoán.** Stage nào sai thì cả chuỗi sau sai theo — đó là chỗ trả tiền đáng.
+
+| Role | trivial | normal | high | Vì sao |
+| --- | --- | --- | --- | --- |
+| `orchestrator` | cheap | cheap | mid | đọc tracker, điền template — ít phán đoán |
+| `fsd-writer` | cheap | mid | mid | chuyển mô tả thành requirement có cấu trúc |
+| `fsd-reviewer` | mid | mid | strong | **AC sai ở đây thì mọi stage sau đều sai** |
+| `technical-planner` | mid | mid | strong | chọn sai chỗ sửa → implementer làm lại từ đầu |
+| `fe-implementer` / `fe-fix` | mid | mid | strong | viết code thật |
+| `adversary` | mid | mid | strong | phải tìm ra cái implementer bỏ sót — cùng tier thì cùng điểm mù |
+
+**Tại sao `adversary` không hạ xuống cheap:** role này tồn tại để nhìn ra thứ người làm không nhìn ra. Tier yếu hơn implementer thì nó chỉ gật đầu.
+
+**Áp dụng:** file `.claude/agents/{role}.md` **không ghi `model:`** — mặc định là model của phiên. `/start-task` tra bảng trên + `config.models` rồi truyền `model` khi dispatch. CLI không hỗ trợ chọn model per-subagent → bỏ qua, mọi stage chạy model của phiên; harness vẫn đúng, chỉ không tiết kiệm.
+
+**Đừng tối ưu ngược:** hạ tier của `fsd-reviewer`/`adversary` để tiết kiệm là bỏ tiền mua rủi ro — một AC rơi hoặc một bug lọt tốn nhiều hơn toàn bộ tiền model của task.
+
+### 5.4. Hai chiều rủi ro dùng ngoài việc chọn model
+
+`blastRadius` và `reversibility` không chỉ kéo `taskComplexity`. Chúng còn quyết định **dừng ở đâu để hỏi người**:
+
+| Điều kiện | Harness làm gì |
+| --- | --- |
+| `reversibility ≥ 3` (phải sửa dữ liệu, hoặc không lùi được) | `technical-planner` nêu thành Risk bắt buộc + **cách rollback**; không có cách rollback → `needs_clarification`, hỏi user trước khi implementer chạy |
+| `blastRadius ≥ 3` (một service trở lên) | `adversary` **không** được kết luận PASS chỉ bằng test scope của task — phải kiểm thêm đường lân cận, hoặc ghi rõ giới hạn trong `09` |
+| `uncertainty = 2` (phải hỏi BA) | Gate 2 chặn sẵn: Q `blocking` còn `open` thì không qua được (§3) |
+
+Đây là chỗ vector hơn một con số: *"code không nhiều nhưng không lùi được"* là tình huống có thật, và một con số 42 không nói ra được điều đó.
+
+### 5.5. Đo lại sau khi chạy: `attempts`
+
+Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** là task phải làm lại bao nhiêu lần.
+
+`task.agent.json → attempts` đếm số lần mỗi stage thực sự chạy. Tối ưu là `1`. Mỗi lần gate trả về là `+1`:
+
+```json
+"attempts": { "fsd_write": 1, "fsd_review": 2, "technical_plan": 1, "implementation": 2 }
+```
+
+Đọc nó theo cặp — chỗ bị trả về nói ra chỗ hỏng thật:
+
+| Dấu hiệu | Nghĩa |
+| --- | --- |
+| `fsd_review` ≥ 2 | FSD viết thiếu, hoặc yêu cầu vốn mơ hồ — `uncertainty` trong vector chấm thấp hơn thực tế |
+| `technical_plan` ≥ 2 | AC chưa đủ rõ để lập plan; Gate 2 qua quá dễ |
+| `implementation` ≥ 2 | plan sai chỗ sửa, hoặc scope Gate 3 thiếu |
+| `adversarial_review` ≥ 2 | evidence lần đầu không tái lập được — chỗ này đúng là việc của Gate 5 |
+
+`attempts` ≥ 3 ở một stage → validator cảnh báo. Không phải lỗi (có task khó thật), nhưng đó là tín hiệu đáng đọc khi chỉnh prompt hoặc khi nên tách task.
+
+**Dùng nó để sửa vector, đừng để nó nằm im.** Task nào cũng `implementation: 2` thì hoặc `scope` đang bị chấm thấp, hoặc Gate 3 chưa liệt kê đủ file. Đó là dữ liệu thật để hiệu chỉnh §5.1, thay cho việc đoán trọng số.
 
 ---
 

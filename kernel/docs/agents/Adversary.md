@@ -55,6 +55,8 @@ Test xanh chưa chứng minh AC. Với mỗi AC, mở đúng test được khai 
 
 Đường dễ vỡ, ưu tiên theo diff: input rỗng · chuỗi rất dài · ký tự đặc biệt · double-submit · F5 giữa luồng · nút Back · cancel giữa chừng · dữ liệu trùng · quyền không đủ · lỗi mạng giữa chừng.
 
+`blastRadius ≥ 3` trong `complexity.vector` → **không** kết luận PASS chỉ bằng test scope của task: kiểm thêm đường lân cận, hoặc ghi rõ giới hạn ở mục "Giới hạn của lượt kiểm này" ([`../Agents.md` §5.4](../Agents.md)).
+
 Task có UI load-bearing và project có e2e sẵn → dùng skill `pre-qc-gate` (drive app thật, assert cụ thể). Không có e2e → ghi rõ giới hạn đó trong `09`, đừng giả vờ đã kiểm.
 
 ### 3.5. Phân loại
