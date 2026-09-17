@@ -1,0 +1,153 @@
+{
+  "openapi": "3.0.1",
+  "info": { "title": "Sample Service", "version": "1.0.0" },
+  "paths": {
+    "/widgets": {
+      "get": {
+        "tags": ["widgets"],
+        "summary": "List widgets",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by status",
+            "schema": { "type": "string", "enum": ["active", "archived"] }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "format": "int32" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of widgets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Widget" }
+                }
+              }
+            }
+          },
+          "400": { "description": "Bad request" }
+        }
+      },
+      "post": {
+        "tags": ["widgets"],
+        "summary": "Create a widget",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WidgetCreate" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Widget" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/widgets/{id}": {
+      "get": {
+        "tags": ["widgets"],
+        "summary": "Get a widget by id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Widget identifier",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The widget",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Widget" }
+              }
+            }
+          },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+    "/trees": {
+      "get": {
+        "tags": ["trees"],
+        "summary": "Get a recursive tree (exercises the $ref cycle guard)",
+        "responses": {
+          "200": {
+            "description": "A tree node",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TreeNode" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "WidgetBase": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "description": "Display name" },
+          "color": { "type": "string" }
+        }
+      },
+      "WidgetCreate": {
+        "allOf": [
+          { "$ref": "#/components/schemas/WidgetBase" },
+          {
+            "type": "object",
+            "properties": {
+              "quantity": { "type": "integer", "format": "int32" }
+            }
+          }
+        ]
+      },
+      "Widget": {
+        "allOf": [
+          { "$ref": "#/components/schemas/WidgetBase" },
+          {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string", "description": "Server-assigned id" },
+              "createdAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        ]
+      },
+      "TreeNode": {
+        "type": "object",
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string" },
+          "children": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/TreeNode" }
+          },
+          "parent": { "$ref": "#/components/schemas/TreeNode" }
+        }
+      }
+    }
+  }
+}

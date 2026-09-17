@@ -1,0 +1,10 @@
+{
+  "workspaceId": "<tracker-workspace-id>",
+  "documents": [
+    {
+      "name": "<tên doc>",
+      "documentId": "<doc-id>",
+      "note": "Ghi lại mốc sync ở đây: ngày, module nào đổi, open question nào mở/đóng."
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Document To IEEE SRS"
+  short_description: "Turn source docs into an ISO/IEC/IEEE 29148:2018 SRS"
+  default_prompt: "Use $document-to-ieee-srs to read source material and produce a structured Software Requirements Specification conforming to ISO/IEC/IEEE 29148:2018."
