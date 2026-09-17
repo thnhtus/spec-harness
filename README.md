@@ -35,7 +35,7 @@ bash spec-harness/install.sh <project-root>
 
 Cách đầu tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách hai (script báo rõ và dừng, không cài nửa vời).
 
-Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, cắm symlink `.git/hooks/pre-commit`, rồi chạy `--self-check`. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
+Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, cắm git hook (tôn trọng `core.hooksPath` nếu project dùng husky/lefthook), rồi chạy `--self-check`. Project đã có `pre-commit` riêng → installer không đè mà **cảnh báo to**: gate chưa cắm nghĩa là harness chỉ còn là markdown. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
 
 Xong còn 3 việc tay:
 
