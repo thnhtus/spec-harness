@@ -51,12 +51,4 @@ Ba thứ validator bắt mà con người hay bỏ sót:
 - **Evidence giả** — `08` viết "mọi thứ đều pass" nhưng không có lệnh nào được chạy. Phải có **cả** lệnh **và** kết quả mới tính.
 - **Template chưa điền** — bản copy nguyên khuôn không được phép thoả mãn traceability (đó là lý do placeholder dùng `AC-nn`, và self-check có regression test cho đúng điều này).
 
-## Cái KHÔNG mang theo được
 
-~40% giá trị của harness gốc là rule sinh từ sự cố thật: cấm `git stash -u` vì nó từng xoá mất một stage hoàn chỉnh · lock toàn máy khi chạy test vì OOM đa tiến trình · copy-on-write `node_modules` thay symlink vì `tsBuildInfoFile` dùng chung gây lỗi type ảo · helper riêng cho dropdown vì nó từng ngốn 11 phút của một implementer.
-
-Không rule nào trong số đó theo sang project khác được. Kernel cho bạn **bộ xương + kỷ luật**; `ProjectRules.md §2/§7` của project mới vẫn phải tự trả giá mà có. Ai bán "universal harness" mà không nói câu này là đang bán vỏ.
-
-## Nguồn gốc
-
-Tách từ harness của `flowhub-studio-fe`. Bản parameterized được kiểm chứng bằng **differential test** trên chính 240 task đó: cùng 240 task, cùng 5 error, cùng 160 warning, diff = 0 so với bản hardcoded.
