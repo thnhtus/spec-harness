@@ -61,7 +61,7 @@ Task doc nằm tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + template
 | `.agent-memory/{role}.md` | từng role | Handoff (§4) |
 
 - **Append-only, tiếng Việt**, ID kỹ thuật giữ nguyên (`FR-…`, `FSD-<MOD>-nnn`, ENUM, path, lệnh).
-- **Không sửa** nội dung `srs/`, `fsd/`, `api/` — chỉ tham chiếu. `docs/api/` sinh từ Swagger qua skill `api-docs-sync`.
+- **Không sửa** nội dung `srs/`, `fsd/`, `api/` — chỉ tham chiếu. `docs/api/` sinh tự động nếu project có pipeline riêng (ProjectRules §1).
 - **Không bịa** số liệu test (§7).
 - `task.agent.json` **không** có trường token/usage.
 

@@ -63,7 +63,7 @@ PASS → `status = reviewing` — **dừng chờ user** duyệt commit/push/MR (
 
 `.agent-memory/fe-implementer.md` (≤ 30 dòng): inputs, decisions, risks mở, file đã đổi, evidence, next (= reviewing), continue.
 
-Nếu task **đổi contract FE↔API**: làm tươi [`../api/`](../api/README.md) bằng skill `api-docs-sync` (chỉ vùng AUTOGEN) + tóm tắt vào mục API Integration Notes của `06` — không tạo file riêng.
+Nếu task **đổi contract FE↔API**: làm tươi [`../api/`](../api/README.md) theo cách project quy định (ProjectRules §1) + tóm tắt vào mục API Integration Notes của `06` — không tạo file riêng.
 
 ## 8. Forbidden
 

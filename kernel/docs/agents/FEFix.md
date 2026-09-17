@@ -30,7 +30,7 @@
 
 - **Minimal-diff:** không refactor lân cận, không đổi tên prop, không restyle, không nâng version, không "dọn dẹp tiện tay".
 - **Không che triệu chứng:** không `@ts-ignore` giấu lỗi type, không nuốt lỗi axios, không ẩn state UI, không tắt/skip test sẵn có đang fail.
-- Bug do lệch contract FE↔API → không vá FE "chịu đựng" âm thầm: log quyết định vào `06` (API Integration Notes) + làm tươi `docs/api/` bằng skill `api-docs-sync`.
+- Bug do lệch contract FE↔API → không vá FE "chịu đựng" âm thầm: log quyết định vào `06` (API Integration Notes) + làm tươi `docs/api/` theo cách project quy định (ProjectRules §1).
 
 ## 4. Output bổ sung (so với FEImplementer)
 

@@ -32,7 +32,16 @@ Thêm API mới đi theo chuỗi `interfaces/ → api/ → queries/ → pages|co
 | Endpoint | Method | Request (FE gửi) | Response (FE đọc) | Status codes | Nguồn `api/` |
 | --- | --- | --- | --- | --- | --- |
 
-Field không có trong `api/` → `unavailable` + nêu ở Risk. Task không đụng API → ghi rõ "Không phụ thuộc API mới".
+**Thiếu shape thì leo thang, đừng bỏ cuộc sớm** — `unavailable` là bậc cuối, không phải bậc đầu:
+
+1. **`api/` có đủ** → dùng, trích file làm nguồn.
+2. **Repo BE nằm cùng cấp** (đường dẫn khai ở [`./ProjectRules.md` §1](./ProjectRules.md)) → **đọc thẳng source BE**: route → handler/use-case → DTO response → enum. Trích `file:line` của BE làm nguồn, ngang hàng `api/`. BE là **read-only** — không sửa gì ngoài repo đích.
+3. **Không có repo BE cạnh** → làm tươi `api/` từ Swagger/OpenAPI bằng skill `api-docs-sync` (khai URL service ở `services.json`; project dùng cách khác thì ghi ở [`./ProjectRules.md` §1](./ProjectRules.md)).
+4. **Cả ba đều không ra** → `unavailable` + nêu ở Risk.
+
+Ghi rõ đã tới bậc nào trong cột nguồn — người đọc plan cần biết contract này *đọc được* hay *đoán*.
+
+Task không đụng API → ghi rõ "Không phụ thuộc API mới".
 
 **3.3. Test plan** — chỉ lệnh one-shot từ [`./SharedRules.md` §7](./SharedRules.md). Cột **Covers AC** là bắt buộc — mọi AC của `02` phải xuất hiện ở đây hoặc ở bảng AC-manual bên dưới ([`./SharedRules.md` §9.1](./SharedRules.md)):
 
