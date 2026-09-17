@@ -27,7 +27,7 @@ Repo đích + các repo sibling (nếu có): [`agents/ProjectRules.md` §3](./ag
 
 Tracker = yêu cầu · Git host = nhánh/MR · Design tool = thiết kế — qua MCP, **không bịa**; trường thiếu ghi `unavailable`. Danh sách server cụ thể: [`agents/ProjectRules.md` §1](./agents/ProjectRules.md). Quy tắc đầy đủ + kỷ luật payload (summary-first, metadata-first): [`agents/SharedRules.md` §1 + §8](./agents/SharedRules.md).
 
-Artifact nội bộ chỉ **tham chiếu**, không sửa: [`srs/`](./srs/README.md) (`FR-`/`NFR-`/`EXT-`/`DATA-`/`BR-`) · [`fsd/`](./fsd/README.md) (`FSD-<MOD>-nnn`, per-node `11.1`–`11.11`) · [`api/`](./api/README.md) (AUTOGEN từ Swagger, skill `api-docs-sync`).
+Artifact nội bộ chỉ **tham chiếu**, không sửa: [`srs/`](./srs/README.md) (`FR-`/`NFR-`/`EXT-`/`DATA-`/`BR-`) · [`fsd/`](./fsd/README.md) (`FSD-<MOD>-nnn`, per-node `11.1`–`11.11`) · [`api/`](./api/README.md) (sinh tự động nếu project có pipeline riêng — xem ProjectRules §1).
 
 ## 4. Bí mật & dữ liệu nhạy cảm
 

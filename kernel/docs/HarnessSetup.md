@@ -75,7 +75,7 @@ Sáu `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`
 Ràng buộc khi sinh:
 
 - **KHÔNG** sửa `.claude/settings.json` / `.claude/settings.local.json` — harness không cài hook.
-- **KHÔNG** đụng `.claude/skills/api-docs-sync`.
+- **KHÔNG** đụng skill riêng của project trong `.claude/skills/` (ngoài skill harness ship kèm).
 - Re-generate chỉ thay phần giữa marker; nội dung ngoài marker ghép lại nguyên vẹn.
 - File role là "con trỏ" — quy trình thật ở `docs/agents/{Role}.md`, tránh trùng lặp lệch pha.
 
