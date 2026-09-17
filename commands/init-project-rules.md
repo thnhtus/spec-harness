@@ -33,6 +33,8 @@ Chạy song song, đọc kết quả rồi mới viết:
 | Tên nhánh đang dùng (§3) | `git branch --format='%(refname:short)' \| head -20` — suy ra công thức thật của team |
 | Lệnh test/lint/build (§7) | `scripts` trong `package.json`, `Makefile`, `justfile`, `tox.ini`, CI workflow (`.github/workflows/*.yml`) |
 | Lệnh watch/server cấm agent (§7) | cùng nguồn — lệnh nào không tự kết thúc (`dev`, `watch`, `serve`, `--watch`) |
+| Repo BE cùng cấp (§1, bậc 2) | `ls ..` — có repo anh em nào là backend của project này không (tên gợi ý: `*-service`, `*-api`, `*-backend`) |
+| Swagger/OpenAPI (§1, bậc 3) | `.claude/skills/api-docs-sync/services.json`, hoặc URL swagger trong README / `.env.example` / docker-compose |
 
 Repo có `CLAUDE.md`/`AGENTS.md` thì đó là nguồn tốt nhất cho §2 — **link về nó**
 thay vì chép lại, tránh hai bản lệch nhau.
@@ -45,6 +47,8 @@ Gộp **một lần** bằng AskUserQuestion, chỉ hỏi phần còn trống sa
 2. Nhánh đích để tạo nhánh mới (`develop` hay `main`) — nếu cả hai cùng tồn tại.
 3. Lệnh nào là **evidence Gate 4 mặc định** — nếu có nhiều lệnh test và không
    rõ cái nào chạy giới hạn path.
+4. Repo BE cùng cấp: dò thấy ứng viên thì **xác nhận đúng repo không**; không
+   thấy thì hỏi URL Swagger để điền `services.json` của skill `api-docs-sync`.
 
 Dò ra rồi thì đừng hỏi lại.
 
