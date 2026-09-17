@@ -40,7 +40,11 @@ keep() { # keep <src> <dst>
 
 install_into() {
   local P=$1
-  [ -d "$P/.git" ] || { echo "✖ $P không phải git repo (hook cần .git/hooks/)"; exit 1; }
+  # Hỏi git thay vì đoán ".git/": đúng cả với worktree, submodule, và
+  # core.hooksPath (husky/lefthook trỏ hook đi chỗ khác — cắm vào .git/hooks
+  # khi đó là cắm vào hư không, gate im lặng không chạy).
+  git -C "$P" rev-parse --git-dir >/dev/null 2>&1 \
+    || { echo "✖ $P không nằm trong git repo nào (gate cần git hook)"; exit 1; }
   command -v node >/dev/null || { echo "✖ cần Node 20+ để chạy validator"; exit 1; }
 
   mkdir -p "$P"/{docs,scripts,hooks} "$P"/.claude/{agents,commands}
@@ -57,15 +61,19 @@ install_into() {
   keep "$SRC"/adapters/example/docs/agents/ProjectRules.md "$P"/docs/agents/ProjectRules.md
   keep "$SRC"/commands/start-task.md                       "$P"/.claude/commands/start-task.md
 
-  # gate: chỉ cắm khi chưa có hook khác — không nuốt hook sẵn có của project
-  local h="$P/.git/hooks/pre-commit"
+  # gate — đường dẫn hook THẬT theo git (tôn trọng core.hooksPath), không đoán
+  local h; h=$(cd "$P" && git rev-parse --path-format=absolute --git-path hooks/pre-commit)
+  mkdir -p "$(dirname "$h")"
   if [ -L "$h" ] || [ ! -e "$h" ]; then
-    ln -sf ../../hooks/pre-commit "$h"
+    ln -sf "$P/hooks/pre-commit" "$h"
   else
-    kept+=("$h (hook sẵn có — tự chain: gọi hooks/pre-commit từ trong nó)")
+    gate_unarmed="$h"      # hook của user — không nuốt, nhưng phải báo TO (§dưới)
   fi
 
   ( cd "$P" && node scripts/validate-tasks.mjs --self-check )
+
+  # Symlink treo = gate im lặng no-op, đúng thứ repo này tồn tại để chống.
+  [ -n "${gate_unarmed:-}" ] || [ -x "$h" ] || gate_unarmed="$h (symlink hỏng)"
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -86,16 +94,53 @@ if [ "${1:-}" = "--self-test" ]; then
   echo 'MARKER' >> "$T"/docs/agents/ProjectRules.md
   install_into "$T" >/dev/null
   grep -q MARKER "$T"/docs/agents/ProjectRules.md || { echo "✖ self-test: cài lại đè mất adapter"; exit 1; }
+
+  # gate phải CHẶN commit thật — không chỉ "symlink có tồn tại"
+  ( cd "$T" && git add -A >/dev/null 2>&1 \
+      && git -c user.email=t@t -c user.name=t commit -m x >/dev/null 2>&1 ) \
+    && { echo "✖ self-test: gate KHÔNG chặn commit task hỏng"; exit 1; }
+
+  # core.hooksPath (husky/lefthook): cắm vào .git/hooks là cắm vào hư không
+  H2=$(mktemp -d)/h; mkdir -p "$H2"; git -C "$H2" init -q
+  mkdir -p "$H2/.husky"; git -C "$H2" config core.hooksPath .husky
+  install_into "$H2" >/dev/null
+  [ -e "$H2/.husky/pre-commit" ] || { echo "✖ self-test: bỏ qua core.hooksPath → gate no-op"; exit 1; }
+  mkdir -p "$H2"/docs/tasks/sprint-1/A-1-x
+  sed 's/"currentStage": "bootstrap"/"currentStage": "implementation"/' \
+    "$H2"/docs/tasks/_templates/task.agent.json > "$H2"/docs/tasks/sprint-1/A-1-x/task.agent.json
+  ( cd "$H2" && git add -A >/dev/null 2>&1 \
+      && git -c user.email=t@t -c user.name=t commit -m x >/dev/null 2>&1 ) \
+    && { echo "✖ self-test: core.hooksPath — gate không chặn"; exit 1; }
+  rm -rf "$(dirname "$H2")"
+
   rm -rf "$(dirname "$T")"
   echo "✅ install self-test passed"; exit 0
 fi
 
 [ $# -eq 1 ] || { echo "dùng: bash install.sh <project-root>"; exit 2; }
+[ -d "$1" ] || { echo "✖ không có thư mục: $1"; exit 1; }
 install_into "$(cd "$1" && pwd)"
 
 echo
 echo "✅ đã cài vào $1"
 [ ${#kept[@]} -eq 0 ] || { echo; echo "giữ nguyên (đã có sẵn, không đè):"; printf '   %s\n' "${kept[@]}"; }
+
+# Gate chưa cắm được = harness chỉ còn là markdown. Đây là lỗi to nhất có thể
+# xảy ra khi cài, nên nó phải chặn đường ra, không nằm lẫn trong danh sách.
+if [ -n "${gate_unarmed:-}" ]; then
+  cat <<GATE
+
+⚠️  GATE CHƯA CẮM — $gate_unarmed
+    Harness hiện chỉ là tài liệu: agent tự báo "xong" mà không ai chặn.
+    Project đã có pre-commit riêng, nên installer KHÔNG đè. Tự chain 1 dòng:
+
+      # thêm vào cuối hook sẵn có của bạn
+      "\$(git rev-parse --show-toplevel)"/hooks/pre-commit || exit 1
+
+    Kiểm lại: sửa currentStage của một task thành "implementation" rồi thử
+    commit — phải bị chặn.
+GATE
+fi
 cat <<'TODO'
 
 còn 3 việc tay trước task đầu tiên:
