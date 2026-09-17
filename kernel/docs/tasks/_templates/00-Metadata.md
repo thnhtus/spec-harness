@@ -14,7 +14,7 @@
 | Developer | {developer} |
 | branchType | {branchType} (`feature` / `bugfix` / `hotfix`) |
 | layer | frontend |
-| taskComplexity | {taskComplexity} (`trivial` / `normal` / `complex`) |
+| taskComplexity | {taskComplexity} (`trivial` / `normal` / `high`) |
 | Nhánh | `<theo ProjectRules §3>` |
 | Target branch | develop |
 

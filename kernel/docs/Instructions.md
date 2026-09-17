@@ -49,4 +49,4 @@ Task doc tại `docs/tasks/sprint-{n}/{taskId}-{slug}/`, **append-only, tiếng 
 
 ## 7. Tham chiếu
 
-[`README.md`](./README.md) (chỉ mục) · [`Agents.md`](./Agents.md) (role + lifecycle + gate) · [`agents/SharedRules.md`](./agents/SharedRules.md) (quy tắc vận hành chi tiết) · [`HarnessSetup.md`](./HarnessSetup.md) (bootstrap/resume) · [`../CLAUDE.md`](../CLAUDE.md) (project instructions)
+[`README.md`](./README.md) (chỉ mục) · [`Agents.md`](./Agents.md) (role + lifecycle + gate) · [`agents/SharedRules.md`](./agents/SharedRules.md) (quy tắc vận hành chi tiết) · [`HarnessSetup.md`](./HarnessSetup.md) (bootstrap/resume) · `../CLAUDE.md` (project instructions, nếu project có)

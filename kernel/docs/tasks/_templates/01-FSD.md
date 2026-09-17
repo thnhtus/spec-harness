@@ -16,7 +16,7 @@
 ## 3. External Interface Requirements
 
 - **3.1 User Interfaces:** màn hình / flow (Figma: `<frame>` | unavailable)
-- **3.2 Software Interfaces:** endpoint FE phụ thuộc → [`../../../api/<resource>.md`](../../../api/<resource>.md) | unavailable
+- **3.2 Software Interfaces:** endpoint FE phụ thuộc → `../../../api/<resource>.md` | unavailable
 
 ## 4. Functional Requirements
 

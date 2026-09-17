@@ -70,7 +70,7 @@ PASS → `status = in_progress`, `currentStage = implementation`, `agents.techni
 
 ## 6. Ví dụ rút gọn (node Upload)
 
-Task: thêm progress upload + chặn submit khi file vượt giới hạn ([`../fsd/11.2-node-upload.md`](../fsd/11.2-node-upload.md), [`../api/workflow-instances.md`](../api/README.md)).
+Task: thêm progress upload + chặn submit khi file vượt giới hạn (nguồn: [`../fsd/`](../fsd/README.md) + [`../api/`](../api/README.md)).
 
 | Path | Change | Lý do | AC/req |
 | --- | --- | --- | --- |

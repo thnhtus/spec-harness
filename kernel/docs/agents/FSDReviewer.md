@@ -63,7 +63,7 @@ PASS → `status = in_progress`, `currentStage = technical_plan`, `agents.fsd-re
 
 ## 6. Ví dụ rút gọn (node Upload — màn hình End-user)
 
-Intent: end-user nộp tệp tại node Upload trước khi chuyển bước (nguồn [`../fsd/11.2-node-upload.md`](../fsd/11.2-node-upload.md)).
+Intent: end-user nộp tệp tại node Upload trước khi chuyển bước (nguồn: màn hình tương ứng trong [`../fsd/`](../fsd/README.md)).
 
 | AC-ID | Tiêu chí | Source | Status |
 | --- | --- | --- | --- |
