@@ -22,7 +22,12 @@
 - **Không cache ngầm:** BA sửa task giữa chừng → đọc lại trước gate kế tiếp.
 - **MCP hết hạn auth:** lời gọi fail vì auth → `status = blocked`, báo user chạy `/mcp` login lại, **dừng** — không retry vòng lặp, không bịa dữ liệu thay thế.
 
-<!-- Thêm quy tắc riêng của project ở đây: ví dụ "contract API thiếu shape thì đọc source BE tại <path> trước khi ghi unavailable". -->
+**Nguồn contract API** (thang bậc ở [`TechnicalPlanner.md` §3.2](./TechnicalPlanner.md) — `unavailable` là bậc cuối):
+
+| Bậc | Có ở project này? | Khai ở đây |
+| --- | --- | --- |
+| 2. Repo BE nằm cùng cấp | `<có / không>` | đường dẫn tương đối: `<../be-repo>` · thứ tự đọc: `<route → use-case → DTO → enum>` · **read-only**, không sửa gì ngoài repo đích |
+| 3. Swagger/OpenAPI | `<có / không>` | skill `api-docs-sync`, URL service khai trong `.claude/skills/api-docs-sync/services.json` |
 
 ---
 
