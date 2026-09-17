@@ -1,11 +1,27 @@
 ---
-description: Dò repo rồi điền docs/agents/ProjectRules.md — 4 mục adapter (§1 MCP · §2 guardrail · §3 nhánh · §7 lệnh) mà kernel không tự biết
+description: BẮT BUỘC sau khi cài harness — dò repo rồi điền docs/agents/ProjectRules.md (§1 MCP · §2 guardrail · §3 nhánh · §7 lệnh) + harness.config.json (repos, layers, models, evidenceCommandPattern)
 argument-hint: (không cần tham số)
 ---
 
-Điền `docs/agents/ProjectRules.md` của **repo hiện tại**. Đây là file adapter:
-kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh ra sao —
-bốn mục dưới đây là nơi duy nhất định nghĩa chúng.
+**Bước bắt buộc sau khi cài harness.** `install.sh` chỉ chép file; nó không biết
+project dùng stack gì, tracker nào, nhánh đặt tên ra sao. Chưa chạy lệnh này thì
+`ProjectRules.md` và `harness.config.json` còn là khung rỗng — gate không có gì
+để kiểm.
+
+Điền hai file:
+
+| File | Mục |
+| --- | --- |
+| `docs/agents/ProjectRules.md` | §1 nguồn truth MCP · §2 guardrail source · §3 quy tắc nhánh · §7 lệnh kiểm tra |
+| `harness.config.json` | `repos` · `layers` · `models` · `evidenceCommandPattern` + `evidenceSampleCommand` |
+
+**Nhận biết bố cục trước tiên** — nó quyết định `repos`:
+
+- `harness.config.json` nằm **trong** repo code (`git rev-parse --show-toplevel`
+  = thư mục chứa config) → `repos: [{ name, path: ".", layer }]`.
+- Nằm **cạnh** các repo code (thư mục chứa config là repo riêng, `ls ..` thấy
+  repo anh em) → mỗi repo code một entry, `path` là `../<tên>`. Hỏi user repo
+  nào thuộc layer nào nếu không suy ra được từ manifest.
 
 **Giữ nguyên số mục 1/2/3/7.** Kernel tham chiếu chéo bằng số (`SharedRules §2`
 = mục 2 của file này). Đừng đánh lại số, đừng chèn mục mới xen giữa.
