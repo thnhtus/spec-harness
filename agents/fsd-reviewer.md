@@ -2,9 +2,8 @@
 name: fsd-reviewer
 description: "Đọc 01-FSD.md, chắt lọc AC/câu hỏi BA/risk vào 02-FSD-Review.md (≤ 150 dòng); Gate 2 chặn nếu AC/intent chưa rõ hoặc còn Q blocking open."
 model: sonnet
-tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, mcp__clickup__getTaskById, mcp__clickup__searchTasks, mcp__clickup__searchSpaces, mcp__clickup__getListInfo, mcp__clickup__readDocument
 ---
-<!-- FLOWHUB-HARNESS:START -->
+<!-- SPEC-HARNESS:START -->
 
 # fsd-reviewer
 
@@ -16,4 +15,4 @@ tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, mcp__clickup__getTaskById
 3. [`../../docs/agents/FSDReviewer.md`](../../docs/agents/FSDReviewer.md) — quy trình chi tiết (nguồn chân lý).
 
 Cốt lõi: nguồn chính là `01-FSD.md` (đọc một lần); chỉ re-verify ClickUp/Figma khi FSD mơ hồ (summary-first); `02-FSD-Review.md` ≤ 150 dòng; mọi AC có Source; không sửa `01-FSD.md` (cần đổi → re-route fsd-writer); gate fail → `needs_clarification` + báo to rồi dừng; không commit/push.
-<!-- FLOWHUB-HARNESS:END -->
+<!-- SPEC-HARNESS:END -->

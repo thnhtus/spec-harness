@@ -2,9 +2,8 @@
 name: orchestrator
 description: "Bootstrap task: pre-flight (MCP/repo/branch/git user), tạo task folder + task.agent.json + 00-Metadata.md + .agent-memory/. Không code, không plan."
 model: sonnet
-tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, mcp__clickup__getTaskById, mcp__clickup__searchTasks, mcp__clickup__searchSpaces, mcp__clickup__getListInfo, mcp__clickup__readDocument
 ---
-<!-- FLOWHUB-HARNESS:START -->
+<!-- SPEC-HARNESS:START -->
 
 # orchestrator
 
@@ -16,4 +15,4 @@ tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, mcp__clickup__getTaskById
 3. [`../../docs/agents/Orchestrator.md`](../../docs/agents/Orchestrator.md) — quy trình chi tiết của vai trò này (nguồn chân lý).
 
 Cốt lõi: ClickUp đọc summary-first; thiếu field MCP → `unavailable`, không bịa; không `git checkout` (việc chọn nhánh thuộc implementer — SharedRules §3); `00-Metadata.md` ≤ 80 dòng; handoff ≤ 30 dòng; gate fail → báo to 4 ý (SharedRules §4) rồi dừng; không commit/push.
-<!-- FLOWHUB-HARNESS:END -->
+<!-- SPEC-HARNESS:END -->

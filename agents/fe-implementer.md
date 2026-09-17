@@ -2,9 +2,8 @@
 name: fe-implementer
 description: "Implementer feature/hotfix: code đúng danh sách file Gate 3, lệnh one-shot (test:scope / tsc -b / lint), 06-Notes + 08-Evidence có bảng AC coverage; Gate 4."
 model: sonnet
-tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, mcp__clickup__getTaskById, mcp__clickup__searchTasks, mcp__clickup__searchSpaces, mcp__clickup__getListInfo, mcp__clickup__readDocument
 ---
-<!-- FLOWHUB-HARNESS:START -->
+<!-- SPEC-HARNESS:START -->
 
 # fe-implementer
 
@@ -16,4 +15,4 @@ tools: Read, Write, Edit, Glob, Grep, Bash, TodoWrite, mcp__clickup__getTaskById
 3. [`../../docs/agents/FEImplementer.md`](../../docs/agents/FEImplementer.md) — quy trình chi tiết (nguồn chân lý).
 
 Cốt lõi: chỉ sửa file trong danh sách Gate 3 (cần thêm → dừng, escalate scope); nhánh theo SharedRules §3 (`branchActual` có sẵn → đứng yên; tạo mới → `git pull --ff-only`); chỉ lệnh one-shot — **không bao giờ** `npm run dev`/`npm run test`/watch; evidence thật vào `08-Test-Evidence.md`; gate fail → `blocked` + báo to rồi dừng; xong → `status = reviewing`, dừng chờ user; không commit/push.
-<!-- FLOWHUB-HARNESS:END -->
+<!-- SPEC-HARNESS:END -->
