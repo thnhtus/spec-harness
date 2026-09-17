@@ -8,6 +8,7 @@
     "fsd_review",
     "technical_plan",
     "implementation",
+    "adversarial_review",
     "reviewing"
   ],
   "gate4Statuses": [
@@ -15,13 +16,24 @@
     "mr_created",
     "done"
   ],
+  "repos": [
+    {
+      "name": "<repo-name>",
+      "path": ".",
+      "layer": "frontend"
+    }
+  ],
+  "layers": [
+    "frontend"
+  ],
   "roles": [
     "orchestrator",
     "fsd-writer",
     "fsd-reviewer",
     "technical-planner",
     "fe-implementer",
-    "fe-fix"
+    "fe-fix",
+    "adversary"
   ],
   "routing": {
     "field": "branchType",
@@ -63,11 +75,19 @@
       "files": [
         "03-Technical-Plan.md"
       ]
+    },
+    {
+      "stage": "adversarial_review",
+      "files": [
+        "06-FE-Implementation-Notes.md",
+        "08-Test-Evidence.md"
+      ]
     }
   ],
   "gate4Artifacts": {
     "evidence": "08-Test-Evidence.md",
-    "notes": "06-FE-Implementation-Notes.md"
+    "notes": "06-FE-Implementation-Notes.md",
+    "adversarial": "09-Adversarial-Review.md"
   },
   "acTrace": {
     "declaredIn": "02-FSD-Review.md",
