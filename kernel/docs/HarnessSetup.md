@@ -1,6 +1,6 @@
 # HarnessSetup — Bootstrap, MCP, sinh harness, resume
 
-> **Vai trò:** quy tắc bootstrap cho AI harness FlowHub Studio FE — đọc khi khởi động phiên mới, cấu hình MCP, sinh file harness per-tool, hoặc resume task dang dở.
+> **Vai trò:** quy tắc bootstrap cho AI harness — đọc khi khởi động phiên mới, cấu hình MCP, sinh file harness per-tool, hoặc resume task dang dở.
 > **Phạm vi:** một repo FE duy nhất; không repo sibling, không worktree.
 > **Ngôn ngữ:** Tiếng Việt; token kỹ thuật giữ nguyên gốc.
 
@@ -39,21 +39,23 @@ Cài dependency: `npm install`. Danh sách lệnh kiểm tra hợp lệ (one-sho
 
 ## 3. MCP setup
 
-MCP server của project (tracker / git host / design tool) khai ở [`agents/ProjectRules.md` §1](./agents/ProjectRules.md); kỷ luật payload: [`agents/SharedRules.md` §8](./agents/SharedRules.md). Ví dụ dưới đây dùng bộ ClickUp + GitLab + Figma.
+`install.sh` sinh sẵn `.mcp.json` ở repo root (mẫu: tracker + git host + design tool). Sửa nó cho đúng project — xoá server không dùng, điền host thật:
 
-### 3.1. Claude Code
-
-```bash
-claude mcp add --transport http clickup https://mcp.clickup.com/mcp
-claude mcp add --transport http gitlab https://<git-host>/api/v4/mcp
-claude mcp add --transport http figma  https://mcp.figma.com/mcp
+```json
+{
+  "mcpServers": {
+    "clickup": { "type": "http", "url": "https://mcp.clickup.com/mcp" },
+    "gitlab":  { "type": "http", "url": "https://<git-host>/api/v4/mcp" },
+    "figma":   { "type": "http", "url": "https://mcp.figma.com/mcp" }
+  }
+}
 ```
 
-Sau khi add: gõ `/mcp` trong phiên, login OAuth từng server. Kiểm tra: `claude mcp list`.
+`.mcp.json` là **project-scoped**: commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Sau khi sửa: gõ `/mcp` trong phiên để login OAuth từng server; kiểm bằng `claude mcp list`.
 
-### 3.2. Codex CLI
+Vai trò từng server + quy tắc "không bịa dữ liệu MCP": [`agents/ProjectRules.md` §1](./agents/ProjectRules.md). Kỷ luật payload (summary-first, metadata-first): [`agents/SharedRules.md` §8](./agents/SharedRules.md).
 
-Cùng ba endpoint, khai báo trong `~/.codex/config.toml` mục `[mcp_servers]`, giữ nguyên tên server (`clickup`, `gitlab`, `figma`) để handoff giữa hai công cụ nhất quán.
+> Subagent **không** khai `tools:` — chúng thừa kế toàn bộ tool của phiên, nên đổi tracker (ClickUp → Jira/Linear) chỉ cần sửa `.mcp.json` + ProjectRules §1, không đụng file role.
 
 > **Không commit** token, cookie, `.claude.json` — xem [`Instructions.md` §4](./Instructions.md).
 
@@ -61,12 +63,12 @@ Cùng ba endpoint, khai báo trong `~/.codex/config.toml` mục `[mcp_servers]`,
 
 ## 4. Sinh harness per-tool
 
-Quy tắc cốt lõi: **merge, không clobber** — chỉ thay vùng giữa marker `FLOWHUB-HARNESS:START` … `FLOWHUB-HARNESS:END`; nội dung user viết ngoài marker giữ nguyên.
+Quy tắc cốt lõi: **merge, không clobber** — chỉ thay vùng giữa marker `SPEC-HARNESS:START` … `SPEC-HARNESS:END`; nội dung user viết ngoài marker giữ nguyên.
 
 | Công cụ | Đường dẫn | Nội dung |
 | --- | --- | --- |
 | Claude Code | `.claude/agents/{role}.md` (6 file) | File ngắn trỏ về `docs/agents/{Role}.md`, marker HTML comment |
-| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (6 file) | Tương đương, marker `# FLOWHUB-HARNESS:START` |
+| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (6 file) | Tương đương, marker `# SPEC-HARNESS:START` |
 
 Sáu `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `fe-implementer`, `fe-fix`.
 
@@ -100,7 +102,7 @@ Artifact tham chiếu (đọc, không sửa): [`srs/README.md`](./srs/README.md)
 pwd                              # đúng repo root
 ls docs                          # thấy README/HarnessSetup/Instructions/Agents + agents/ srs/ fsd/ api/ tasks/
 git status --short --branch      # nhánh hiện tại + thay đổi chưa commit
-claude mcp list                  # clickup/gitlab/figma đã connect
+claude mcp list                  # server ở .mcp.json đã connect
 ```
 
 Quy tắc nhánh làm việc (công thức tên, `--ff-only`, ngoại lệ nhánh user quản lý): [`agents/SharedRules.md` §3](./agents/SharedRules.md).

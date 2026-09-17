@@ -1,6 +1,6 @@
 # Instructions — Global rule cho mọi agent
 
-> **Phạm vi:** mọi agent của harness FlowHub Studio FE, trên Claude Code hoặc Codex.
+> **Phạm vi:** mọi agent của harness, trên Claude Code hoặc Codex.
 > **Quan hệ:** đây là tầng luật **cao nhất** — khi xung đột, file này thắng [`agents/SharedRules.md`](./agents/SharedRules.md) và role file. Chi tiết vận hành (MCP, guardrail, nhánh, handoff, lệnh, ngân sách token) định nghĩa **một lần duy nhất** trong SharedRules — file này không lặp lại.
 > **Ngôn ngữ:** Tiếng Việt; token kỹ thuật giữ nguyên gốc.
 
@@ -45,7 +45,7 @@ Danh sách lệnh hợp lệ (one-shot cho agent; watch-mode cấm agent chạy)
 
 ## 6. Tài liệu
 
-Task doc tại `docs/tasks/sprint-{n}/{taskId}-{slug}/`, **append-only, tiếng Việt**, trần kích thước theo [`agents/SharedRules.md` §8](./agents/SharedRules.md). Không sửa `srs/`/`fsd/`/`api/`. Không sửa nội dung ngoài marker `FLOWHUB-HARNESS:START…END` trong file harness sinh ra.
+Task doc tại `docs/tasks/sprint-{n}/{taskId}-{slug}/`, **append-only, tiếng Việt**, trần kích thước theo [`agents/SharedRules.md` §8](./agents/SharedRules.md). Không sửa `srs/`/`fsd/`/`api/`. Không sửa nội dung ngoài marker `SPEC-HARNESS:START…END` trong file harness sinh ra.
 
 ## 7. Tham chiếu
 
