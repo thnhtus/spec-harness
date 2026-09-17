@@ -35,6 +35,7 @@ Chạy song song, đọc kết quả rồi mới viết:
 | Lệnh watch/server cấm agent (§7) | cùng nguồn — lệnh nào không tự kết thúc (`dev`, `watch`, `serve`, `--watch`) |
 | Repo BE cùng cấp (§1, bậc 2) | `ls ..` — có repo anh em nào là backend của project này không (tên gợi ý: `*-service`, `*-api`, `*-backend`) |
 | Swagger/OpenAPI (§1, bậc 3) | `.claude/skills/api-docs-sync/services.json`, hoặc URL swagger trong README / `.env.example` / docker-compose |
+| `models` cho `harness.config.json` | CLI đang dùng là gì (Claude Code / Codex / khác) → map `cheap`/`mid`/`strong` sang tên model của nó; không rõ → để `{}` |
 | `repos` cho `harness.config.json` | `harness.config.json` nằm trong repo code hay repo riêng? (`git rev-parse --show-toplevel` so với cwd) · `ls ..` tìm repo anh em · điền `[{name,path,layer}]`, `path: "."` nếu cùng repo |
 | `layers` cho `harness.config.json` | repo là FE, BE, hay monorepo? (`ls`, `go.mod`/`package.json`/`pyproject.toml` ở đâu) — ghi vào `layers`, vd `["frontend"]` hoặc `["frontend","backend"]` |
 | Tầng chạy thật khi verify (§7) | có UI không? có harness e2e/integration sẵn không (`e2e/`, `test/integration/`, `*_test.go`, `conftest.py`) |
