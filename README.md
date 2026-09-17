@@ -25,12 +25,19 @@ Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh 
 ## Cài vào project mới
 
 ```bash
-bash install.sh <project-root>
+# không cần clone (repo phải public)
+curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- <project-root>
+
+# hoặc từ bản clone
+git clone --depth 1 https://github.com/thnhtus/spec-harness
+bash spec-harness/install.sh <project-root>
 ```
+
+Cách đầu tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách hai (script báo rõ và dừng, không cài nửa vời).
 
 Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, cắm symlink `.git/hooks/pre-commit`, rồi chạy `--self-check`. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
 
-Xong còn 2 việc tay:
+Xong còn 3 việc tay:
 
 | File | Sửa gì |
 | --- | --- |
