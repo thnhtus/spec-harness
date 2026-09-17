@@ -79,5 +79,8 @@
     "since": "2026-07-28"
   },
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
-  "evidenceSampleCommand": "npm run test:scope -- src/test/x"
+  "evidenceSampleCommand": "npm run test:scope -- src/test/x",
+  "tracker": {
+    "urlPattern": "^https://app\\.clickup\\.com/t/.+"
+  }
 }

@@ -32,7 +32,7 @@
     "taskName": { "type": "string", "minLength": 1 },
     "clickupUrl": {
       "type": "string",
-      "pattern": "^https://app\\.clickup\\.com/t/.+"
+      "$comment": "Tracker task URL. Field name is historical (ClickUp); the URL shape is injected from harness.config.json → tracker.urlPattern, so any tracker works without renaming existing task data."
     },
     "repoName": { "type": "string", "minLength": 1 },
     "sprintNumber": { "type": "integer", "minimum": 1 },
@@ -89,7 +89,7 @@
     },
     "docsPath": {
       "type": "string",
-      "pattern": "^docs/tasks/sprint-.+/.+/?$"
+      "$comment": "pattern injected from harness.config.json → tasksDir + groupPrefix"
     },
     "agents": {
       "type": "object",

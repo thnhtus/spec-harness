@@ -274,6 +274,15 @@ if (args.has("--self-check")) {
     EVIDENCE_RE.source !== "(?!)",
     "config.evidenceCommandPattern missing — no command would ever count as evidence",
   );
+  assert.ok(CFG.tracker?.urlPattern, "config.tracker.urlPattern is required (task URL shape)");
+  // docsPath regex is built from tasksDir + groupPrefix: a mismatch here would
+  // reject every correctly-placed task folder, so check it against a real path.
+  const sampleDocsPath = `${CFG.tasksDir ?? "docs/tasks"}/${GROUP_PREFIX}3/ABC-1-slug`;
+  const esc0 = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.ok(
+    new RegExp(`^${esc0(CFG.tasksDir ?? "docs/tasks")}/${esc0(GROUP_PREFIX)}.+/.+/?$`).test(sampleDocsPath),
+    `docsPath pattern would reject a valid folder like "${sampleDocsPath}"`,
+  );
 
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
@@ -300,7 +309,14 @@ function findTaskFolders() {
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
+// The schema ships without project-specific patterns; they are injected here so
+// the shipped file stays generic and config stays the single source of truth.
 const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
+const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+if (CFG.tracker?.urlPattern && schema.properties?.clickupUrl)
+  schema.properties.clickupUrl.pattern = CFG.tracker.urlPattern;
+if (schema.properties?.docsPath)
+  schema.properties.docsPath.pattern = `^${esc(CFG.tasksDir ?? "docs/tasks")}/${esc(GROUP_PREFIX)}.+/.+/?$`;
 const folders = findTaskFolders();
 const results = []; // {folder, errors:[], warnings:[]}
 const taskIdMap = new Map(); // taskId -> [folder rel paths]

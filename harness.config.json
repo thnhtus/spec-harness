@@ -79,6 +79,9 @@
     "since": "2026-07-28"
   },
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
-  "_note": "Config of the spec-harness repo itself: tasksDir points at the shipped kernel templates so `--self-check` validates what we distribute. A real project copies adapters/example/harness.config.json instead.",
-  "evidenceSampleCommand": "npm run test:scope -- src/test/x"
+  "evidenceSampleCommand": "npm run test:scope -- src/test/x",
+  "tracker": {
+    "urlPattern": "^https://app\\.clickup\\.com/t/.+"
+  },
+  "_note": "Config of the spec-harness repo itself: tasksDir points at the shipped kernel templates so `--self-check` validates what we distribute. A real project copies adapters/example/harness.config.json instead."
 }
