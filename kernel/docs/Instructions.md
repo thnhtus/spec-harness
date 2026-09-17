@@ -8,9 +8,9 @@
 
 ## 1. An toàn repository
 
-Repo đích + các repo sibling (nếu có): [`agents/ProjectRules.md` §3](./agents/ProjectRules.md).
+Repo agent được sửa khai ở `harness.config.json → repos`; bố cục + quyền đọc/ghi từng repo: [`Agents.md` §0](./Agents.md). Quy ước nhánh: [`agents/ProjectRules.md` §3](./agents/ProjectRules.md).
 
-**Worktree — chỉ do `/start-task` tạo, agent không tự tạo.** Mỗi task chạy trong worktree riêng dưới `.claude/worktrees/` (lệnh `/start-task` step 0, qua tool `EnterWorktree`) để hai task song song không quét tree của nhau. Subagent **không** gọi `EnterWorktree`/`git worktree` — nó đã ở trong worktree khi được dispatch, cứ làm việc tại `cwd` hiện tại.
+**Worktree — chỉ do `/start-task` tạo, agent không tự tạo.** Mỗi task chạy trong worktree riêng của **repo đang sửa** (`repoName` của task) để hai task song song không quét tree của nhau. Harness nằm ngang hàng nhiều repo (bố cục C — [`Agents.md` §0](./Agents.md)) thì task doc **ở lại repo harness**, không vào worktree. Subagent **không** gọi `EnterWorktree`/`git worktree` — nó đã ở đúng chỗ khi được dispatch, cứ làm việc tại `cwd` hiện tại.
 
 - **Nhánh protected — tuyệt đối không chạm:** `main`, `develop`, `staging`, `release/*`.
 - Quy tắc nhánh làm việc (tên, cách tạo `--ff-only`, ngoại lệ nhánh user quản lý): [`agents/SharedRules.md` §3](./agents/SharedRules.md).

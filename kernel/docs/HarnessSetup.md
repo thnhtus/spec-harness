@@ -1,7 +1,7 @@
 # HarnessSetup — Bootstrap, MCP, sinh harness, resume
 
 > **Vai trò:** quy tắc bootstrap cho AI harness — đọc khi khởi động phiên mới, cấu hình MCP, sinh file harness per-tool, hoặc resume task dang dở.
-> **Phạm vi:** một repo FE duy nhất; không repo sibling, không worktree.
+> **Phạm vi:** mọi bố cục repo khai ở `harness.config.json → repos` — harness nằm trong repo code, hoặc ngang hàng nhiều repo ([`Agents.md` §0](./Agents.md)).
 > **Ngôn ngữ:** Tiếng Việt; token kỹ thuật giữ nguyên gốc.
 
 ---
