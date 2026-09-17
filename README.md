@@ -15,9 +15,11 @@ kernel/                              ← dùng chung, không sửa khi sang proj
 ├── docs/tasks/_templates/           khuôn task doc
 └── scripts/validate-tasks.mjs       validator, đọc harness.config.json
 
-adapters/example/                    ← mỗi project tự viết (~110 dòng + 1 file config)
-├── harness.config.json              đường dẫn, stage, cap, routing, lệnh evidence
-└── docs/agents/ProjectRules.md      §1 nguồn truth · §2 guardrail · §3 nhánh · §7 lệnh
+adapters/                            ← phần mỗi project tự viết
+├── ProjectRules.template.md         khung rỗng 4 mục, /init-project-rules điền
+├── example/harness.config.json      đường dẫn, stage, cap, routing, lệnh evidence
+├── example/.mcp.json                khai MCP server
+└── example/docs/agents/…            bản mẫu đã điền (một FE React/TS) — tham khảo độ chi tiết
 ```
 
 Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh ra sao. Bốn mục đó — và chỉ bốn mục đó — nằm ở `ProjectRules.md`. Số mục giữ nguyên **1/2/3/7** để mọi tham chiếu chéo `SharedRules §n` trong kernel vẫn trỏ đúng.
@@ -35,7 +37,9 @@ bash spec-harness/install.sh <project-root>
 
 Cách đầu tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách hai (script báo rõ và dừng, không cài nửa vời).
 
-Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, cắm git hook (tôn trọng `core.hooksPath` nếu project dùng husky/lefthook), rồi chạy `--self-check`. Project đã có `pre-commit` riêng → installer không đè mà **cảnh báo to**: gate chưa cắm nghĩa là harness chỉ còn là markdown. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
+Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, rồi chạy `--self-check`.
+
+**Pre-commit hook là tuỳ chọn** — một chỗ cắm gate, không phải điều kiện chạy. Repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook). Project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú. Gate lúc đó chạy tay hoặc từ CI: `node scripts/validate-tasks.mjs` (exit 1 khi có error). Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
 
 Xong còn 3 việc tay:
 
@@ -43,7 +47,7 @@ Xong còn 3 việc tay:
 | --- | --- |
 | `.mcp.json` | khai MCP server thật (tracker / git host / design tool), xoá dòng không dùng → rồi `/mcp` login. Project-scoped, commit được cho cả team |
 | `harness.config.json` | `evidenceCommandPattern` + `evidenceSampleCommand` (lệnh test thật, sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` = ngày bật harness |
-| `docs/agents/ProjectRules.md` | thay sạch §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh — giữ nguyên số mục **1/2/3/7**, kernel trỏ chéo bằng số |
+| `docs/agents/ProjectRules.md` | cài ra là **template rỗng**. Mở Claude Code trong project rồi gõ `/init-project-rules` — nó dò `.mcp.json`, `package.json`, `git branch`, CI workflow, `CLAUDE.md` để điền §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh, hỏi đúng phần không dò được, rồi cập nhật luôn `evidenceCommandPattern` ở dòng trên. Giữ nguyên số mục **1/2/3/7** — kernel trỏ chéo bằng số |
 
 Rồi `node scripts/validate-tasks.mjs --self-check` phải xanh trước task đầu tiên.
 
