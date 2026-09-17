@@ -1,4 +1,4 @@
-# adapters/example — adapter mẫu (FlowHub Studio FE)
+# adapters/example — adapter mẫu
 
 Copy hai file này vào project mới rồi **thay hết nội dung**:
 
