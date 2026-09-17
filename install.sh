@@ -30,6 +30,7 @@ install_into() {
   cp    "$SRC"/hooks/pre-commit               "$P"/hooks/ && chmod +x "$P"/hooks/pre-commit
 
   # adapter + command — của user, không đè
+  keep "$SRC"/adapters/example/.mcp.json                   "$P"/.mcp.json
   keep "$SRC"/adapters/example/harness.config.json         "$P"/harness.config.json
   keep "$SRC"/adapters/example/docs/agents/ProjectRules.md "$P"/docs/agents/ProjectRules.md
   keep "$SRC"/commands/start-task.md                       "$P"/.claude/commands/start-task.md
@@ -55,6 +56,9 @@ if [ "${1:-}" = "--self-test" ]; then
   ( cd "$T" && node scripts/validate-tasks.mjs --quiet >/dev/null 2>&1 ) \
     && { echo "✖ self-test: validator ĐÁNG LẼ phải fail task thiếu artifact"; exit 1; }
   [ -e "$T/.claude/agents/orchestrator.md" ] || { echo "✖ self-test: thiếu subagent"; exit 1; }
+  [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
+  python3 -c "import json,sys;json.load(open('$T/.mcp.json'))" \
+    || { echo "✖ self-test: .mcp.json không phải JSON hợp lệ"; exit 1; }
   [ -e "$T/.git/hooks/pre-commit" ]          || { echo "✖ self-test: gate chưa cắm"; exit 1; }
   # cài lại lần 2: adapter phải được giữ
   echo 'MARKER' >> "$T"/docs/agents/ProjectRules.md
@@ -72,10 +76,12 @@ echo "✅ đã cài vào $1"
 [ ${#kept[@]} -eq 0 ] || { echo; echo "giữ nguyên (đã có sẵn, không đè):"; printf '   %s\n' "${kept[@]}"; }
 cat <<'TODO'
 
-còn 2 việc tay trước task đầu tiên:
+còn 3 việc tay trước task đầu tiên:
   1. harness.config.json      → evidenceCommandPattern + evidenceSampleCommand (lệnh test thật),
                                 tracker.urlPattern, acTrace.since = hôm nay
-  2. docs/agents/ProjectRules.md → thay sạch §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh
+  2. .mcp.json                → khai MCP server thật (tracker / git host / design tool),
+                                xoá dòng nào không dùng. Rồi gõ /mcp trong Claude Code để login.
+  3. docs/agents/ProjectRules.md → thay sạch §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh
                                 (giữ nguyên số mục 1/2/3/7 — kernel trỏ chéo bằng số)
-  rồi: node scripts/validate-tasks.mjs --self-check
+  rồi: node scripts/validate-tasks.mjs --self-check  +  claude mcp list
 TODO
