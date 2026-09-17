@@ -91,6 +91,16 @@ if [ "${1:-}" = "--self-test" ]; then
   [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
   [ -e "$T/.claude/commands/init-project-rules.md" ] \
     || { echo "✖ self-test: thiếu lệnh /init-project-rules"; exit 1; }
+  # Kernel/skill không được hardcode tên tool MCP: khoá harness vào đúng một
+  # tracker, project dùng Jira/Linear là agent gọi hụt trong im lặng.
+  if grep -rn 'mcp__[a-z]' "$T/docs" "$T/.claude/skills" "$T/.claude/agents" 2>/dev/null \
+       | grep -v 'mcp__<server>__<tool>' | grep -q .; then
+    echo "✖ self-test: còn tên tool MCP hardcode:"
+    grep -rn 'mcp__[a-z]' "$T/docs" "$T/.claude/skills" "$T/.claude/agents" 2>/dev/null \
+      | grep -v 'mcp__<server>__<tool>' | sed 's/^/    /'
+    exit 1
+  fi
+
   # kernel gọi skill nào thì skill đó phải được cài kèm
   for sk in $(grep -rho 'skill `[a-z0-9-]*`' "$SRC"/kernel/docs | sed 's/.*`\(.*\)`/\1/' | sort -u); do
     [ -f "$T/.claude/skills/$sk/SKILL.md" ] \
