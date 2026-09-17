@@ -160,7 +160,7 @@ Dispatch with the Agent tool, `subagent_type` = the role name (registered in
 | 6 | reviewing | — (you) | — | see below |
 
 Step 6 (you, no subagent): confirm `task.agent.json` has `status = reviewing`,
-run `npm run validate:tasks --quiet` and make sure this task folder reports no
+run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
 errors (it enforces the AC traceability chain, SharedRules §9), then post the
 final summary: what changed (from the implementer's handoff), test evidence
 location (`08-Test-Evidence.md`), and the remaining user decisions (commit /
