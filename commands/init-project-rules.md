@@ -1,0 +1,77 @@
+---
+description: Dò repo rồi điền docs/agents/ProjectRules.md — 4 mục adapter (§1 MCP · §2 guardrail · §3 nhánh · §7 lệnh) mà kernel không tự biết
+argument-hint: (không cần tham số)
+---
+
+Điền `docs/agents/ProjectRules.md` của **repo hiện tại**. Đây là file adapter:
+kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh ra sao —
+bốn mục dưới đây là nơi duy nhất định nghĩa chúng.
+
+**Giữ nguyên số mục 1/2/3/7.** Kernel tham chiếu chéo bằng số (`SharedRules §2`
+= mục 2 của file này). Đừng đánh lại số, đừng chèn mục mới xen giữa.
+
+## Nguyên tắc
+
+- **Dò trước, hỏi sau.** Phần lớn 4 mục suy ra được từ repo. Chỉ hỏi user thứ
+  không có trong file nào (quy ước tên nhánh, nhánh đích).
+- **Không bịa.** Không tìm thấy thì để `<…>` kèm `TODO:` — người đọc thấy ngay
+  chỗ trống còn hơn đọc một dòng sai mà tin.
+- **Viết cái đã biết, không viết cho đủ.** §2 đắt nhất khi viết vội; phần lớn
+  giá trị của nó đến sau sự cố thật. Ba dòng đúng hơn hai mươi dòng đoán.
+
+## Bước 1 — dò
+
+Chạy song song, đọc kết quả rồi mới viết:
+
+| Cần biết | Dò ở đâu |
+| --- | --- |
+| MCP server (§1) | `.mcp.json` ở repo root — lấy đúng key trong `mcpServers` |
+| Stack (§2) | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml`… — dependencies chính |
+| Layout thư mục (§2) | `ls src/` (hoặc gốc source tương đương), 2 cấp |
+| Guardrail có sẵn (§2) | `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `.cursorrules`, `docs/*RULES*` — nếu có thì **trích ngắn + link**, đừng chép cả file |
+| Nhánh protected + nhánh đích (§3) | `git branch -r`, `git symbolic-ref refs/remotes/origin/HEAD` |
+| Tên nhánh đang dùng (§3) | `git branch --format='%(refname:short)' \| head -20` — suy ra công thức thật của team |
+| Lệnh test/lint/build (§7) | `scripts` trong `package.json`, `Makefile`, `justfile`, `tox.ini`, CI workflow (`.github/workflows/*.yml`) |
+| Lệnh watch/server cấm agent (§7) | cùng nguồn — lệnh nào không tự kết thúc (`dev`, `watch`, `serve`, `--watch`) |
+
+Repo có `CLAUDE.md`/`AGENTS.md` thì đó là nguồn tốt nhất cho §2 — **link về nó**
+thay vì chép lại, tránh hai bản lệch nhau.
+
+## Bước 2 — hỏi user đúng cái không dò được
+
+Gộp **một lần** bằng AskUserQuestion, chỉ hỏi phần còn trống sau bước 1:
+
+1. Công thức tên nhánh (nếu `git branch` không cho ra pattern rõ).
+2. Nhánh đích để tạo nhánh mới (`develop` hay `main`) — nếu cả hai cùng tồn tại.
+3. Lệnh nào là **evidence Gate 4 mặc định** — nếu có nhiều lệnh test và không
+   rõ cái nào chạy giới hạn path.
+
+Dò ra rồi thì đừng hỏi lại.
+
+## Bước 3 — viết
+
+Ghi đè `docs/agents/ProjectRules.md`, giữ nguyên khung 4 mục của template
+(`adapters/ProjectRules.template.md` là bản gốc). Xoá dòng `<!-- CHƯA-ĐIỀN: … -->`.
+
+Mục 7 có ràng buộc cứng: **mọi lệnh liệt kê phải khớp `evidenceCommandPattern`
+trong `harness.config.json`**. Lệch là Gate 4 không nhận evidence dù test xanh.
+Nên sau khi viết §7, cập nhật luôn `harness.config.json`:
+
+- `evidenceCommandPattern` — regex phủ đúng bộ lệnh vừa viết
+- `evidenceSampleCommand` — một lệnh thật, phải khớp pattern đó
+
+## Bước 4 — verify (bắt buộc, đừng báo xong khi chưa chạy)
+
+```bash
+node scripts/validate-tasks.mjs --self-check
+```
+
+Fail ở `evidenceSampleCommand` = pattern và lệnh lệch nhau → sửa, chạy lại.
+Đây là cái bắt lỗi cấu hình khiến mọi gate sau đó im lặng no-op.
+
+Rồi báo user, ngắn:
+
+- 4 mục: mục nào dò ra, mục nào còn `TODO:`
+- Dòng `evidenceCommandPattern` đã đặt
+- Kết quả `--self-check`
+- Nhắc: §2 sẽ đúng dần sau mỗi lần agent làm sai — không cần viết đủ ngay
