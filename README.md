@@ -28,12 +28,13 @@ Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh 
 bash install.sh <project-root>
 ```
 
-Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, cắm symlink `.git/hooks/pre-commit`, rồi chạy `--self-check`. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
+Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, cắm symlink `.git/hooks/pre-commit`, rồi chạy `--self-check`. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
 
 Xong còn 2 việc tay:
 
 | File | Sửa gì |
 | --- | --- |
+| `.mcp.json` | khai MCP server thật (tracker / git host / design tool), xoá dòng không dùng → rồi `/mcp` login. Project-scoped, commit được cho cả team |
 | `harness.config.json` | `evidenceCommandPattern` + `evidenceSampleCommand` (lệnh test thật, sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` = ngày bật harness |
 | `docs/agents/ProjectRules.md` | thay sạch §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh — giữ nguyên số mục **1/2/3/7**, kernel trỏ chéo bằng số |
 
