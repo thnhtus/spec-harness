@@ -22,14 +22,14 @@
 
 | Nguồn | Link / ID | Ghi chú |
 | --- | --- | --- |
-| ClickUp task | {clickupUrl} | nguồn yêu cầu |
-| Figma | unavailable | điền nếu có thiết kế |
+| Tracker task | {clickupUrl} | nguồn yêu cầu |
+| Design tool | unavailable | điền nếu có thiết kế |
 | SRS liên quan | `../../../srs/…` | điền module liên quan |
 | FSD liên quan | `../../../fsd/…` | điền màn hình / node liên quan |
 
 ## Pre-flight (orchestrator)
 
-- [ ] MCP ClickUp/GitLab/Figma sẵn sàng (`claude mcp list`)
+- [ ] MCP sẵn sàng — đủ server khai ở ProjectRules §1 (`claude mcp list`)
 - [ ] Đúng repo đích (ProjectRules §3), nhánh hiện tại không phải protected
 - [ ] git user đã cấu hình
 - [ ] Suy ra đủ metadata (taskId, sprint, branchType)

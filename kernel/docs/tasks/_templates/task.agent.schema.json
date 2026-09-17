@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spec-harness/kernel/task.agent.schema.json",
-  "title": "task.agent.json — FlowHub Studio FE harness task state",
+  "title": "task.agent.json — spec-harness task state",
   "description": "Machine-readable state for one ClickUp task. Normative field list: docs/agents/SharedRules.md §6.",
   "type": "object",
   "additionalProperties": true,
