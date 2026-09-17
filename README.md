@@ -15,6 +15,14 @@ kernel/                              ← dùng chung, không sửa khi sang proj
 ├── docs/tasks/_templates/           khuôn task doc
 └── scripts/validate-tasks.mjs       validator, đọc harness.config.json
 
+skills/                              ← ship kèm, cài vào .claude/skills/
+├── document-to-ieee-srs             fsd-writer gọi ở Gate 1 (ISO/IEC/IEEE 29148:2018)
+├── api-docs-sync                    Swagger/OpenAPI → docs/api/ (bậc 3 của thang contract API)
+├── documents-sync                   tracker doc → docs/srs/ + docs/fsd/
+├── build-and-mr                     build → push → tạo MR
+├── fix-bug                          bug nhỏ: repro-first, không qua harness
+└── quick-task                       task nhỏ: làm thẳng, không qua harness
+
 adapters/                            ← phần mỗi project tự viết
 ├── ProjectRules.template.md         khung rỗng 4 mục, /init-project-rules điền
 ├── example/harness.config.json      đường dẫn, stage, cap, routing, lệnh evidence
@@ -37,7 +45,7 @@ bash spec-harness/install.sh <project-root>
 
 Cách đầu tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách hai (script báo rõ và dừng, không cài nửa vời).
 
-Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.mcp.json`, rồi chạy `--self-check`.
+Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, `.claude/skills/`, `.mcp.json`, rồi chạy `--self-check`.
 
 **Pre-commit hook là tuỳ chọn** — một chỗ cắm gate, không phải điều kiện chạy. Repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook). Project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú. Gate lúc đó chạy tay hoặc từ CI: `node scripts/validate-tasks.mjs` (exit 1 khi có error). Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
 
