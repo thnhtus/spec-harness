@@ -53,8 +53,9 @@ install_into() {
   # adapter + command — của user, không đè
   keep "$SRC"/adapters/example/.mcp.json                   "$P"/.mcp.json
   keep "$SRC"/adapters/example/harness.config.json         "$P"/harness.config.json
-  keep "$SRC"/adapters/example/docs/agents/ProjectRules.md "$P"/docs/agents/ProjectRules.md
+  keep "$SRC"/adapters/ProjectRules.template.md            "$P"/docs/agents/ProjectRules.md
   keep "$SRC"/commands/start-task.md                       "$P"/.claude/commands/start-task.md
+  cp   "$SRC"/commands/init-project-rules.md               "$P"/.claude/commands/
 
   # Pre-commit hook là TUỲ CHỌN — một chỗ cắm gate, không phải điều kiện chạy.
   # Validator vẫn gọi được tay hoặc từ CI. Cắm được thì cắm, không thì ghi lý do.
@@ -86,6 +87,12 @@ if [ "${1:-}" = "--self-test" ]; then
     && { echo "✖ self-test: validator ĐÁNG LẼ phải fail task thiếu artifact"; exit 1; }
   [ -e "$T/.claude/agents/orchestrator.md" ] || { echo "✖ self-test: thiếu subagent"; exit 1; }
   [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
+  [ -e "$T/.claude/commands/init-project-rules.md" ] \
+    || { echo "✖ self-test: thiếu lệnh /init-project-rules"; exit 1; }
+  grep -q 'CHƯA-ĐIỀN' "$T"/docs/agents/ProjectRules.md \
+    || { echo "✖ self-test: ProjectRules không phải template rỗng"; exit 1; }
+  grep -q '^## 7\.' "$T"/docs/agents/ProjectRules.md \
+    || { echo "✖ self-test: template mất mục §7 (kernel trỏ chéo bằng số)"; exit 1; }
   python3 -c "import json,sys;json.load(open('$T/.mcp.json'))" \
     || { echo "✖ self-test: .mcp.json không phải JSON hợp lệ"; exit 1; }
   [ -e "$T/.git/hooks/pre-commit" ]          || { echo "✖ self-test: repo trống mà không cắm được hook"; exit 1; }
@@ -147,7 +154,8 @@ còn 3 việc tay trước task đầu tiên:
                                 tracker.urlPattern, acTrace.since = hôm nay
   2. .mcp.json                → khai MCP server thật (tracker / git host / design tool),
                                 xoá dòng nào không dùng. Rồi gõ /mcp trong Claude Code để login.
-  3. docs/agents/ProjectRules.md → thay sạch §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh
-                                (giữ nguyên số mục 1/2/3/7 — kernel trỏ chéo bằng số)
+  3. docs/agents/ProjectRules.md → mở Claude Code trong project, gõ /init-project-rules
+                                (dò repo rồi điền §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh;
+                                 nó cập nhật luôn evidenceCommandPattern ở việc 1)
   rồi: node scripts/validate-tasks.mjs --self-check  +  claude mcp list
 TODO
