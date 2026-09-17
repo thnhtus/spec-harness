@@ -25,19 +25,23 @@ Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh 
 ## Cài vào project mới
 
 ```bash
-# 1. lấy kernel
-cp -R kernel/docs/*           <project>/docs/
-cp kernel/scripts/validate-tasks.mjs <project>/scripts/
-
-# 2. viết adapter
-cp adapters/example/harness.config.json            <project>/harness.config.json
-cp adapters/example/docs/agents/ProjectRules.md    <project>/docs/agents/ProjectRules.md
-#    → sửa: tracker MCP, guardrail source, công thức nhánh, lệnh test/lint/build
-
-# 3. cắm gate vào boundary thật  ← BƯỚC QUAN TRỌNG NHẤT
-ln -sf ../../hooks/pre-commit .git/hooks/pre-commit
-node scripts/validate-tasks.mjs --self-check     # phải xanh trước khi chạy task đầu tiên
+bash install.sh <project-root>
 ```
+
+Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (6 subagent), `.claude/commands/`, cắm symlink `.git/hooks/pre-commit`, rồi chạy `--self-check`. Chạy lại được: kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Hook sẵn có của project cũng không bị nuốt (script báo để bạn tự chain).
+
+Xong còn 2 việc tay:
+
+| File | Sửa gì |
+| --- | --- |
+| `harness.config.json` | `evidenceCommandPattern` + `evidenceSampleCommand` (lệnh test thật, sample phải khớp pattern), `tracker.urlPattern`, `acTrace.since` = ngày bật harness |
+| `docs/agents/ProjectRules.md` | thay sạch §1 MCP · §2 guardrail · §3 nhánh · §7 lệnh — giữ nguyên số mục **1/2/3/7**, kernel trỏ chéo bằng số |
+
+Rồi `node scripts/validate-tasks.mjs --self-check` phải xanh trước task đầu tiên.
+
+`.claude/commands/start-task.md` step 0 còn hardcode quy ước nhánh/worktree của harness gốc (`tubt/t/`, `origin/develop`, `node_modules`, `.env`) — sửa theo ProjectRules §3 của bạn.
+
+`docs/srs/`, `docs/fsd/`, `docs/api/` cài ra là **rỗng** (chỉ có README làm mục lục). Project tự đổ nội dung, hoặc xoá nếu không dùng — kernel chỉ trỏ tới, không bắt buộc có file.
 
 `--self-check` kiểm tra chính config: stage/routing/artifact có nhất quán không, và `evidenceSampleCommand` có thật sự khớp `evidenceCommandPattern` không. Sai một chỗ thì mọi gate sau đó im lặng no-op — nên nó fail sớm thay vì để bạn phát hiện sau 50 task.
 
