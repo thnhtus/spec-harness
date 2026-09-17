@@ -40,11 +40,6 @@ keep() { # keep <src> <dst>
 
 install_into() {
   local P=$1
-  # Hỏi git thay vì đoán ".git/": đúng cả với worktree, submodule, và
-  # core.hooksPath (husky/lefthook trỏ hook đi chỗ khác — cắm vào .git/hooks
-  # khi đó là cắm vào hư không, gate im lặng không chạy).
-  git -C "$P" rev-parse --git-dir >/dev/null 2>&1 \
-    || { echo "✖ $P không nằm trong git repo nào (gate cần git hook)"; exit 1; }
   command -v node >/dev/null || { echo "✖ cần Node 20+ để chạy validator"; exit 1; }
 
   mkdir -p "$P"/{docs,scripts,hooks} "$P"/.claude/{agents,commands}
@@ -61,19 +56,23 @@ install_into() {
   keep "$SRC"/adapters/example/docs/agents/ProjectRules.md "$P"/docs/agents/ProjectRules.md
   keep "$SRC"/commands/start-task.md                       "$P"/.claude/commands/start-task.md
 
-  # gate — đường dẫn hook THẬT theo git (tôn trọng core.hooksPath), không đoán
-  local h; h=$(cd "$P" && git rev-parse --path-format=absolute --git-path hooks/pre-commit)
-  mkdir -p "$(dirname "$h")"
-  if [ -L "$h" ] || [ ! -e "$h" ]; then
-    ln -sf "$P/hooks/pre-commit" "$h"
+  # Pre-commit hook là TUỲ CHỌN — một chỗ cắm gate, không phải điều kiện chạy.
+  # Validator vẫn gọi được tay hoặc từ CI. Cắm được thì cắm, không thì ghi lý do.
+  # Đường dẫn hook hỏi git (tôn trọng core.hooksPath của husky/lefthook), không đoán ".git/".
+  local h
+  if h=$(cd "$P" && git rev-parse --path-format=absolute --git-path hooks/pre-commit 2>/dev/null) \
+     && [ -n "$h" ]; then
+    if [ -L "$h" ] || [ ! -e "$h" ]; then
+      mkdir -p "$(dirname "$h")" && ln -sf "$P/hooks/pre-commit" "$h"
+      [ -x "$h" ] || hook_skipped="symlink không chạy được: $h"
+    else
+      hook_skipped="project đã có pre-commit riêng — không đè"
+    fi
   else
-    gate_unarmed="$h"      # hook của user — không nuốt, nhưng phải báo TO (§dưới)
+    hook_skipped="không nằm trong git repo"
   fi
 
   ( cd "$P" && node scripts/validate-tasks.mjs --self-check )
-
-  # Symlink treo = gate im lặng no-op, đúng thứ repo này tồn tại để chống.
-  [ -n "${gate_unarmed:-}" ] || [ -x "$h" ] || gate_unarmed="$h (symlink hỏng)"
 }
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -89,7 +88,7 @@ if [ "${1:-}" = "--self-test" ]; then
   [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
   python3 -c "import json,sys;json.load(open('$T/.mcp.json'))" \
     || { echo "✖ self-test: .mcp.json không phải JSON hợp lệ"; exit 1; }
-  [ -e "$T/.git/hooks/pre-commit" ]          || { echo "✖ self-test: gate chưa cắm"; exit 1; }
+  [ -e "$T/.git/hooks/pre-commit" ]          || { echo "✖ self-test: repo trống mà không cắm được hook"; exit 1; }
   # cài lại lần 2: adapter phải được giữ
   echo 'MARKER' >> "$T"/docs/agents/ProjectRules.md
   install_into "$T" >/dev/null
@@ -113,6 +112,13 @@ if [ "${1:-}" = "--self-test" ]; then
     && { echo "✖ self-test: core.hooksPath — gate không chặn"; exit 1; }
   rm -rf "$(dirname "$H2")"
 
+  # hook là tuỳ chọn: không phải git repo vẫn phải cài được, validator vẫn chạy
+  NG=$(mktemp -d)/ng; mkdir -p "$NG"
+  install_into "$NG" >/dev/null || { echo "✖ self-test: non-git repo đáng lẽ vẫn cài được"; exit 1; }
+  ( cd "$NG" && node scripts/validate-tasks.mjs --quiet >/dev/null ) \
+    || { echo "✖ self-test: validator không chạy được khi không có hook"; exit 1; }
+  rm -rf "$(dirname "$NG")"
+
   rm -rf "$(dirname "$T")"
   echo "✅ install self-test passed"; exit 0
 fi
@@ -125,20 +131,13 @@ echo
 echo "✅ đã cài vào $1"
 [ ${#kept[@]} -eq 0 ] || { echo; echo "giữ nguyên (đã có sẵn, không đè):"; printf '   %s\n' "${kept[@]}"; }
 
-# Gate chưa cắm được = harness chỉ còn là markdown. Đây là lỗi to nhất có thể
-# xảy ra khi cài, nên nó phải chặn đường ra, không nằm lẫn trong danh sách.
-if [ -n "${gate_unarmed:-}" ]; then
+if [ -n "${hook_skipped:-}" ]; then
   cat <<GATE
 
-⚠️  GATE CHƯA CẮM — $gate_unarmed
-    Harness hiện chỉ là tài liệu: agent tự báo "xong" mà không ai chặn.
-    Project đã có pre-commit riêng, nên installer KHÔNG đè. Tự chain 1 dòng:
-
-      # thêm vào cuối hook sẵn có của bạn
+ℹ️  pre-commit hook chưa cắm ($hook_skipped) — harness vẫn chạy bình thường.
+    Gate chạy tay hoặc từ CI: node scripts/validate-tasks.mjs
+    Muốn chặn ngay lúc commit thì chain vào hook sẵn có của bạn:
       "\$(git rev-parse --show-toplevel)"/hooks/pre-commit || exit 1
-
-    Kiểm lại: sửa currentStage của một task thành "implementation" rồi thử
-    commit — phải bị chặn.
 GATE
 fi
 cat <<'TODO'
