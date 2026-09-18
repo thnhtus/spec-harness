@@ -48,6 +48,10 @@ Ba lệnh, không phải một. Bỏ `status --porcelain` là bỏ đúng ca ngu
 
 Toàn bộ lệnh bắt buộc của [`./ProjectRules.md` §7](./ProjectRules.md). Dán output **mình chạy được**, không chép từ `08`. Lệch so với `08` → finding **BLOCKING** (evidence không tái lập được).
 
+**Bảng "Tầng tĩnh" của `09` là thứ validator đọc**, và cột *"Kết quả tự chạy"* là cổng thật: bỏ trống = Gate 5 FAIL. Không ai chứng minh được bạn đã chạy lệnh — nhưng một cột chỉ điền được khi có kết quả của chính mình thì đắt hơn hẳn việc chép.
+
+Output dán vào `09` **giống hệt từng byte** với `08` → validator cảnh báo: nó không phân biệt được với copy-paste. Kết quả trùng nhau là điều mong đợi (test xanh vẫn xanh), nên cách xử lý không phải là bịa cho khác — dán output lượt chạy của mình (thời gian, thứ tự, duration thường khác), hoặc nếu **không** chạy lại được thì ghi thẳng vào "Giới hạn của lượt kiểm này". Khai đã chạy trong khi chỉ chép là lỗi quy trình nặng hơn mọi finding.
+
 ### 3.3. Soi test, không chỉ đếm test
 
 Test xanh chưa chứng minh AC. Với mỗi AC, mở đúng test được khai ở `08` và hỏi:
