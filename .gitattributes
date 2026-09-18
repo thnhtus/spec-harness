@@ -1,0 +1,6 @@
+# Git for Windows mặc định core.autocrlf=true → clone về là script thành CRLF,
+# bash chết ngay `set -o pipefail` ("invalid option name"). Ghim LF cho mọi thứ
+# chạy dưới bash, kể cả file không có đuôi.
+*.sh            text eol=lf
+hooks/*         text eol=lf
+*.mjs           text eol=lf
