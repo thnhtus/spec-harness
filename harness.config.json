@@ -97,8 +97,14 @@
   "acTrace": {
     "declaredIn": "02-FSD-Review.md",
     "reachedIn": [
-      { "doc": "03-Technical-Plan.md", "fromStage": "implementation" },
-      { "doc": "08-Test-Evidence.md", "fromStage": "adversarial_review" }
+      {
+        "doc": "03-Technical-Plan.md",
+        "fromStage": "implementation"
+      },
+      {
+        "doc": "08-Test-Evidence.md",
+        "fromStage": "adversarial_review"
+      }
     ],
     "since": "2026-07-28"
   },
@@ -107,5 +113,15 @@
   "tracker": {
     "urlPattern": "^https://app\\.clickup\\.com/t/.+"
   },
-  "_note": "Config of the spec-harness repo itself: tasksDir points at the shipped kernel templates so `--self-check` validates what we distribute. A real project copies adapters/example/harness.config.json instead."
+  "_note": "Config of the spec-harness repo itself: tasksDir points at the shipped kernel templates so `--self-check` validates what we distribute. A real project copies adapters/example/harness.config.json instead.",
+  "retryBudget": 4,
+  "roleStage": {
+    "orchestrator": "bootstrap",
+    "fsd-writer": "fsd_write",
+    "fsd-reviewer": "fsd_review",
+    "technical-planner": "technical_plan",
+    "fe-implementer": "implementation",
+    "fe-fix": "implementation",
+    "adversary": "adversarial_review"
+  }
 }
