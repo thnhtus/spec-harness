@@ -25,11 +25,12 @@
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
  * Flags: --json, --no-warn, --quiet, --self-check, --calibrate, --config <path>,
- *        --staged (only task folders touched by the current git index)
+ *        --staged (only task folders touched by the current git index),
+ *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname, relative, resolve, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,6 +48,13 @@ const CALIBRATE = args.has("--calibrate");
 // bypass with --no-verify is decoration. CI stays whole-repo; that is the place
 // for the global view.
 const STAGED = args.has("--staged");
+// --task: validate ĐÚNG MỘT task folder. Gate 1–3 chỉ có răng nếu chạy được
+// NGAY SAU mỗi stage, mà bản quét-toàn-repo thì chậm và ồn (một task khác đang
+// `blocked` chờ BA sẽ làm gate của task này đỏ). Nhận cả đường dẫn đầy đủ
+// (`docs/tasks/sprint-1/ABC-1-x`) lẫn dạng rút gọn (`sprint-1/ABC-1-x`) —
+// coordinator có sẵn biến $TASK ở dạng đầu.
+const taskFlagAt = argv.indexOf("--task");
+const TASK_ARG = taskFlagAt !== -1 ? argv[taskFlagAt + 1] : null;
 
 const CONFIG_NAME = "harness.config.json";
 
@@ -294,8 +302,75 @@ function fencedText(t) {
   return [...t.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
 }
 
+// RESULT_RE hỏi "có chữ passed không", không hỏi "test có xanh không" — mà
+// `Tests: 11 passed, 1 failed` thoả vế đầu. Đó đúng là thứ Gate 4 sinh ra để
+// chặn, nên phải có vế phủ định riêng. Anchor `^` cho FAIL/✗ vì chúng hay xuất
+// hiện giữa câu văn xuôi ("nếu FAIL thì…"); `\d+ failed` thì không cần.
+const FAILURE_RE =
+  /\b\d+\s+(failed|failing)\b|^\s*(FAIL|✗|✖|×)\s|\bexit (code )?[1-9]\d*\b|\bERR!/im;
+
+// Lối thoát cho test đỏ CÓ CHỦ ĐÍCH (fe-fix reproduce-first: viết test đỏ
+// trước, sửa sau). Không có nó thì agent học cách không dán output fail —
+// tệ hơn hẳn việc gate lỏng, vì lúc đó bằng chứng biến mất thay vì bị bắt.
+const KNOWN_FAILURE_RE = /<!--\s*known-failure:/i;
+
 function hasRealEvidenceIn(t) {
-  return EVIDENCE_RE.test(t) && RESULT_RE.test(fencedText(t));
+  const fenced = fencedText(t);
+  if (!EVIDENCE_RE.test(t) || !RESULT_RE.test(fenced)) return false;
+  return !FAILURE_RE.test(fenced) || KNOWN_FAILURE_RE.test(t);
+}
+
+// ── attestation (scripts/run-evidence.mjs) ─────────────────────────────────
+// Mọi thứ ở trên chỉ đọc HÌNH DẠNG chữ, nên một agent chưa chạy lệnh nào vẫn qua
+// được bằng cách gõ ra `Tests: 12 passed`. Attestation đổi câu hỏi: không phải
+// "có giống output test không" mà "tiến trình nào đã chạy và exit bao nhiêu".
+//
+// `evidenceMode: "attested"` trong harness.config.json bật thành bắt buộc. Mặc
+// định `"legacy"` vì task đang chạy dở và repo đã có evidence viết tay không
+// được đỏ hết chỉ vì nâng kernel — bật khi bạn đã chuyển ProjectRules §7 sang
+// wrapper. Ở chế độ legacy, có attestation vẫn được kiểm; chỉ "thiếu" mới tha.
+const ATTEST_MARK = "--- spec-harness attestation ---";
+const EVIDENCE_MODE = CFG.evidenceMode ?? "legacy";
+
+function attestationsIn(text) {
+  const out = [];
+  for (const m of text.matchAll(/--- spec-harness attestation ---\n([\s\S]*?)(?:```|$)/g)) {
+    const get = (k) => {
+      const hit = new RegExp(`^${k}:\\s*(.+)$`, "m").exec(m[1]);
+      return hit ? hit[1].trim() : null;
+    };
+    const code = get("exitCode");
+    if (code === null) continue;
+    out.push({
+      exitCode: Number(code),
+      durationMs: Number(get("durationMs") ?? NaN),
+      gitRev: get("gitRev"),
+      startedAt: get("startedAt"),
+    });
+  }
+  return out;
+}
+
+// Trả về danh sách defect. Rỗng = attestation không nói gì sai.
+function attestationDefects(text, label) {
+  const found = attestationsIn(text);
+  if (!found.length) {
+    if (EVIDENCE_MODE !== "attested") return [];
+    return [
+      `${label}: evidenceMode="attested" nhưng không có khối attestation nào — chạy lệnh qua \`node scripts/run-evidence.mjs -- <lệnh>\` thay vì dán output bằng tay`,
+    ];
+  }
+  const d = [];
+  for (const a of found) {
+    // Đây là lý do wrapper tồn tại: output in ra "passed" mà exit khác 0.
+    if (a.exitCode !== 0 && !KNOWN_FAILURE_RE.test(text))
+      d.push(`${label}: attestation ghi exitCode ${a.exitCode} — lệnh THẤT BẠI, bất kể output nói gì`);
+    // durationMs 0 nghĩa là không có tiến trình nào thật sự chạy; NaN nghĩa là
+    // khối được gõ tay thiếu field. Cả hai đều là attestation không đáng tin.
+    if (!Number.isFinite(a.durationMs) || a.durationMs <= 0)
+      d.push(`${label}: attestation có durationMs không hợp lệ ("${a.durationMs}") — khối này không do run-evidence.mjs sinh ra`);
+  }
+  return d;
 }
 
 // Gate 5 artifact: the adversary must record a verdict and paste output it ran
@@ -339,6 +414,21 @@ function adversaryDefects(t, evidenceText = "") {
     d.push(
       "09's pasted output is byte-identical to 08's — indistinguishable from copy-paste; paste YOUR run (timestamps/durations differ) or say in \"Giới hạn\" that you could not re-run",
     );
+
+  // Kiểm byte-identical ở trên là heuristic yếu: thêm một dòng là qua. Khi cả
+  // hai file có attestation thì so được thứ chặt hơn — adversary PHẢI chạy sau
+  // implementer. startedAt của 09 sớm hơn 08 nghĩa là khối đó chép từ nơi khác,
+  // hoặc chép từ chính 08 rồi sửa vài chữ.
+  const advA = attestationsIn(t);
+  const evA = evidenceText ? attestationsIn(evidenceText) : [];
+  if (advA.length && evA.length) {
+    const newestEv = Math.max(...evA.map((a) => Date.parse(a.startedAt ?? "")).filter(Number.isFinite));
+    const oldestAdv = Math.min(...advA.map((a) => Date.parse(a.startedAt ?? "")).filter(Number.isFinite));
+    if (Number.isFinite(newestEv) && Number.isFinite(oldestAdv) && oldestAdv < newestEv)
+      d.push(
+        "09's attestation started BEFORE 08's newest run — Gate 5 must re-run after the implementer, so this block did not come from your own run (§3.2)",
+      );
+  }
   return d;
 }
 
@@ -405,6 +495,37 @@ if (args.has("--self-check")) {
     hasRealEvidenceIn(`| Unit | \`${sample}\` | AC-01 | …/… passed | | |`),
     false,
     'a table row saying "passed" is a plan, not a result — the fence is the proof',
+  );
+  // Gate 4 phải hỏi "test có xanh không", không phải "có chữ passed không".
+  // Output có cả passed lẫn failed từng LỌT — đúng ca gate tồn tại để chặn.
+  assert.equal(
+    hasRealEvidenceIn("```\n$ " + sample + "\nTests: 11 passed, 1 failed\n```"),
+    false,
+    "output có test fail KHÔNG được qua Gate 4 chỉ vì có chữ passed",
+  );
+  assert.equal(
+    hasRealEvidenceIn("```\n$ " + sample + "\nFAIL src/a.spec.ts\n4 passed\n```"),
+    false,
+    "dòng FAIL trong output chặn Gate 4",
+  );
+  assert.equal(
+    hasRealEvidenceIn("```\n$ " + sample + "\n2 passed\nexit 1\n```"),
+    false,
+    "exit code khác 0 chặn Gate 4",
+  );
+  // Lối thoát: test đỏ có chủ đích (fe-fix reproduce-first) vẫn khai được.
+  assert.equal(
+    hasRealEvidenceIn(
+      "<!-- known-failure: AC-03 reproduce -->\n```\n$ " + sample + "\nTests: 3 passed, 1 failed\n```",
+    ),
+    true,
+    "known-failure đã khai thì vẫn là evidence hợp lệ",
+  );
+  // "FAIL" trong văn xuôi (ngoài fence) không được chặn nhầm — fence mới là bằng chứng.
+  assert.equal(
+    hasRealEvidenceIn("Nếu FAIL thì dừng.\n```\n$ " + sample + "\nTests: 4 passed\n```"),
+    true,
+    "chữ FAIL trong văn xuôi không phải kết quả chạy",
   );
   // Regression: the shipped 08 template, with a command name typed into the
   // table but no output pasted, must NOT pass Gate 4. This is the exact hole
@@ -707,6 +828,67 @@ if (args.has("--self-check")) {
     );
   }
 
+  // ── attestation ──────────────────────────────────────────────────────────
+  // Đây là ca wrapper sinh ra để bắt, và là ca mọi kiểm-bằng-regex đều thua:
+  // output in ra "passed" nhưng lệnh exit khác 0.
+  {
+    const att = (code, dur = 12, at = "2026-09-18T09:00:00Z") =>
+      ["```", "$ " + sample, "Tests: 12 passed", ATTEST_MARK, `exitCode: ${code}`,
+       `durationMs: ${dur}`, "gitRev: a3f9c1e", `startedAt: ${at}`, "```"].join("\n");
+
+    assert.deepEqual(attestationDefects(att(0), "08"), [], "attestation exit 0 là sạch");
+    assert.ok(
+      attestationDefects(att(1), "08").some((d) => /exitCode 1/.test(d)),
+      "in ra passed mà exitCode 1 phải bị bắt — regex không bao giờ thấy được điều này",
+    );
+    // durationMs 0 = không tiến trình nào chạy; thiếu field = khối gõ tay.
+    assert.ok(
+      attestationDefects(att(0, 0), "08").some((d) => /durationMs/.test(d)),
+      "durationMs 0 nghĩa là không có lệnh nào thật sự chạy",
+    );
+    assert.ok(
+      attestationDefects(ATTEST_MARK + "\nexitCode: 0\n", "08").some((d) => /durationMs/.test(d)),
+      "attestation thiếu durationMs không đáng tin",
+    );
+    // known-failure vẫn là lối thoát hợp lệ, y như với FAILURE_RE.
+    assert.deepEqual(
+      attestationDefects("<!-- known-failure: AC-03 -->\n" + att(1), "08"),
+      [],
+      "test đỏ có chủ đích đã khai thì exitCode khác 0 vẫn hợp lệ",
+    );
+    // Mặc định legacy: repo đang chạy dở không được đỏ hết chỉ vì nâng kernel.
+    assert.deepEqual(attestationDefects("không có attestation", "08"), [],
+      'evidenceMode mặc định "legacy" thì thiếu attestation không phải lỗi');
+
+    // Gate 5 phải chạy SAU implementer. startedAt sớm hơn = khối chép từ nơi khác.
+    const evNew = att(0, 12, "2026-09-18T10:00:00Z");
+    const advOld = att(0, 12, "2026-09-18T09:00:00Z");
+    assert.ok(
+      adversaryDefects(advOld + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
+      "attestation của 09 sớm hơn 08 = adversary không tự chạy",
+    );
+    const advNew = att(0, 12, "2026-09-18T11:00:00Z");
+    assert.ok(
+      !adversaryDefects(advNew + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
+      "chạy sau thì không bị bắt",
+    );
+  }
+
+  // --task: khoá rút ra từ hai segment cuối, chấp nhận mọi dạng coordinator có.
+  assert.equal(taskKeyOf("docs/tasks/sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "đường dẫn đầy đủ");
+  assert.equal(taskKeyOf("sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "dạng rút gọn");
+  assert.equal(taskKeyOf("./docs/tasks/sprint-1/ABC-1-x/"), "sprint-1/ABC-1-x", "có ./ và / cuối");
+  assert.equal(taskKeyOf("docs\\tasks\\sprint-1\\ABC-1-x"), "sprint-1/ABC-1-x", "dấu \\ của Windows");
+
+  // --task trỏ folder không có thật phải THOÁT LỖI, không phải "0 task, 0 error".
+  // Gate xanh vì không tìm thấy gì để kiểm là gate tệ hơn không có gate.
+  {
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--task", "sprint-9/khong-co-that", "--quiet"],
+      { cwd: REPO_ROOT, encoding: "utf8" });
+    assert.equal(r.status, 2, "--task trỏ folder không tồn tại phải exit 2, không được cho qua");
+    assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
+  }
+
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
 }
@@ -807,6 +989,13 @@ function stagedTaskFolders() {
   return hit;
 }
 
+// "docs/tasks/sprint-1/ABC-1-x", "sprint-1/ABC-1-x", "./docs/tasks/sprint-1/ABC-1-x/"
+// → "sprint-1/ABC-1-x". Hai segment cuối là khoá; mọi thứ trước đó là tasksDir.
+function taskKeyOf(arg) {
+  const parts = arg.split(/[/\\]/).filter((x) => x && x !== ".");
+  return parts.slice(-2).join("/");
+}
+
 function findTaskFolders() {
   const folders = [];
   if (!existsSync(TASKS_DIR)) return folders;
@@ -839,8 +1028,17 @@ if (CFG.layers?.length && schema.properties?.layer)
   schema.properties.layer.enum = CFG.layers;
 if (schema.properties?.docsPath)
   schema.properties.docsPath.pattern = `^${esc(CFG.tasksDir ?? "docs/tasks")}/${esc(GROUP_PREFIX)}.+/.+/?$`;
-const ONLY = STAGED ? stagedTaskFolders() : null;
+const ONLY = TASK_ARG ? new Set([taskKeyOf(TASK_ARG)]) : STAGED ? stagedTaskFolders() : null;
 const folders = findTaskFolders();
+
+// Gõ sai đường dẫn --task thì không có folder nào khớp → "0 task, 0 error" →
+// gate XANH. Một cổng im lặng cho qua vì không tìm thấy gì để kiểm là cổng
+// tệ hơn không có cổng: nó báo an toàn. --staged khác hẳn, rỗng ở đó là hợp lệ
+// (commit không đụng task nào).
+if (TASK_ARG && !folders.length) {
+  console.error(`✖ --task "${TASK_ARG}": không thấy task folder nào khớp "${taskKeyOf(TASK_ARG)}" trong ${rel(TASKS_DIR)}`);
+  process.exit(2);
+}
 const results = []; // {folder, errors:[], warnings:[]}
 const allTasks = []; // parsed task.agent.json, for --calibrate
 const taskIdMap = new Map(); // taskId -> [folder rel paths]
@@ -1075,6 +1273,8 @@ for (const { sprint, task, path } of folders) {
     if (!existsSync(ev)) errors.push(`status=${data.status} but ${evName} missing`);
     else if (!hasRealEvidence(ev))
       errors.push(`${evName} has no real command+result evidence (Gate 4 honesty)`);
+    if (existsSync(ev))
+      for (const d of attestationDefects(readFileSync(ev, "utf8"), evName)) errors.push(d);
     if (GATE4_ARTIFACTS.notes && !existsSync(join(path, GATE4_ARTIFACTS.notes)))
       warnings.push(`status=${data.status} but ${GATE4_ARTIFACTS.notes} missing`);
     // Gate 5: reviewing means the adversary passed it, so its review must exist.
@@ -1085,8 +1285,12 @@ for (const { sprint, task, path } of folders) {
         errors.push(`status=${data.status} but ${GATE4_ARTIFACTS.adversarial} missing (Gate 5 skipped)`);
       else {
         const evText = existsSync(ev) ? readFileSync(ev, "utf8") : "";
-        for (const d of adversaryDefects(readFileSync(adv, "utf8"), evText))
+        const advText = readFileSync(adv, "utf8");
+        for (const d of adversaryDefects(advText, evText))
           errors.push(`${GATE4_ARTIFACTS.adversarial}: ${d}`);
+        // Gate 5 chạy LẠI lệnh, nên nó cũng phải đóng dấu — nếu không, adversary
+        // vẫn bịa được output của chính nó và cả hai gate cùng mù.
+        for (const d of attestationDefects(advText, GATE4_ARTIFACTS.adversarial)) errors.push(d);
       }
     }
   }

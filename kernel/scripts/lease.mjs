@@ -2,6 +2,7 @@
 // Lease cho một task folder: chặn hai phiên /start-task cùng chạy một task.
 //
 //   node scripts/lease.mjs acquire <task-folder>    # exit 1 nếu phiên khác đang giữ
+//   node scripts/lease.mjs renew   <task-folder>    # gọi mỗi lần dispatch stage
 //   node scripts/lease.mjs release <task-folder>
 //   node scripts/lease.mjs --self-check
 //
@@ -62,6 +63,28 @@ function acquire(taskDir) {
 
 const release = (taskDir) => (rmSync(paths(taskDir).dir, { recursive: true, force: true }), 0);
 
+// TTL 30' được thiết kế để phát hiện PHIÊN ĐÃ CHẾT, nhưng stamp() chỉ chạy một
+// lần lúc acquire — nên nó áp cho cả vòng đời task. Một task `high` chạy 6 stage
+// với model `strong` vượt 30' là bình thường, và lúc đó lease ĐANG SỐNG bị coi
+// là mồ côi: phiên thứ hai acquire được, hai phiên cùng ghi .agent-memory —
+// đúng cái race mà lease sinh ra để chống.
+//
+// Coordinator gọi renew mỗi lần dispatch stage (cùng chỗ nó tăng attempts).
+// Không cần timer hay tiến trình nền: mỗi stage là một nhịp tim tự nhiên, và
+// stage dài nhất vẫn ngắn hơn TTL.
+//
+// KHÔNG tạo lease từ hư không — renew mà tự mkdir thì nó thành acquire bỏ qua
+// kiểm tra, tức là hợp pháp hoá đúng cái cướp lease mà file này chống.
+function renew(taskDir) {
+  const p = paths(taskDir);
+  if (mtime(p.dir) === null) {
+    console.error("→ không giữ lease (chưa acquire, hoặc đã bị release). Không renew.");
+    return 1;
+  }
+  stamp(p);
+  return 0;
+}
+
 // ── self-check ─────────────────────────────────────────────────────────────
 if (process.argv[2] === "--self-check") {
   const { strict: assert } = await import("node:assert");
@@ -84,6 +107,20 @@ if (process.argv[2] === "--self-check") {
   utimesSync(p.dir, old, old);
   assert.equal(dead(p), true, "thiếu owner + thư mục quá TTL = mồ côi thật");
 
+  // renew: giữ lease sống qua mốc TTL, nếu không task dài tự mất chỗ.
+  release(t);
+  acquire(t);
+  utimesSync(p.owner, old, old);
+  assert.equal(dead(p), true, "tiền đề: lease đã quá TTL");
+  assert.equal(renew(t), 0, "đang giữ lease thì renew được");
+  assert.equal(dead(p), false, "renew phải làm lease sống lại");
+  assert.equal(acquire(t), 1, "renew xong, phiên khác vẫn phải bị từ chối");
+
+  release(t);
+  assert.equal(renew(t), 1, "không giữ lease thì KHÔNG renew được");
+  assert.equal(mtime(p.dir), null, "renew không được tạo lease từ hư không");
+
+  acquire(t);
   release(t);
   assert.equal(mtime(p.dir), null, "release phải xoá lease");
   rmSync(t, { recursive: true, force: true });
@@ -92,8 +129,9 @@ if (process.argv[2] === "--self-check") {
 }
 
 const [cmd, taskDir] = process.argv.slice(2);
-if (!taskDir || !["acquire", "release"].includes(cmd)) {
-  console.error("dùng: node scripts/lease.mjs acquire|release <task-folder>");
+const CMDS = { acquire, renew, release };
+if (!taskDir || !CMDS[cmd]) {
+  console.error("dùng: node scripts/lease.mjs acquire|renew|release <task-folder>");
   process.exit(2);
 }
-process.exit(cmd === "acquire" ? acquire(taskDir) : release(taskDir));
+process.exit(CMDS[cmd](taskDir));
