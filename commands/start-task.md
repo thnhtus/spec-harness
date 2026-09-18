@@ -233,9 +233,40 @@ model của task.
 Gate 5 FAIL → re-dispatch implementer (step 5) **một lần** với finding từ `09`;
 vẫn FAIL lần hai → dừng, báo user (Gate-fail handling). Không lặp vô hạn.
 
+**Sau MỖI stage, chạy validator trên đúng task này — trước khi dispatch stage kế:**
+
+```bash
+node scripts/validate-tasks.mjs --quiet --task "$TASK"    # exit 1 = gate FAIL
+```
+
+Không có bước này thì Gate 1–3 là **bạn tự đọc doc rồi tự phán** — cùng loại
+self-report mà harness không tin ở `attempts` và `telemetry`. Hệ quả thật: AC rơi
+khỏi `03` chỉ lộ ra ở step 7, tức là **sau khi implementer đã viết code** — đúng
+lúc sửa đắt nhất, và đó là nguồn chính của `attempts.implementation ≥ 2`.
+
+Exit code phân biệt sẵn: `0` pass · `1` gate FAIL (xử lý theo Gate-fail handling)
+· `2` sai tham số `--task` (gõ sai đường dẫn — sửa lệnh, đừng coi là gate fail).
+
+`--task` thay vì quét cả repo là có chủ đích: một task **khác** đang `blocked`
+chờ BA là trạng thái hợp lệ, không được làm đỏ gate của task này.
+
 **Mỗi lần dispatch một stage, tăng `task.agent.json → attempts[<stage>]`** (chưa
 có thì đặt `1`). Đó là số đo duy nhất về rework mà harness có — `attempts` ≥ 3
 validator sẽ cảnh báo ([`docs/Agents.md` §5.5](../../docs/Agents.md)).
+
+**Và gia hạn lease — cùng chỗ đó, cùng lúc đó:**
+
+```bash
+node scripts/lease.mjs renew "$TASK"
+```
+
+Lease TTL 30 phút được thiết kế để phát hiện *phiên đã chết*, nhưng `acquire`
+chỉ đóng dấu một lần — nên nếu không renew, nó áp cho **cả vòng đời task**. Một
+task `high` chạy 6 stage với model `strong` vượt 30 phút là bình thường, và lúc
+đó lease *đang sống* bị coi là mồ côi: phiên thứ hai acquire được, hai phiên
+cùng ghi `.agent-memory/` — đúng cái race lease sinh ra để chống.
+
+Mỗi lần dispatch là một nhịp tim tự nhiên, không cần timer hay tiến trình nền.
 
 **Và append một dòng `telemetry`** — bạn là actor duy nhất biết stage vừa rồi
 chạy tier nào:
