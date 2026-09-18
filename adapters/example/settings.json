@@ -1,5 +1,5 @@
 {
-  "_comment": "Guardrail ở tầng permission, không phải tầng prompt. Instructions.md §1 cấm những lệnh này bằng văn bản — nhưng văn bản là thứ model CHỌN tuân thủ. Deny ở đây thì không có chỗ để chọn. Cài một lần, không bị đè khi nâng kernel; thêm bớt theo project. CỐ Ý KHÔNG deny `git worktree remove` và `git branch -D`: chính harness dùng chúng để dọn thứ nó vừa tạo (start-task step 2, Adversary §3.3.1) — deny là chặn harness, không phải chặn tai nạn.",
+  "_comment": "Guardrail ở tầng permission, không phải tầng prompt. Instructions.md §1 cấm những lệnh này bằng văn bản — nhưng văn bản là thứ model CHỌN tuân thủ. Deny ở đây thì không có chỗ để chọn. Cài một lần, không bị đè khi nâng kernel; thêm bớt theo project. CỐ Ý KHÔNG deny `git worktree remove` và `git branch -D`: chính harness dùng chúng để dọn thứ nó vừa tạo (start-task step 2, Adversary-Mutation.md) — deny là chặn harness, không phải chặn tai nạn.",
   "permissions": {
     "deny": [
       "Bash(git push:*)",
