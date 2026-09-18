@@ -114,6 +114,13 @@ function installHook(P) {
 }
 
 function installInto(P) {
+  // Nguồn thiếu folder = bản phát hành hỏng (package.json `files:` quên khai,
+  // hoặc tarball cắt sai). Không bắt sớm thì lỗi rơi ra dưới dạng stack trace
+  // ENOENT của cpSync — đúng nguyên nhân nhưng không ai đọc ra là lỗi đóng gói.
+  for (const d of ["kernel", "agents", "skills", "adapters", "commands", "hooks"])
+    if (!existsSync(join(SRC, d)))
+      die(`✖ nguồn thiếu "${d}/" — bản phát hành hỏng (package.json files: thiếu mục?), không cài nửa vời`);
+
   const kept = [];
   // Copy chỉ khi đích chưa có. Đây là thứ giữ adapter sống qua lần cài lại.
   const keep = (src, dst) => existsSync(dst) ? kept.push(dst) : cpSync(src, dst);

@@ -15,3 +15,13 @@ jobs:
       - run: node kernel/scripts/validate-tasks.mjs --self-check
       - run: node kernel/scripts/validate-tasks.mjs
       - run: node install.mjs --self-test
+
+      # Self-test ở trên chạy từ CÂY REPO — nó thấy mọi file, kể cả file mà
+      # installer quên copy hoặc package.json quên khai trong `files:`. Nên chạy
+      # lại đúng self-test đó trên tarball đã pack: đó mới là thứ người dùng nhận.
+      # Thiếu bước này thì "thêm folder mới, quên khai" là lỗi CI không bao giờ thấy.
+      - name: self-test trên tarball đã pack (không phải trên cây repo)
+        run: |
+          npm pack --silent | tail -1 | xargs -I{} tar xzf {} -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/package"
+          node install.mjs --self-test
