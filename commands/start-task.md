@@ -193,10 +193,12 @@ role tương ứng rồi chạy trong context sạch. Prompt của mọi subagen
 > **§4 §5 §6 §8** (add **§9** unless you are `orchestrator` — it owns no AC),
 > then your role file named below. Obey the artifact size caps and MCP payload
 > discipline in SharedRules §8. Work only inside the task folder and the
-> files your role owns. When done, append your `## Next Handoff` block
-> (≤ 30 lines) to `.agent-memory/{role}.md` and update `task.agent.json`.
-> End your final message with: gate verdict (PASS/FAIL), status set, and the
-> one-line reason.
+> files your role owns. **If this is a re-run (`attempts[<stage>] > 1`), read
+> only the newest `## Cập Nhật` block of `06`/`08`/`09` plus the last handoff —
+> not the whole history; earlier rounds are already distilled there.** When done,
+> append your `## Next Handoff` block (≤ 30 lines) to `.agent-memory/{role}.md`
+> and update `task.agent.json`. End your final message with: gate verdict
+> (PASS/FAIL), status set, and the one-line reason.
 
 Preamble nêu **mục**, không nêu cả file: sàn luật mỗi subagent đọc được nhân lên theo từng stage của từng task, nên một mục thừa là chi phí trả sáu lần. Đây là chỗ rẻ nhất để cắt — sửa một dòng, không đụng kernel, giữ nguyên "một normative home". Số thật thì khiêm tốn: chỉ `orchestrator` bỏ được §9 (~580 tok), sáu role còn lại đều dùng nó. Đừng cắt sâu hơn bằng cảm tính — §8 là mục dài nhất nhưng mọi role đều cần.
 
