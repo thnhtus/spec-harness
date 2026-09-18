@@ -65,7 +65,8 @@ Chạy `node scripts/validate-tasks.mjs` (không cần dependency; đọc `harne
 - `task.agent.json` hợp lệ theo schema `_templates/task.agent.schema.json` (enum `status`, `branchType`, `currentStage`, role bắt buộc…).
 - Số nhóm (`sprintNumber`) / `taskId` / `docsPath` khớp vị trí folder; **không trùng** `taskId` của tracker.
 - File artifact bắt buộc có mặt theo `currentStage` đã đạt (vd `01-FSD.md` phải có khi `currentStage ≥ fsd_review`).
-- Trần dòng [§8](../agents/SharedRules.md) (00≤80, 01≤250, 02≤150, 03≤200, block handoff ≤30). Doc đã có `## Cập Nhật — …` (task bị gate trả về) thì trần áp cho **block mới nhất**, không phải cả file — append-only mà cap cả file là cái bẫy đóng: vượt trần, và §5 cấm xoá bớt để chui xuống dưới.
+- Trần dòng [§8](../agents/SharedRules.md) (00≤80, 01≤250, 02≤150, 03≤200, 06≤250, block handoff ≤30). Doc đã có `## Cập Nhật — …` (task bị gate trả về) thì trần áp cho **block mới nhất**, không phải cả file — append-only mà cap cả file là cái bẫy đóng: vượt trần, và §5 cấm xoá bớt để chui xuống dưới.
+- `08`/`09` **không có trần cứng** (`lineWarn` 400 = cảnh báo). Chúng chứa output dán nguyên văn; trần ở đó chỉ ép cắt bằng chứng, mà `adversary` cần đúng output đó để đối chiếu. Vượt 400 dòng = tín hiệu tách task, không phải lỗi.
 - `branchType` ↔ implementer (feature/hotfix → `fe-implementer`; bugfix → `fe-fix`).
 - Khi `status ∈ {reviewing, mr_created, done}`: `08-Test-Evidence.md` phải có bằng chứng thật — lệnh khớp `evidenceCommandPattern` **và** kết quả pass/exit nằm **trong block ```code fence```**. Chữ "passed" ở ô *Expected* của bảng không tính: đó là kế hoạch, không phải kết quả ([Gate 4](../Agents.md) §3).
 - `09-Adversarial-Review.md` phải có verdict (PASS/FAIL/UNCERTAIN), output adversary **tự chạy**, và bảng "Tầng tĩnh" với cột *Kết quả tự chạy* **không rỗng** — tồn tại file là chưa đủ. Fence giống hệt `08` từng byte → cảnh báo copy-paste.

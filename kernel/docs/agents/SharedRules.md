@@ -115,6 +115,12 @@ Khi chuyển sang `done`: điền `outcome` ([`../Agents.md` §5.6](../Agents.md
 
 > **Task bị gate trả về:** doc là append-only (§5) và resume phải append `## Cập Nhật — …` ([`../HarnessSetup.md` §7](../HarnessSetup.md)) — nên sau hai vòng, cap cả file thành bẫy đóng: vượt trần mà không được phép cắt. Vì vậy khi doc đã có block `## Cập Nhật`, trần áp cho **block mới nhất** (phần role hiện tại viết, và là phần duy nhất nó được quyền rút gọn); tổng file vượt trần chỉ còn là **warning** nhắc tách appendix.
 
+**`08`/`09` không có trần cứng — cố ý.** Chúng chứa **output dán nguyên văn từ máy**, không phải văn xuôi role tự viết: `01`/`02`/`03` chạm trần thì cắt diễn giải, nội dung còn nguyên; `08` chạm trần thì chỉ còn cách cắt bằng chứng. Mà [`../Instructions.md` §5](../Instructions.md) nói không thương lượng: dán nguyên văn. Đẩy output sang appendix cũng không được — appendix là phần stage sau *không đọc*, mà `adversary` **phải** đối chiếu output nó tự chạy với output `08` khai ([`./Adversary.md` §3.2](./Adversary.md)), và validator chỉ tính evidence nằm trong code fence của chính file đó. Trần ở đây mua được file ngắn bằng cách làm mỏng bằng chứng — ngược đúng mục tiêu Gate 4/5.
+
+Thay vào đó `08`/`09` có **ngưỡng cảnh báo** (`lineWarn`, mặc định 400 dòng): không chặn, chỉ báo. `08` cán 400 dòng thường nghĩa là task ôm quá nhiều AC — đó là tín hiệu nên **tách task**, không phải nên viết ngắn lại.
+
+**Chạy lại thì đọc block mới nhất, đừng đọc cả lịch sử.** Stage bị gate trả về (`attempts > 1`) chỉ cần block `## Cập Nhật` mới nhất của `06`/`08`/`09` + handoff cuối; vòng trước đã được chắt lọc vào đó. Đọc lại toàn bộ là trả tiền cho cùng một lịch sử nhiều lần — file cứ dài (nó là bằng chứng, phải dài), nhưng không ai phải đọc lại tất cả.
+
 | Artifact | Trần | Khi vượt |
 | --- | --- | --- |
 | `00-Metadata.md` | ≤ 80 dòng | cắt gọn — metadata không phải spec |

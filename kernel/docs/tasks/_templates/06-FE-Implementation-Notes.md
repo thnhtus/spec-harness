@@ -1,6 +1,7 @@
 # 06 — FE Implementation Notes: {taskName}
 
 > Sinh bởi `fe-implementer` (feature/hotfix) hoặc `fe-fix` (bugfix), stage `implementation`, **Gate 4**. Append-only, tiếng Việt.
+> **≤ 250 dòng** ([`../../agents/SharedRules.md` §8](../../agents/SharedRules.md)) — đây là văn xuôi (Decisions, Deviations, Known Limitations), cắt được. Output lệnh thì dán vào `08`, nơi không có trần.
 
 ## Metadata
 
