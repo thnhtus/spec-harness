@@ -16,6 +16,7 @@
 | `<tên server trong .mcp.json>` | Nguồn yêu cầu | taskId, mô tả, AC của BA, comment |
 | `<…>` | Nguồn nhánh / MR | kiểm nhánh, MR, nhánh protected |
 | `<…>` | Nguồn thiết kế | node/screen, trạng thái UI |
+| `<…>` | Chạy app thật | Gate 5 drive UI theo AC (`pre-qc-gate` §4a), repro before/after (`fix-bug`) — xoá dòng này nếu project không có UI |
 
 - **Không bịa dữ liệu MCP.** Trường không lấy được → ghi nguyên văn `unavailable`; nếu trường đó chặn gate → `status = needs_clarification`.
 - **Trích dẫn, không diễn giải:** nêu yêu cầu phải kèm nguồn (URL task, node thiết kế, ID requirement).
