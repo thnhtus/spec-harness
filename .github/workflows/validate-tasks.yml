@@ -14,4 +14,4 @@ jobs:
       # --self-check trước: config tự mâu thuẫn thì mọi check sau im lặng no-op.
       - run: node kernel/scripts/validate-tasks.mjs --self-check
       - run: node kernel/scripts/validate-tasks.mjs
-      - run: bash install.sh --self-test
+      - run: node install.mjs --self-test
