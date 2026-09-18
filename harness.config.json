@@ -52,7 +52,8 @@
     "00-Metadata.md": 80,
     "01-FSD.md": 250,
     "02-FSD-Review.md": 150,
-    "03-Technical-Plan.md": 200
+    "03-Technical-Plan.md": 200,
+    "06-FE-Implementation-Notes.md": 250
   },
   "handoffBlockCap": 30,
   "requiredAtStage": [
@@ -123,5 +124,9 @@
     "fe-implementer": "implementation",
     "fe-fix": "implementation",
     "adversary": "adversarial_review"
+  },
+  "lineWarn": {
+    "08-Test-Evidence.md": 400,
+    "09-Adversarial-Review.md": 400
   }
 }
