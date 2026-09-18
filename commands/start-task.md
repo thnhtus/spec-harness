@@ -69,17 +69,35 @@ Worktree cách ly **file của repo code**. Nó không cách ly `docs/tasks/` �
 Trước khi bootstrap, đặt lease vào task folder:
 
 ```bash
-LEASE={tasksDir}/{groupPrefix}{n}/{taskId}-{slug}/.agent-memory/.lease
-# còn tươi (< 30 phút) và không phải của mình → DỪNG, hỏi user
-if [ -f "$LEASE" ] && [ -n "$(find "$LEASE" -mmin -30 2>/dev/null)" ]; then
-  cat "$LEASE"; echo "→ task đang được chạy ở nơi khác. Dừng."
+LEASE={tasksDir}/{groupPrefix}{n}/{taskId}-{slug}/.agent-memory/.lease.d
+OWNER="$LEASE/owner"
+stamp() { printf 'pid=%s host=%s at=%s' "$$" "$(hostname)" "$(date -u +%FT%TZ)" > "$OWNER"; }
+
+dead() {                       # lease coi là chết khi — và chỉ khi — nó CŨ
+  [ -e "$OWNER" ] && [ -z "$(find "$OWNER" -mmin -30 2>/dev/null)" ] && return 0
+  # owner chưa có: hoặc phiên kia đang giữa chừng mkdir→ghi (vài ms, còn sống),
+  # hoặc nó chết đúng khe đó. Phân biệt bằng mtime của chính thư mục.
+  [ ! -e "$OWNER" ] && [ -n "$(find "$LEASE" -maxdepth 0 -mmin +30 2>/dev/null)" ] && return 0
+  return 1
+}
+
+if mkdir "$LEASE" 2>/dev/null; then
+  stamp                                               # chưa ai giữ → của mình
+elif dead; then
+  stamp                                               # lease chết (>30') → tiếp quản
+else
+  cat "$OWNER" 2>/dev/null; echo "→ task đang chạy ở nơi khác. DỪNG."
+  exit 1                                              # ← bắt buộc: không có nó là cướp lease
 fi
-printf "pid=%s host=%s at=%s" "$$" "$(hostname)" "$(date -u +%FT%TZ)" > "$LEASE"
 ```
 
-Lease **cũ hơn 30 phút = chết**, ghi đè thoải mái (phiên trước đã treo hoặc bị Ctrl-C). Xong task (`reviewing`) hoặc gate fail → xoá `.lease`.
+**`mkdir` chứ không phải `[ -f ]` + `>`.** Kiểm-rồi-ghi là hai thao tác, và khe giữa chúng đúng là cái race mà lease sinh ra để chống; `mkdir` thất bại-nếu-đã-tồn-tại trong **một** syscall. **`exit 1` là bắt buộc:** thiếu nó thì nhánh "dừng" vẫn chảy xuống ghi đè, và bạn có hai phiên cùng tin mình đang giữ chỗ — tệ hơn là không có lease.
 
-Đây là lease lạc quan, không phải lock thật: nó bắt trường hợp thường gặp (hai phiên, một task) bằng một file, không bắt được race chính xác cùng mili-giây. Đủ cho quy mô này.
+**Vì sao `dead()` phải kiểm `-e "$OWNER"` trước.** Giữa `mkdir` và `stamp` có một khe vài mili-giây mà thư mục đã tồn tại còn `owner` thì chưa. `find` trên file không tồn tại trả về rỗng — nếu đọc rỗng là "chết" thì mọi phiên rơi vào khe đó sẽ **cướp lease của một phiên đang sống**. Đo thật: 20 phiên chạy song song, 7 phiên cướp được. Thiếu `owner` mặc định là *còn sống*; chỉ khi **thư mục** cũng đã cũ hơn 30 phút mới coi là mồ côi thật (phiên kia chết đúng khe đó).
+
+Lease **cũ hơn 30 phút = chết**, tiếp quản được (phiên trước đã treo hoặc bị Ctrl-C). Kẹt vì một lease mồ côi mà không muốn chờ: `rm -rf` đúng thư mục `.lease.d` đó là an toàn. Xong task (`reviewing`) hoặc gate fail → `rm -rf "$LEASE"`.
+
+Đây là lease lạc quan, không phải lock phân tán: nó bắt trường hợp thường gặp (hai phiên, một task) bằng một `mkdir` nguyên tử, không xử lý được NFS hay đồng hồ lệch giữa hai máy. Đủ cho quy mô này.
 
 ## Step 1 — Task folder (LUÔN tạo, không phụ thuộc độ phức tạp)
 
@@ -233,7 +251,7 @@ trống. **Không** ghi token/usage (SharedRules §5 cấm — đó là dữ li�
 model + wall-clock là đủ để `--calibrate` trả lời "tier `strong` có mua được gì
 không", câu mà `outcome` một mình không trả lời được.
 
-Step 7 (you, no subagent): xoá `.agent-memory/.lease` (step 0b), confirm `task.agent.json` has `status = reviewing`,
+Step 7 (you, no subagent): xoá `.agent-memory/.lease.d` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
 errors (it enforces the AC traceability chain, SharedRules §9), then post the
 final summary: what changed (from the implementer's handoff), test evidence
@@ -262,7 +280,7 @@ When any gate fails (`status = blocked` or `needs_clarification`,
   2. why (from the handoff block),
   3. which file holds the blocker details,
   4. exactly what the user/BA must do to unblock.
-- Xoá `.agent-memory/.lease` (step 0b) — task dừng thì không giữ chỗ nữa.
+- Xoá `.agent-memory/.lease.d` (step 0b) — task dừng thì không giữ chỗ nữa.
 - Stop. Resume later via `docs/HarnessSetup.md` §7 (re-dispatch the stage
   recorded in `currentStage`).
 
