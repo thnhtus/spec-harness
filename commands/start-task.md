@@ -28,7 +28,7 @@ trên đĩa là giao diện giữa các stage — không phải lịch sử hộ
 
 Your responsibilities only:
 
-1. Read `docs/Agents.md` (lifecycle, gates) — you do not need the role files.
+1. Read `docs/Agents.md` **§2 (lifecycle) + §3 (gates) + §4 (routing)** — you do not need the role files, and §5 (complexity) only if step 0 has not already produced the vector.
 2. Dispatch one subagent per stage, in order, passing a **small** prompt
    (paths + IDs, never pasted file contents).
 3. After each subagent returns, read ONLY:
@@ -189,13 +189,16 @@ Dispatch mỗi stage bằng cơ chế subagent của CLI (Claude Code: tool `Age
 role tương ứng rồi chạy trong context sạch. Prompt của mọi subagent **phải** mở
 đầu bằng preamble này:
 
-> Read, in order: `docs/Instructions.md`, `docs/agents/SharedRules.md`, then
-> your role file named below. Obey the artifact size caps and MCP payload
+> Read, in order: `docs/Instructions.md`, then `docs/agents/SharedRules.md`
+> **§4 §5 §6 §8** (add **§9** unless you are `orchestrator` — it owns no AC),
+> then your role file named below. Obey the artifact size caps and MCP payload
 > discipline in SharedRules §8. Work only inside the task folder and the
 > files your role owns. When done, append your `## Next Handoff` block
 > (≤ 30 lines) to `.agent-memory/{role}.md` and update `task.agent.json`.
 > End your final message with: gate verdict (PASS/FAIL), status set, and the
 > one-line reason.
+
+Preamble nêu **mục**, không nêu cả file: sàn luật mỗi subagent đọc được nhân lên theo từng stage của từng task, nên một mục thừa là chi phí trả sáu lần. Đây là chỗ rẻ nhất để cắt — sửa một dòng, không đụng kernel, giữ nguyên "một normative home". Số thật thì khiêm tốn: chỉ `orchestrator` bỏ được §9 (~580 tok), sáu role còn lại đều dùng nó. Đừng cắt sâu hơn bằng cảm tính — §8 là mục dài nhất nhưng mọi role đều cần.
 
 **Chọn model theo `taskComplexity`.** Sau khi orchestrator xong, đọc
 `taskComplexity` trong `task.agent.json` rồi truyền `model` khi dispatch từng
@@ -243,8 +246,11 @@ chạy tier nào:
 
 ```json
 { "stage": "implementation", "tier": "strong", "model": "opus", "attempt": 2,
-  "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z" }
+  "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z",
+  "inputTokens": 21400 }
 ```
+
+`inputTokens` = số CLI báo sau lượt dispatch đó (bỏ qua nếu CLI không báo). Đây là thứ duy nhất cho thấy **trọng lượng của chính harness**: sàn luật mỗi subagent phải đọc được nhân lên theo từng stage, từng task — kernel phình lên thì hiện ở đây, hoặc không hiện ở đâu cả.
 
 CLI không cho chọn model per-subagent → `"tier": "session-default"`, `model` bỏ
 trống. **Không** ghi token/usage (SharedRules §5 cấm — đó là dữ liệu vendor); tên
