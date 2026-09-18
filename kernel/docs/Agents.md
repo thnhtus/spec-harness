@@ -267,6 +267,8 @@ Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** l
 
 Không điền thì harness không học được gì. Đây là điểm duy nhất con người phải nhập tay, và là điểm đắt nhất nếu bỏ qua.
 
+`telemetry` (coordinator ghi mỗi lần dispatch: stage · tier · model · mốc thời gian) là **nửa còn lại** của câu hỏi ROI. `outcome` nói task có ổn không; `telemetry` nói nó tốn gì. Thiếu nó thì §5.3 ("tier mạnh đáng tiền") là niềm tin không ai kiểm chứng được. Không ghi token/usage — đó là dữ liệu vendor; tên model + wall-clock đã đủ.
+
 **Đọc lại định kỳ** (cuối sprint, hoặc mỗi ~20 task):
 
 ```bash
@@ -293,6 +295,9 @@ Ba cách sửa thường gặp:
 | stage nào đó bị chạy lại nhiều | chiều tương ứng đang chấm thấp — sửa **mô tả thang** ở §5.1 cho rõ hơn, không phải sửa công thức |
 | bug lọt từ `trivial` | ngưỡng `riskFloor` quá lỏng — hạ mốc `blastRadius`/`reversibility` ở §5.1.1 |
 | nhiều `high` mà không rework, không bug lọt | ngưỡng `high` quá dễ kích hoạt — đang trả tiền model mạnh mà không mua được gì |
+| `strong-runs` cao mà escaped=0, rework=0 | cùng chuyện trên nhưng **đo được**: tier mạnh chạy đều mà không mua được gì — hạ tier của stage ít phán đoán trước, đừng hạ `fsd-reviewer`/`adversary` |
+
+> Finding chỉ xuất hiện từ **5 task đã đóng** trở lên. Một task khó bất thường không phải là xu hướng, và một khuyến nghị nghe rất chắc chắn dựa trên n=1 sẽ dẫn tới sửa sai ngưỡng.
 
 ---
 

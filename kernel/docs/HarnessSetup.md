@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 1 | [`README.md`](./README.md) | main loop | chỉ mục + mô hình vận hành |
 | 2 | [`Instructions.md`](./Instructions.md) | mọi agent | luật toàn cục |
-| 3 | [`Agents.md`](./Agents.md) | main loop | lifecycle, 4 gate, chọn implementer, skip rule |
+| 3 | [`Agents.md`](./Agents.md) | main loop | lifecycle, 5 gate, chọn implementer, skip rule |
 | 4 | [`agents/SharedRules.md`](./agents/SharedRules.md) | mọi agent | handoff, task doc, `status`, ngân sách token (§4/§5/§6/§8/§9) |
 | 5 | `agents/{Role}.md` | role đang chạy | quy trình của đúng role (bảng §5 bên dưới) |
 
@@ -69,14 +69,16 @@ Quy tắc cốt lõi: **merge, không clobber** — chỉ thay vùng giữa mark
 
 | Công cụ | Đường dẫn | Nội dung |
 | --- | --- | --- |
-| Claude Code | `.claude/agents/{role}.md` (6 file) | File ngắn trỏ về `docs/agents/{Role}.md`, marker HTML comment |
-| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (6 file) | Tương đương, marker `# SPEC-HARNESS:START` |
+| Claude Code | `.claude/agents/{role}.md` (7 file) | File ngắn trỏ về `docs/agents/{Role}.md`, marker HTML comment |
+| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (7 file) | Tương đương, marker `# SPEC-HARNESS:START` |
 
-Sáu `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `fe-implementer`, `fe-fix`.
+Bảy `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `fe-implementer`, `fe-fix`, **`adversary`**.
+
+> Sinh thiếu `adversary` là **mất Gate 5 trong im lặng** — harness vẫn chạy, vẫn báo PASS, chỉ không còn ai kiểm chứng evidence của implementer. Đếm đủ bảy file trước khi chạy task đầu tiên.
 
 Ràng buộc khi sinh:
 
-- **KHÔNG** sửa `.claude/settings.json` / `.claude/settings.local.json` — harness không cài hook.
+- **KHÔNG** sửa `.claude/settings.json` / `.claude/settings.local.json` khi *sinh file role*. Installer đặt `settings.json` **một lần** (deny-list lệnh phá working tree — [`Instructions.md` §1](./Instructions.md)) rồi không đè lại; nó là adapter của project, agent không tự sửa.
 - **KHÔNG** đụng skill riêng của project trong `.claude/skills/` (ngoài skill harness ship kèm).
 - Re-generate chỉ thay phần giữa marker; nội dung ngoài marker ghép lại nguyên vẹn.
 - File role là "con trỏ" — quy trình thật ở `docs/agents/{Role}.md`, tránh trùng lặp lệch pha.
@@ -93,6 +95,7 @@ Ràng buộc khi sinh:
 | `technical-planner` | [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) |
 | `fe-implementer` | [`agents/FEImplementer.md`](./agents/FEImplementer.md) |
 | `fe-fix` | [`agents/FEFix.md`](./agents/FEFix.md) |
+| `adversary` | [`agents/Adversary.md`](./agents/Adversary.md) |
 
 Artifact tham chiếu (đọc, không sửa): [`srs/README.md`](./srs/README.md) · [`fsd/README.md`](./fsd/README.md) · [`api/README.md`](./api/README.md).
 
@@ -122,7 +125,7 @@ Task docs tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout: [`tasks/README
 5. **Append, không overwrite:** mọi cập nhật doc/`.agent-memory` thêm mục mới `## Cập Nhật — YYYY-MM-DD`.
 6. **Đồng bộ checkout:** làm việc đúng nhánh trong `task.agent.json` (`branchActual` nếu có, ngược lại `branch`).
 
-> `task.agent.json` không có trường token/usage — harness không theo dõi token.
+> `task.agent.json` không có trường **token/usage** (dữ liệu vendor). Nó **có** `telemetry`: stage, tier, tên model, mốc thời gian — đủ để `--calibrate` đối chiếu chi phí với kết quả ([`Agents.md` §5.6](./Agents.md)), không lộ số token.
 
 ---
 
