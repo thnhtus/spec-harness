@@ -3,7 +3,7 @@ description: BẮT BUỘC sau khi cài harness — dò repo rồi điền docs/a
 argument-hint: (không cần tham số)
 ---
 
-**Bước bắt buộc sau khi cài harness.** `install.sh` chỉ chép file; nó không biết
+**Bước bắt buộc sau khi cài harness.** `install.mjs` chỉ chép file; nó không biết
 project dùng stack gì, tracker nào, nhánh đặt tên ra sao. Chưa chạy lệnh này thì
 `ProjectRules.md` và `harness.config.json` còn là khung rỗng — gate không có gì
 để kiểm.

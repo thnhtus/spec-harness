@@ -69,33 +69,27 @@ Worktree cách ly **file của repo code**. Nó không cách ly `docs/tasks/` �
 Trước khi bootstrap, đặt lease vào task folder:
 
 ```bash
-LEASE={tasksDir}/{groupPrefix}{n}/{taskId}-{slug}/.agent-memory/.lease.d
-OWNER="$LEASE/owner"
-stamp() { printf 'pid=%s host=%s at=%s' "$$" "$(hostname)" "$(date -u +%FT%TZ)" > "$OWNER"; }
-
-dead() {                       # lease coi là chết khi — và chỉ khi — nó CŨ
-  [ -e "$OWNER" ] && [ -z "$(find "$OWNER" -mmin -30 2>/dev/null)" ] && return 0
-  # owner chưa có: hoặc phiên kia đang giữa chừng mkdir→ghi (vài ms, còn sống),
-  # hoặc nó chết đúng khe đó. Phân biệt bằng mtime của chính thư mục.
-  [ ! -e "$OWNER" ] && [ -n "$(find "$LEASE" -maxdepth 0 -mmin +30 2>/dev/null)" ] && return 0
-  return 1
-}
-
-if mkdir "$LEASE" 2>/dev/null; then
-  stamp                                               # chưa ai giữ → của mình
-elif dead; then
-  stamp                                               # lease chết (>30') → tiếp quản
-else
-  cat "$OWNER" 2>/dev/null; echo "→ task đang chạy ở nơi khác. DỪNG."
-  exit 1                                              # ← bắt buộc: không có nó là cướp lease
-fi
+TASK={tasksDir}/{groupPrefix}{n}/{taskId}-{slug}
+node scripts/lease.mjs acquire "$TASK" || exit 1    # ← exit 1 là bắt buộc
 ```
 
-**`mkdir` chứ không phải `[ -f ]` + `>`.** Kiểm-rồi-ghi là hai thao tác, và khe giữa chúng đúng là cái race mà lease sinh ra để chống; `mkdir` thất bại-nếu-đã-tồn-tại trong **một** syscall. **`exit 1` là bắt buộc:** thiếu nó thì nhánh "dừng" vẫn chảy xuống ghi đè, và bạn có hai phiên cùng tin mình đang giữ chỗ — tệ hơn là không có lease.
+Exit `1` = phiên khác đang giữ (nó in owner ra stderr). **Chạy tiếp là cướp lease**, và bạn có hai phiên cùng tin mình giữ chỗ — tệ hơn là không có lease. Xong task (`reviewing`) hoặc gate fail:
 
-**Vì sao `dead()` phải kiểm `-e "$OWNER"` trước.** Giữa `mkdir` và `stamp` có một khe vài mili-giây mà thư mục đã tồn tại còn `owner` thì chưa. `find` trên file không tồn tại trả về rỗng — nếu đọc rỗng là "chết" thì mọi phiên rơi vào khe đó sẽ **cướp lease của một phiên đang sống**. Đo thật: 20 phiên chạy song song, 7 phiên cướp được. Thiếu `owner` mặc định là *còn sống*; chỉ khi **thư mục** cũng đã cũ hơn 30 phút mới coi là mồ côi thật (phiên kia chết đúng khe đó).
+```bash
+node scripts/lease.mjs release "$TASK"
+```
 
-Lease **cũ hơn 30 phút = chết**, tiếp quản được (phiên trước đã treo hoặc bị Ctrl-C). Kẹt vì một lease mồ côi mà không muốn chờ: `rm -rf` đúng thư mục `.lease.d` đó là an toàn. Xong task (`reviewing`) hoặc gate fail → `rm -rf "$LEASE"`.
+Kẹt vì một lease mồ côi mà không muốn chờ 30 phút: xoá thẳng thư mục `.agent-memory/.lease.d` của task đó là an toàn.
+
+**Viết bằng Node, không phải bash** — `mkdir -p`, `find -mmin`, `hostname`, `$$` không có trên PowerShell/cmd, mà step 0b chạy **trước** mọi thứ khác: hỏng nó là hỏng cả lệnh. `node` thì đã bắt buộc sẵn vì validator cần.
+
+Ba điểm thiết kế, ghi lại để đừng "tối ưu" mất:
+
+- **`mkdir` chứ không phải kiểm-rồi-ghi.** Khe giữa "kiểm" và "ghi" đúng là cái race mà lease sinh ra để chống; `mkdir` thất bại-nếu-đã-tồn-tại trong **một** syscall. (`recursive: true` **không** ném khi đã tồn tại → mất sạch tác dụng.)
+- **Thiếu file `owner` mặc định là *còn sống*.** Giữa `mkdir` và lúc ghi `owner` có khe vài ms mà thư mục đã có còn `owner` thì chưa. Đọc "chưa có owner" là "chết" thì mọi phiên rơi vào khe đó sẽ cướp lease của một phiên đang sống — đo trên bản bash cũ: 20 phiên song song, 7 phiên cướp được. Chỉ khi **thư mục** cũng quá 30 phút mới là mồ côi thật.
+- **Lease cũ hơn 30 phút = chết**, tiếp quản được (phiên trước treo hoặc bị Ctrl-C).
+
+Kiểm chứng: `node scripts/lease.mjs --self-check` (assert cả bốn ca, gồm hai ca khe `mkdir`→ghi). Đo song song thật: 30 vòng × 20 phiên → đúng 30 phiên thắng.
 
 Đây là lease lạc quan, không phải lock phân tán: nó bắt trường hợp thường gặp (hai phiên, một task) bằng một `mkdir` nguyên tử, không xử lý được NFS hay đồng hồ lệch giữa hai máy. Đủ cho quy mô này.
 
@@ -259,7 +253,7 @@ trống. **Không** ghi token/usage (SharedRules §5 cấm — đó là dữ li�
 model + wall-clock là đủ để `--calibrate` trả lời "tier `strong` có mua được gì
 không", câu mà `outcome` một mình không trả lời được.
 
-Step 7 (you, no subagent): xoá `.agent-memory/.lease.d` (step 0b), confirm `task.agent.json` has `status = reviewing`,
+Step 7 (you, no subagent): `node scripts/lease.mjs release "$TASK"` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
 errors (it enforces the AC traceability chain, SharedRules §9), then post the
 final summary: what changed (from the implementer's handoff), test evidence
@@ -288,7 +282,7 @@ When any gate fails (`status = blocked` or `needs_clarification`,
   2. why (from the handoff block),
   3. which file holds the blocker details,
   4. exactly what the user/BA must do to unblock.
-- Xoá `.agent-memory/.lease.d` (step 0b) — task dừng thì không giữ chỗ nữa.
+- `node scripts/lease.mjs release "$TASK"` (step 0b) — task dừng thì không giữ chỗ nữa.
 - Stop. Resume later via `docs/HarnessSetup.md` §7 (re-dispatch the stage
   recorded in `currentStage`).
 
