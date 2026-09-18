@@ -12,7 +12,7 @@ Repo agent được sửa khai ở `harness.config.json → repos`; bố cục +
 
 **Worktree — chỉ do `/start-task` tạo, agent không tự tạo.** Mỗi task chạy trong worktree riêng của **repo đang sửa** (`repoName` của task) để hai task song song không quét tree của nhau. Harness nằm ngang hàng nhiều repo (bố cục C — [`Agents.md` §0](./Agents.md)) thì task doc **ở lại repo harness**, không vào worktree. Subagent **không** gọi `EnterWorktree`/`git worktree` — nó đã ở đúng chỗ khi được dispatch, cứ làm việc tại `cwd` hiện tại.
 
-> **Ngoại lệ duy nhất:** `adversary` được tạo worktree `--detach` **vứt đi** cho mutation check ([`agents/Adversary.md` §3.3.1](./agents/Adversary.md)), và chỉ được `worktree remove` đúng cái nó vừa tạo. Nó không được đụng worktree của task, không chiếm nhánh, không sửa tree của implementer. Đây là cách duy nhất để kiểm "đổi hằng số thì test có đỏ không" mà không vi phạm lệnh cấm sửa code.
+> **Ngoại lệ duy nhất:** `adversary` được tạo worktree `--detach` **vứt đi** cho mutation check ([`agents/Adversary-Mutation.md`](./agents/Adversary-Mutation.md)), và chỉ được `worktree remove` đúng cái nó vừa tạo. Nó không được đụng worktree của task, không chiếm nhánh, không sửa tree của implementer. Đây là cách duy nhất để kiểm "đổi hằng số thì test có đỏ không" mà không vi phạm lệnh cấm sửa code.
 
 - **Nhánh protected — tuyệt đối không chạm:** `main`, `develop`, `staging`, `release/*`.
 - Quy tắc nhánh làm việc (tên, cách tạo `--ff-only`, ngoại lệ nhánh user quản lý): [`agents/SharedRules.md` §3](./agents/SharedRules.md).

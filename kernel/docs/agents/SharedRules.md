@@ -97,14 +97,11 @@ Trường chính: `taskId, taskName, clickupUrl, repoName, sprintNumber, develop
 
 Chỉ user chuyển `reviewing → mr_created` (push + MR thật).
 
-**Ghi `task.agent.json` phải nguyên tử.** Mọi role ghi đè file này, và nó là thứ duy nhất resume đọc để biết task đang ở đâu ([`../HarnessSetup.md` §7](../HarnessSetup.md)). Crash hoặc Ctrl-C giữa lúc ghi để lại JSON hỏng — validator `exit 2`, resume mù, task chết cứng. Ghi file tạm cùng thư mục rồi đổi tên:
+**Ghi `task.agent.json` nguyên tử** — ghi `.tmp` **cùng thư mục** rồi `mv`, đừng ghi đè trực tiếp (crash giữa chừng để lại JSON hỏng, resume mù):
 
 ```bash
-tmp="$(dirname "$F")/.task.agent.json.tmp"
-printf '%s' "$NEW_JSON" > "$tmp" && mv "$tmp" "$F"     # rename(2) nguyên tử trên cùng filesystem
+printf '%s' "$NEW" > "$(dirname "$F")/.tmp.json" && mv "$(dirname "$F")/.tmp.json" "$F"
 ```
-
-Cùng thư mục là bắt buộc — `mv` qua filesystem khác là copy, hết nguyên tử. Sửa file tại chỗ hoặc ghi đè trực tiếp là mở đúng khe đó ra.
 
 Khi chuyển sang `done`: điền `outcome` ([`../Agents.md` §5.6](../Agents.md)) — `escapedBugs`, `reworkAfterReview`, `closedAt`. Bỏ trống thì `--calibrate` không có gì để đối chiếu, và ngưỡng §5.1.1 mãi là phỏng đoán ban đầu.
 

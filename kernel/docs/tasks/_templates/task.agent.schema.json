@@ -266,7 +266,7 @@
     },
     "telemetry": {
       "type": "array",
-      "description": "One entry per stage dispatch: which tier actually ran and how long it took. No token counts — those are vendor data (SharedRules §5 forbids a usage field). Model name + wall-clock is enough to answer whether the `strong` tier in Agents.md §5.3 bought anything, which --calibrate cannot ask without it.",
+      "description": "One entry per stage dispatch: which tier ran, how long, and how many input tokens it cost. No vendor usage object — just an integer the CLI already reports. Without it the harness cannot see its own cost: the per-stage rule floor is multiplied by every stage of every task, and a bloated kernel shows up only on the monthly bill, never attributable to a cause.",
       "items": {
         "type": "object",
         "required": [
@@ -300,6 +300,11 @@
           },
           "endedAt": {
             "type": "string"
+          },
+          "inputTokens": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Input tokens this dispatch consumed, as reported by the CLI. Omit when the CLI does not report it."
           }
         }
       }

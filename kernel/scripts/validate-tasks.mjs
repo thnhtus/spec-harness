@@ -671,6 +671,19 @@ if (args.has("--self-check")) {
       Array.from({ length: 5 }, () => t({ telemetry: [{ stage: "implementation", tier: "strong" }] })),
     );
     assert.ok(strong.findings.some((f) => f.includes("strong-tier")), "strong tier with no payoff is a finding");
+
+    // inputTokens: averaged per stage, not per task — the rule floor is paid
+    // once per dispatch, so that is the unit a kernel diet is measured in.
+    const tok = calibrate([
+      t({ telemetry: [{ stage: "a", tier: "mid", inputTokens: 6000 }, { stage: "b", tier: "mid", inputTokens: 8000 }] }),
+    ]);
+    assert.equal(tok.byLabel.normal.tok, 14000, "input tokens summed");
+    assert.equal(tok.byLabel.normal.tokRuns, 2, "counted per dispatch, not per task");
+    assert.equal(
+      calibrate([t({ telemetry: [{ stage: "a", tier: "mid" }] })]).byLabel.normal.tokRuns,
+      0,
+      "a CLI that reports no tokens must not skew the average",
+    );
     assert.deepEqual(
       calibrate(Array.from({ length: 5 }, () => t({ telemetry: [{ stage: "implementation", tier: "mid" }] }))).findings,
       [],
@@ -696,7 +709,7 @@ function calibrate(tasks) {
   const byLabel = {};
   for (const t of closed) {
     const l = t.taskComplexity ?? "unknown";
-    const b = (byLabel[l] ??= { n: 0, escaped: 0, rework: 0, retries: 0, strongRuns: 0 });
+    const b = (byLabel[l] ??= { n: 0, escaped: 0, rework: 0, retries: 0, strongRuns: 0, tok: 0, tokRuns: 0 });
     b.n++;
     b.escaped += t.outcome.escapedBugs ?? 0;
     b.rework += t.outcome.reworkAfterReview ?? 0;
@@ -704,6 +717,11 @@ function calibrate(tasks) {
     // Cost proxy: how often the expensive tier ran. §5.3 claims the strong tier
     // pays for itself; without this the claim has no counter-evidence path.
     b.strongRuns += (t.telemetry ?? []).filter((e) => e.tier === "strong").length;
+    // Input tokens: the only way the harness sees its own weight. The rule floor
+    // every subagent reads is paid once per stage, per task — a kernel that grows
+    // 16% shows up here, or it shows up nowhere.
+    for (const e of t.telemetry ?? [])
+      if (typeof e.inputTokens === "number") (b.tok += e.inputTokens), b.tokRuns++;
   }
 
   // A stage that keeps bouncing points at the dimension that feeds it.
@@ -1086,7 +1104,9 @@ if (CALIBRATE) {
     if (c.note) console.log(`   ${c.note}`);
     for (const [label, b] of Object.entries(c.byLabel ?? {}))
       console.log(
-        `   ${label.padEnd(8)} n=${b.n}  escaped=${b.escaped}  rework=${b.rework}  stage-retries=${b.retries}  strong-runs=${b.strongRuns}`,
+        `   ${label.padEnd(8)} n=${b.n}  escaped=${b.escaped}  rework=${b.rework}  stage-retries=${b.retries}` +
+          `  strong-runs=${b.strongRuns}` +
+          (b.tokRuns ? `  avg-in-tok/stage=${Math.round(b.tok / b.tokRuns)}` : ""),
       );
     if (c.findings?.length) {
       console.log("\n   findings:");

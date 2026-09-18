@@ -58,23 +58,10 @@ Test xanh chưa chứng minh AC. Với mỗi AC, mở đúng test được khai 
 
 - Test có **assert trạng thái sau hành động**, hay chỉ assert element tồn tại?
 - Mock có nuốt mất chính thứ AC nói không (mock luôn hàm đang test)?
-- Đổi một hằng số trong code — test có đỏ không? Không đỏ = test không bảo vệ gì. **Cách làm hợp lệ:** §3.3.1 — không sửa tree của implementer.
+- Đổi một hằng số trong code — test có đỏ không? Không đỏ = test không bảo vệ gì. **Cách làm hợp lệ:** [`Adversary-Mutation.md`](./Adversary-Mutation.md) — không sửa tree của implementer.
 - Test có `skip`/`only`/`todo` nào mới xuất hiện trong diff không?
 
-#### 3.3.1. Mutation check — làm ở worktree vứt đi
-
-§2 cấm role này sửa code, [`../Instructions.md` §1](../Instructions.md) cấm `git stash`/`restore`/`checkout --`. Nên phép thử "đổi hằng số xem test có đỏ không" **không** làm trên tree của implementer — làm ở một worktree detached, xong thì xoá:
-
-```bash
-BASE=$(git rev-parse HEAD)
-git worktree add --detach /tmp/adv-$$ "$BASE"     # bản sao rời, tree của implementer không bị đụng
-# sửa hằng số trong /tmp/adv-$$, chạy đúng lệnh test của AC đó
-git worktree remove --force /tmp/adv-$$           # chỉ xoá worktree MÌNH vừa tạo
-```
-
-Ba điều kiện để an toàn: worktree do chính role này tạo, `--detach` (không chiếm nhánh), và `remove` đúng đường dẫn vừa tạo. Không đụng worktree nào khác.
-
-> Code chưa commit thì `worktree add` không mang nó theo. Việc cần kiểm là **test có bắt được thay đổi hành vi không** — chạy được trên bản `HEAD` + copy tay đúng file đang xét là đủ. Không copy được (build state, env) → ghi vào "Giới hạn của lượt kiểm này", **đừng** khai là đã thử.
+> Nghi test giả thì chạy **mutation check** — đổi một hằng số xem test có đỏ không. Quy trình (worktree `--detach` vứt đi, không đụng tree của implementer): [`Adversary-Mutation.md`](./Adversary-Mutation.md). Không nghi thì không cần đọc.
 
 ### 3.4. Tìm thứ AC không nói
 
