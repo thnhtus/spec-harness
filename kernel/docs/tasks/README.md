@@ -68,7 +68,8 @@ Chạy `node scripts/validate-tasks.mjs` (không cần dependency; đọc `harne
 - Trần dòng [§8](../agents/SharedRules.md) (00≤80, 01≤250, 02≤150, 03≤200, block handoff ≤30). Doc đã có `## Cập Nhật — …` (task bị gate trả về) thì trần áp cho **block mới nhất**, không phải cả file — append-only mà cap cả file là cái bẫy đóng: vượt trần, và §5 cấm xoá bớt để chui xuống dưới.
 - `branchType` ↔ implementer (feature/hotfix → `fe-implementer`; bugfix → `fe-fix`).
 - Khi `status ∈ {reviewing, mr_created, done}`: `08-Test-Evidence.md` phải có bằng chứng thật — lệnh khớp `evidenceCommandPattern` **và** kết quả pass/exit nằm **trong block ```code fence```**. Chữ "passed" ở ô *Expected* của bảng không tính: đó là kế hoạch, không phải kết quả ([Gate 4](../Agents.md) §3).
-- `09-Adversarial-Review.md` cũng phải có verdict (PASS/FAIL/UNCERTAIN) + output adversary **tự chạy** — tồn tại file là chưa đủ, nếu không Gate 5 chỉ cần chép `08` sang là qua.
+- `09-Adversarial-Review.md` phải có verdict (PASS/FAIL/UNCERTAIN), output adversary **tự chạy**, và bảng "Tầng tĩnh" với cột *Kết quả tự chạy* **không rỗng** — tồn tại file là chưa đủ. Fence giống hệt `08` từng byte → cảnh báo copy-paste.
+- **Retry budget**: số block handoff của một role ≥ `retryBudget` (mặc định 4) → error. Block handoff là append-only nên nó đo rework độc lập với `attempts` (do coordinator tự khai); lệch nhau → warning.
 - **Truy vết AC theo stage** ([SharedRules §9.1](../agents/SharedRules.md)): mỗi đích trong `acTrace.reachedIn` được kiểm **ngay khi stage của nó tới** — AC rơi khỏi `03-Technical-Plan.md` fail ở **Gate 3**, không đợi tới lúc review. Task có `updatedAt ≥ mốc` → **error**; cũ hơn → **warning**.
 - **Handoff** ([SharedRules §4](../agents/SharedRules.md)): role nào `status = done` thì `.agent-memory/{role}.md` phải có block `### ` kèm `Next agent` + `Continue automation` — coordinator route dựa vào đó.
 - **Gate 2**: không còn câu hỏi `blocking` + `open` sau khi qua `fsd_review`.
