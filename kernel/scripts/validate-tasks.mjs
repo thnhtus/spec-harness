@@ -24,11 +24,13 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --calibrate, --config <path>
+ * Flags: --json, --no-warn, --quiet, --self-check, --calibrate, --config <path>,
+ *        --staged (only task folders touched by the current git index)
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { join, dirname, relative, resolve, parse as parsePath } from "node:path";
+import { execFileSync } from "node:child_process";
+import { join, dirname, relative, resolve, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +41,12 @@ const AS_JSON = args.has("--json");
 const NO_WARN = args.has("--no-warn");
 const QUIET = args.has("--quiet");
 const CALIBRATE = args.has("--calibrate");
+// --staged: validate only the task folders this commit touches. A task parked at
+// `blocked` waiting on a BA is a legitimate state, but whole-repo validation let
+// it block every unrelated commit in the repo — and a gate people routinely
+// bypass with --no-verify is decoration. CI stays whole-repo; that is the place
+// for the global view.
+const STAGED = args.has("--staged");
 
 const CONFIG_NAME = "harness.config.json";
 
@@ -135,6 +143,8 @@ function validateSchema(data, schema, path = "") {
   if (typeof data === "number") {
     if (schema.minimum !== undefined && data < schema.minimum)
       errs.push(`${path}: below minimum ${schema.minimum}`);
+    if (schema.maximum !== undefined && data > schema.maximum)
+      errs.push(`${path}: above maximum ${schema.maximum}`);
   }
   if (schema.type === "object" || (schema.properties && typeof data === "object" && data !== null && !Array.isArray(data))) {
     for (const req of schema.required ?? [])
@@ -162,8 +172,8 @@ function validateSchema(data, schema, path = "") {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function countLines(file) {
-  return readFileSync(file, "utf8").replace(/\n$/, "").split("\n").length;
+function countLinesIn(text) {
+  return text.replace(/\n$/, "").split("\n").length;
 }
 
 function rel(p) {
@@ -203,6 +213,17 @@ function handoffDefects(memDir, role) {
   return defects;
 }
 
+// The coordinator routes on the LAST handoff block. A role that finished but
+// left "Continue automation: no" contradicts a task that moved on — one of the
+// two is wrong, and reading only presence never caught it.
+function handoffHalted(memDir, role) {
+  const f = join(memDir, `${role}.md`);
+  if (!existsSync(f)) return false;
+  const blocks = readFileSync(f, "utf8").split(/^### /m).slice(1);
+  const last = blocks[blocks.length - 1] ?? "";
+  return /Continue automation\s*\**\s*:\s*\**\s*no\b/i.test(last);
+}
+
 // Returns array of {file, lines} for handoff blocks exceeding the cap.
 function oversizedHandoffBlocks(memDir) {
   const offenders = [];
@@ -239,12 +260,29 @@ function deriveComplexity(vector) {
 
 // --- pure text predicates (self-checked below via --self-check) -------------
 
-// "Real evidence": a command was run AND a pass/exit signal recorded.
-// Command list comes from config.evidenceCommandPattern (project test stack).
+// "Real evidence": a command was run AND a pass/exit signal was recorded IN A
+// FENCED BLOCK. Scanning the whole file was a hole: the 08 template's "Expected"
+// column already reads "…/… passed", so an untouched scaffold with one command
+// name typed in satisfied Gate 4 with zero output. Pasted output goes in a fence;
+// that is the only place the proof can be.
+const RESULT_RE = /\bpassed\b|exit 0|✓|no error|\d+\s*\/\s*\d+/i;
+
+function fencedText(t) {
+  return [...t.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
+}
+
 function hasRealEvidenceIn(t) {
-  const hasCommand = EVIDENCE_RE.test(t);
-  const hasResult = /\bpassed\b|exit 0|✓|no error|\d+\s*\/\s*\d+/i.test(t);
-  return hasCommand && hasResult;
+  return EVIDENCE_RE.test(t) && RESULT_RE.test(fencedText(t));
+}
+
+// Gate 5 artifact: the adversary must record a verdict and paste output it ran
+// itself. Existence alone let it copy 08 across and call that a review.
+function adversaryDefects(t) {
+  const d = [];
+  if (!/\bPASS\b|\bFAIL\b|\bUNCERTAIN\b/.test(t.replace(/PASS \| FAIL \| UNCERTAIN/g, "")))
+    d.push("09 has no verdict line (PASS / FAIL / UNCERTAIN)");
+  if (!hasRealEvidenceIn(t)) d.push("09 has no command+result the adversary ran itself (Gate 5 §3.2)");
+  return d;
 }
 
 // Template scaffolding, never a real AC: "AC-ID" is the table header and
@@ -263,9 +301,15 @@ function declaredACsIn(text) {
   return [...ids];
 }
 
-// An AC is "reached" in a doc if its id appears anywhere in that doc's text.
+// An AC is "reached" only when its id appears in a TABLE ROW. Matching anywhere
+// in the text was asymmetric with declaredACsIn (which is strict): "AC-01 sẽ làm
+// sau" in prose, or an HTML comment, used to satisfy the trace.
 function acsMissingIn(text, acs) {
-  return acs.filter((a) => !new RegExp(`\\b${a}\\b`).test(text));
+  const rows = text
+    .split("\n")
+    .filter((l) => l.trimStart().startsWith("|"))
+    .join("\n");
+  return acs.filter((a) => !new RegExp(`\\b${a}\\b`).test(rows));
 }
 
 // --- path wrappers (missing file = nothing reached) -------------------------
@@ -290,10 +334,31 @@ if (args.has("--self-check")) {
     EVIDENCE_RE.test(sample),
     `config.evidenceSampleCommand ("${sample}") does not match evidenceCommandPattern — one of the two is wrong`,
   );
-  assert.equal(hasRealEvidenceIn(`$ ${sample}\nexit 0`), true, "command + exit 0");
-  assert.equal(hasRealEvidenceIn(`$ ${sample}\nTests 4 passed (4)`), true, "command + passed");
+  assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nexit 0\n```"), true, "fenced command + exit 0");
+  assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nTests 4 passed (4)\n```"), true, "fenced command + passed");
   assert.equal(hasRealEvidenceIn("mọi thứ đều pass"), false, "claim without a command");
-  assert.equal(hasRealEvidenceIn(`$ ${sample}`), false, "command without a result");
+  assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\n```"), false, "command without a result");
+  assert.equal(
+    hasRealEvidenceIn(`| Unit | \`${sample}\` | AC-01 | …/… passed | | |`),
+    false,
+    'a table row saying "passed" is a plan, not a result — the fence is the proof',
+  );
+  // Regression: the shipped 08 template, with a command name typed into the
+  // table but no output pasted, must NOT pass Gate 4. This is the exact hole
+  // the fenced-block rule closes.
+  {
+    const ev = GATE4_ARTIFACTS.evidence;
+    const tplPath = join(TASKS_DIR, "_templates", ev);
+    if (existsSync(tplPath)) {
+      const raw = readFileSync(tplPath, "utf8");
+      assert.equal(hasRealEvidenceIn(raw), false, `${ev} template must not satisfy Gate 4 untouched`);
+      assert.equal(
+        hasRealEvidenceIn(raw.replace(/`<[^`>]*>`/, `\`${sample}\``)),
+        false,
+        `${ev} template + a command name but no pasted output must not satisfy Gate 4`,
+      );
+    }
+  }
 
   // declaredACsIn: table rows only, placeholders excluded, deduped.
   assert.deepEqual(
@@ -306,8 +371,26 @@ if (args.has("--self-check")) {
   assert.deepEqual(declaredACsIn("| AC-nn |  | open |"), [], "unfilled placeholder is not an AC");
 
   // acsMissingIn: word-boundary, so AC-1 must not be satisfied by AC-10.
-  assert.deepEqual(acsMissingIn("phủ bởi AC-01 và AC-02", ["AC-01", "AC-03"]), ["AC-03"]);
-  assert.deepEqual(acsMissingIn("chỉ có AC-10", ["AC-1"]), ["AC-1"], "AC-1 ≠ AC-10");
+  assert.deepEqual(acsMissingIn("| AC-01 | x |\n| AC-02 | y |", ["AC-01", "AC-03"]), ["AC-03"]);
+  assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"]), ["AC-1"], "AC-1 ≠ AC-10");
+  // Prose, comments and "not covered" notes are not coverage. declaredACsIn is
+  // strict about table rows; the reached-side must be exactly as strict.
+  assert.deepEqual(acsMissingIn("Ghi chú: AC-01 sẽ làm sau", ["AC-01"]), ["AC-01"], "prose is not coverage");
+  assert.deepEqual(acsMissingIn("<!-- TODO AC-01 -->", ["AC-01"]), ["AC-01"], "a comment is not coverage");
+
+  // adversaryDefects: 09 must carry a verdict and output the adversary ran.
+  assert.equal(adversaryDefects("```\n$ " + sample + "\nexit 0\n```\n**Kết quả: PASS**").length, 0, "verdict + own run");
+  assert.ok(adversaryDefects("**Kết quả: PASS**").length, "verdict without evidence is not a review");
+  {
+    const advTpl = GATE4_ARTIFACTS.adversarial
+      ? join(TASKS_DIR, "_templates", GATE4_ARTIFACTS.adversarial)
+      : null;
+    if (advTpl && existsSync(advTpl))
+      assert.ok(
+        adversaryDefects(readFileSync(advTpl, "utf8")).length,
+        `${GATE4_ARTIFACTS.adversarial} template must not satisfy Gate 5 untouched`,
+      );
+  }
 
   // Regression: an untouched template must NOT satisfy traceability. Templates
   // use "AC-nn" placeholders precisely so a real AC-01 is never pre-covered.
@@ -351,6 +434,13 @@ if (args.has("--self-check")) {
     "config.evidenceCommandPattern missing — no command would ever count as evidence",
   );
   assert.ok(CFG.tracker?.urlPattern, "config.tracker.urlPattern is required (task URL shape)");
+  // Without a real acTrace.since the default is "9999-12-31", so every AC
+  // failure degrades to a warning and pre-commit (--no-warn) blocks nothing.
+  // That is the silent no-op this whole self-check exists to prevent.
+  assert.ok(
+    AC_TRACE.since && !Number.isNaN(Date.parse(AC_TRACE.since)),
+    'config.acTrace.since is required (YYYY-MM-DD, the day you switched the harness on) — without it every AC error degrades to a warning and the gate no-ops',
+  );
   assert.ok(
     CFG.layers?.length,
     'config.layers is required (e.g. ["frontend"]) — without it any layer value passes',
@@ -384,6 +474,21 @@ if (args.has("--self-check")) {
     new RegExp(`^${esc0(CFG.tasksDir ?? "docs/tasks")}/${esc0(GROUP_PREFIX)}.+/.+/?$`).test(sampleDocsPath),
     `docsPath pattern would reject a valid folder like "${sampleDocsPath}"`,
   );
+
+  // Line caps under append-only: the newest block is what the current role
+  // controls. Capping the whole file traps a task the gate bounced twice —
+  // over the cap, and §5 forbids trimming the history to get back under it.
+  {
+    const body = (n) => Array.from({ length: n }, (_, i) => `l${i}`).join("\n");
+    const oneBlock = body(12);
+    const twoRounds = `${body(12)}\n## Cập Nhật — 2026-01-02\n${body(3)}`;
+    assert.equal(countLinesIn(oneBlock), 12, "plain count");
+    assert.equal(
+      countLinesIn("## Cập Nhật — " + twoRounds.split(/^## Cập Nhật — /m).pop()),
+      4,
+      "newest block is measured alone, not the accumulated file",
+    );
+  }
 
   // deriveComplexity: effort thresholds + risk floors. These are the cases the
   // formula exists for — a small diff in a blast-radius-3 area is not trivial.
@@ -423,11 +528,20 @@ if (args.has("--self-check")) {
     assert.equal(calibrate([]).tasks, 0, "no closed task → nothing to say");
     assert.equal(calibrate([{ taskComplexity: "high" }]).tasks, 0, "unclosed task is not evidence");
 
-    // 3 of 4 tasks retried implementation → scope is scored too low
+    // One hard task is not a trend. A finding here sends someone to rewrite the
+    // §5.1.1 thresholds on a sample of one.
+    assert.deepEqual(
+      calibrate([t({ attempts: { implementation: 2 } })]).findings,
+      [],
+      "n=1 is not evidence of a mis-scored dimension",
+    );
+
+    // 3 of 5 tasks retried implementation → scope is scored too low
     const retried = calibrate([
       t({ attempts: { implementation: 2 } }),
       t({ attempts: { implementation: 3 } }),
       t({ attempts: { implementation: 2 } }),
+      t({}),
       t({}),
     ]);
     assert.ok(
@@ -436,11 +550,27 @@ if (args.has("--self-check")) {
     );
 
     // a bug escaping a "trivial" task means the risk floors are too loose
-    const escaped = calibrate([t({ taskComplexity: "trivial", outcome: { closedAt: "2026-01-01", escapedBugs: 1 } })]);
+    const trivial = (n) => Array.from({ length: n }, () => t({ taskComplexity: "trivial" }));
+    const escaped = calibrate([
+      t({ taskComplexity: "trivial", outcome: { closedAt: "2026-01-01", escapedBugs: 1 } }),
+      ...trivial(4),
+    ]);
     assert.ok(escaped.findings.some((f) => f.includes("riskFloor")), "escaped bug from trivial → riskFloor finding");
 
     // clean, low-retry history must NOT invent a finding
     assert.deepEqual(calibrate([t({}), t({})]).findings, [], "clean history → no finding");
+
+    // telemetry: strong tier burned on tasks that never bounced is cost without
+    // benefit — the half of the ROI question `outcome` alone cannot answer.
+    const strong = calibrate(
+      Array.from({ length: 5 }, () => t({ telemetry: [{ stage: "implementation", tier: "strong" }] })),
+    );
+    assert.ok(strong.findings.some((f) => f.includes("strong-tier")), "strong tier with no payoff is a finding");
+    assert.deepEqual(
+      calibrate(Array.from({ length: 5 }, () => t({ telemetry: [{ stage: "implementation", tier: "mid" }] }))).findings,
+      [],
+      "cheap tiers running cleanly is not a finding",
+    );
   }
 
   console.log("✅ validate-tasks self-check passed");
@@ -461,11 +591,14 @@ function calibrate(tasks) {
   const byLabel = {};
   for (const t of closed) {
     const l = t.taskComplexity ?? "unknown";
-    const b = (byLabel[l] ??= { n: 0, escaped: 0, rework: 0, retries: 0 });
+    const b = (byLabel[l] ??= { n: 0, escaped: 0, rework: 0, retries: 0, strongRuns: 0 });
     b.n++;
     b.escaped += t.outcome.escapedBugs ?? 0;
     b.rework += t.outcome.reworkAfterReview ?? 0;
     b.retries += Object.values(t.attempts ?? {}).reduce((n, v) => n + (v - 1), 0);
+    // Cost proxy: how often the expensive tier ran. §5.3 claims the strong tier
+    // pays for itself; without this the claim has no counter-evidence path.
+    b.strongRuns += (t.telemetry ?? []).filter((e) => e.tier === "strong").length;
   }
 
   // A stage that keeps bouncing points at the dimension that feeds it.
@@ -480,19 +613,28 @@ function calibrate(tasks) {
     for (const [stage, n] of Object.entries(t.attempts ?? {}))
       if (n > 1) (retriesByStage[stage] ??= { tasks: 0, extra: 0 }), (retriesByStage[stage].tasks++, retriesByStage[stage].extra += n - 1);
 
+  // A finding sends a human to rewrite the §5.1.1 thresholds. Below this many
+  // closed tasks, "100% of tasks retried implementation" means one hard task.
+  const MIN_SAMPLE = 5;
   const findings = [];
   for (const [stage, r] of Object.entries(retriesByStage)) {
     const share = r.tasks / closed.length;
-    if (share >= 0.3 && STAGE_DIM[stage])
+    if (closed.length >= MIN_SAMPLE && share >= 0.3 && STAGE_DIM[stage])
       findings.push(
         `${Math.round(share * 100)}% of closed tasks retried "${stage}" (${r.extra} extra runs) — "${STAGE_DIM[stage]}" is likely scored too low at bootstrap`,
       );
   }
   for (const [label, b] of Object.entries(byLabel)) {
-    if (label === "trivial" && b.escaped > 0)
+    if (label === "trivial" && b.escaped > 0 && b.n >= MIN_SAMPLE)
       findings.push(`${b.escaped} bug(s) escaped from "trivial" tasks — the riskFloor thresholds (§5.1.1) are letting real risk through`);
     if (label === "high" && b.n >= 5 && b.escaped === 0 && b.retries === 0)
       findings.push(`${b.n} "high" tasks closed with no rework and no escaped bugs — the high threshold may be too eager (cost without benefit)`);
+    // Same shape of waste, now measurable: the strong tier ran repeatedly on
+    // tasks that never needed a second pass.
+    if (b.n >= MIN_SAMPLE && b.strongRuns >= b.n && b.escaped === 0 && b.retries === 0)
+      findings.push(
+        `"${label}": ${b.strongRuns} strong-tier run(s) across ${b.n} task(s) with zero rework and zero escaped bugs — paying the strong tier and buying nothing (Agents.md §5.3)`,
+      );
   }
 
   return { tasks: closed.length, byLabel, retriesByStage, findings };
@@ -501,6 +643,31 @@ function calibrate(tasks) {
 // ---------------------------------------------------------------------------
 // Collect task folders
 // ---------------------------------------------------------------------------
+// Task folders touched by the git index, as paths relative to REPO_ROOT.
+// Returns null when git is unavailable — the caller then falls back to the full
+// scan rather than silently validating nothing.
+function stagedTaskFolders() {
+  let out;
+  try {
+    out = execFileSync("git", ["diff", "--cached", "--name-only", "-z"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+    });
+  } catch {
+    return null;
+  }
+  const tasksRel = relative(REPO_ROOT, TASKS_DIR).split(sep).join("/");
+  const hit = new Set();
+  for (const f of out.split("\0").filter(Boolean)) {
+    const p = f.split(sep).join("/");
+    if (!p.startsWith(`${tasksRel}/`)) continue;
+    // {tasksRel}/{group}/{task}/... → keep the two segments below tasksDir
+    const rest = p.slice(tasksRel.length + 1).split("/");
+    if (rest.length >= 2) hit.add(`${rest[0]}/${rest[1]}`);
+  }
+  return hit;
+}
+
 function findTaskFolders() {
   const folders = [];
   if (!existsSync(TASKS_DIR)) return folders;
@@ -510,6 +677,7 @@ function findTaskFolders() {
     for (const task of readdirSync(sprintPath)) {
       const taskPath = join(sprintPath, task);
       if (!statSync(taskPath).isDirectory()) continue;
+      if (ONLY && !ONLY.has(`${sprint}/${task}`)) continue;
       folders.push({ sprint, task, path: taskPath });
     }
   }
@@ -532,6 +700,7 @@ if (CFG.layers?.length && schema.properties?.layer)
   schema.properties.layer.enum = CFG.layers;
 if (schema.properties?.docsPath)
   schema.properties.docsPath.pattern = `^${esc(CFG.tasksDir ?? "docs/tasks")}/${esc(GROUP_PREFIX)}.+/.+/?$`;
+const ONLY = STAGED ? stagedTaskFolders() : null;
 const folders = findTaskFolders();
 const results = []; // {folder, errors:[], warnings:[]}
 const allTasks = []; // parsed task.agent.json, for --calibrate
@@ -573,8 +742,10 @@ for (const { sprint, task, path } of folders) {
     );
   if (data.taskId && !task.startsWith(data.taskId))
     errors.push(`taskId="${data.taskId}" does not match folder "${task}"`);
+  // Resume (HarnessSetup §7) and the coordinator locate the task by docsPath.
+  // Pointing at the wrong folder sends the next stage to write somewhere else.
   if (data.docsPath && !data.docsPath.includes(`${sprint}/${task}`))
-    warnings.push(`docsPath "${data.docsPath}" does not point at this folder`);
+    errors.push(`docsPath "${data.docsPath}" does not point at this folder`);
 
   // duplicate id tracking (record subTaskKey so shared-id sub-bugs are allowed)
   if (data.taskId) {
@@ -605,6 +776,12 @@ for (const { sprint, task, path } of folders) {
 
   // 3. Required artifacts for reached stage
   const stageIdx = STAGE_ORDER.indexOf(data.currentStage);
+  // attempts is the only rework measurement the harness has, and the coordinator
+  // increments it by hand. A passed stage with no entry means it silently stopped.
+  if (stageIdx > 0)
+    for (const st of STAGE_ORDER.slice(1, stageIdx))
+      if (!(data.attempts ?? {})[st])
+        warnings.push(`attempts["${st}"] missing though the task passed that stage — rework data is incomplete (Agents.md §5.5)`);
   for (const rule of REQUIRED_AT_STAGE) {
     if (stageIdx >= STAGE_ORDER.indexOf(rule.stage)) {
       for (const f of rule.files)
@@ -628,12 +805,28 @@ for (const { sprint, task, path } of folders) {
     }
   }
 
-  // 4. Line caps
+  // 4. Line caps. Docs are append-only (SharedRules §5) and a bounced task must
+  // append "## Cập Nhật — …" on resume (HarnessSetup §7.5) — so a whole-file cap
+  // becomes unsatisfiable after two rounds: over the cap, and forbidden to trim.
+  // Cap the newest block instead; that is the part the current role writes and
+  // the only part it may lawfully shorten.
   for (const [f, cap] of Object.entries(LINE_CAPS)) {
     const fp = join(path, f);
-    if (existsSync(fp)) {
-      const n = countLines(fp);
-      if (n > cap) errors.push(`${f}: ${n} lines exceeds cap ${cap} (SharedRules §8)`);
+    if (!existsSync(fp)) continue;
+    const text = readFileSync(fp, "utf8");
+    const updates = text.split(/^## Cập Nhật — /m);
+    if (updates.length > 1) {
+      const newest = countLinesIn("## Cập Nhật — " + updates[updates.length - 1]);
+      if (newest > cap)
+        errors.push(
+          `${f}: newest "## Cập Nhật" block is ${newest} lines, exceeds cap ${cap} (SharedRules §8)`,
+        );
+      else if (countLinesIn(text) > cap)
+        warnings.push(
+          `${f}: ${countLinesIn(text)} lines total over ${updates.length - 1} update round(s) — over the ${cap} cap but append-only; split into an appendix at the next natural break`,
+        );
+    } else if (countLinesIn(text) > cap) {
+      errors.push(`${f}: ${countLinesIn(text)} lines exceeds cap ${cap} (SharedRules §8)`);
     }
   }
   for (const o of oversizedHandoffBlocks(join(path, ".agent-memory")))
@@ -670,13 +863,25 @@ for (const { sprint, task, path } of folders) {
 
   // 5b. Handoff: every role marked done must have left one.
   for (const [role, info] of Object.entries(ag))
-    if (info?.status === "done")
+    if (info?.status === "done") {
       for (const d of handoffDefects(join(path, ".agent-memory"), role)) errors.push(d);
+      if (GATE4_DONE.has(data.status) && handoffHalted(join(path, ".agent-memory"), role))
+        errors.push(
+          `${role} is done and status=${data.status}, but its last handoff says "Continue automation: no" — one of the two is stale (SharedRules §4)`,
+        );
+    }
 
   // 8. AC traceability, checked per stage. An AC that never reached the plan is
   // a Gate 3 failure; waiting for `reviewing` to say so means the implementer
   // already built from a plan missing it.
   const declared = AC_TRACE.declaredIn ? declaredACs(join(path, AC_TRACE.declaredIn)) : [];
+  // No AC at all past Gate 2 used to skip the entire trace block: an untouched
+  // template walked to `reviewing` clean. Gate 2 already requires ≥1 confirmed
+  // AC in prose (FSDReviewer §4.2) — this is that rule with an exit code.
+  if (AC_TRACE.declaredIn && !declared.length && stageIdx > STAGE_ORDER.indexOf("fsd_review"))
+    errors.push(
+      `Gate 2: no AC declared in ${AC_TRACE.declaredIn} but stage is "${data.currentStage}" — the whole AC trace would be vacuous (SharedRules §9.1)`,
+    );
   if (declared.length) {
     const sink = (data.updatedAt ?? "") >= AC_TRACE_SINCE ? errors : warnings;
     for (const { doc, fromStage } of AC_REACHED) {
@@ -703,8 +908,14 @@ for (const { sprint, task, path } of folders) {
       warnings.push(`status=${data.status} but ${GATE4_ARTIFACTS.notes} missing`);
     // Gate 5: reviewing means the adversary passed it, so its review must exist.
     // Without this, an implementer can jump straight to reviewing and skip the gate.
-    if (GATE4_ARTIFACTS.adversarial && !existsSync(join(path, GATE4_ARTIFACTS.adversarial)))
-      errors.push(`status=${data.status} but ${GATE4_ARTIFACTS.adversarial} missing (Gate 5 skipped)`);
+    if (GATE4_ARTIFACTS.adversarial) {
+      const adv = join(path, GATE4_ARTIFACTS.adversarial);
+      if (!existsSync(adv))
+        errors.push(`status=${data.status} but ${GATE4_ARTIFACTS.adversarial} missing (Gate 5 skipped)`);
+      else
+        for (const d of adversaryDefects(readFileSync(adv, "utf8")))
+          errors.push(`${GATE4_ARTIFACTS.adversarial}: ${d}`);
+    }
   }
 
   results.push({ folder: folderRel, errors, warnings });
@@ -744,7 +955,9 @@ if (CALIBRATE) {
     console.log(`\n── calibration · ${c.tasks} closed task(s) ──`);
     if (c.note) console.log(`   ${c.note}`);
     for (const [label, b] of Object.entries(c.byLabel ?? {}))
-      console.log(`   ${label.padEnd(8)} n=${b.n}  escaped=${b.escaped}  rework=${b.rework}  stage-retries=${b.retries}`);
+      console.log(
+        `   ${label.padEnd(8)} n=${b.n}  escaped=${b.escaped}  rework=${b.rework}  stage-retries=${b.retries}  strong-runs=${b.strongRuns}`,
+      );
     if (c.findings?.length) {
       console.log("\n   findings:");
       for (const f of c.findings) console.log(`   • ${f}`);
