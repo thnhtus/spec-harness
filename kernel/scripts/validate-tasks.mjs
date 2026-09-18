@@ -109,6 +109,9 @@ const AC_REACHED = (AC_TRACE.reachedIn ?? []).map((e) =>
   typeof e === "string" ? { doc: e, fromStage: null } : e,
 );
 const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
+// Which stage each role owns, for cross-checking self-reported attempts against
+// handoff blocks. Implementers share one stage (routing picks which runs).
+const ROLE_STAGE = CFG.roleStage ?? {};
 // Commands that count as a real verification run (project test/lint/build stack).
 const EVIDENCE_RE = new RegExp(CFG.evidenceCommandPattern ?? "(?!)");
 
@@ -224,6 +227,16 @@ function handoffHalted(memDir, role) {
   return /Continue automation\s*\**\s*:\s*\**\s*no\b/i.test(last);
 }
 
+// How many times a role actually ran, measured independently of what the
+// coordinator claims. Handoff blocks are append-only (SharedRules §4), so the
+// block count is evidence `attempts` is not: the actor that would spin is the
+// same one that writes `attempts`, and it will not incriminate itself.
+function handoffBlockCount(memDir, role) {
+  const f = join(memDir, `${role}.md`);
+  if (!existsSync(f)) return 0;
+  return (readFileSync(f, "utf8").match(/^### /gm) ?? []).length;
+}
+
 // Returns array of {file, lines} for handoff blocks exceeding the cap.
 function oversizedHandoffBlocks(memDir) {
   const offenders = [];
@@ -265,7 +278,10 @@ function deriveComplexity(vector) {
 // column already reads "…/… passed", so an untouched scaffold with one command
 // name typed in satisfied Gate 4 with zero output. Pasted output goes in a fence;
 // that is the only place the proof can be.
-const RESULT_RE = /\bpassed\b|exit 0|✓|no error|\d+\s*\/\s*\d+/i;
+// A bare "4/5" also matches a path like src/test/4/5, which appears in the very
+// command being pasted. Require the ratio to be labelled as a count.
+const RESULT_RE =
+  /\bpassed\b|exit 0|✓|no error|\d+\s*\/\s*\d+\s*(passed|failed|tests?|specs?|files?|ok\b)|(tests?|specs?|files?)\s*:?\s*\d+\s*\/\s*\d+/i;
 
 function fencedText(t) {
   return [...t.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
@@ -277,11 +293,45 @@ function hasRealEvidenceIn(t) {
 
 // Gate 5 artifact: the adversary must record a verdict and paste output it ran
 // itself. Existence alone let it copy 08 across and call that a review.
-function adversaryDefects(t) {
+//
+// Divergent evidence: the whole point of Gate 5 is not trusting 08, so the
+// cheapest way to satisfy it — pasting 08's fence into 09 — is exactly what it
+// must not accept. We cannot prove a command ran; we can demand the ONE artifact
+// a copy cannot produce: the side-by-side table (what 08 claimed | what I got),
+// which requires the adversary to have a result of its own to put in column 3.
+function staticLayerRows(t) {
+  // "| `cmd` | claimed | observed | ✔ |" — the 09 template's first table.
+  const rows = [];
+  for (const line of t.split("\n")) {
+    const cells = line.split("|").map((c) => c.trim());
+    if (cells.length < 6) continue; // leading+trailing empties around 4 columns
+    const [, cmd, claimed, observed] = cells;
+    if (!EVIDENCE_RE.test(cmd)) continue; // header/separator/prose rows
+    rows.push({ cmd, claimed, observed });
+  }
+  return rows;
+}
+
+function adversaryDefects(t, evidenceText = "") {
   const d = [];
   if (!/\bPASS\b|\bFAIL\b|\bUNCERTAIN\b/.test(t.replace(/PASS \| FAIL \| UNCERTAIN/g, "")))
     d.push("09 has no verdict line (PASS / FAIL / UNCERTAIN)");
   if (!hasRealEvidenceIn(t)) d.push("09 has no command+result the adversary ran itself (Gate 5 §3.2)");
+
+  const rows = staticLayerRows(t);
+  if (!rows.length)
+    d.push('09 "Tầng tĩnh" table has no command row — Gate 5 is re-running ProjectRules §7, not reading 08 (§3.2)');
+  for (const r of rows)
+    if (!r.observed)
+      d.push(`09 "Tầng tĩnh": \`${r.cmd}\` has no "Kết quả tự chạy" — that column IS the gate (§3.2)`);
+
+  // A byte-identical fence is indistinguishable from copy-paste. Matching
+  // results are the expected outcome, so this is not an error — but it is the
+  // one thing worth making the adversary say out loud.
+  if (evidenceText && fencedText(t).trim() && fencedText(t).trim() === fencedText(evidenceText).trim())
+    d.push(
+      "09's pasted output is byte-identical to 08's — indistinguishable from copy-paste; paste YOUR run (timestamps/durations differ) or say in \"Giới hạn\" that you could not re-run",
+    );
   return d;
 }
 
@@ -335,6 +385,12 @@ if (args.has("--self-check")) {
     `config.evidenceSampleCommand ("${sample}") does not match evidenceCommandPattern — one of the two is wrong`,
   );
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nexit 0\n```"), true, "fenced command + exit 0");
+  assert.equal(
+    hasRealEvidenceIn("```\n$ npm run test:scope -- src/test/4/5\n```"),
+    false,
+    'a path like src/test/4/5 is not a "4/5 passed" result',
+  );
+  assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nTests: 4/4\n```"), true, "labelled ratio counts");
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nTests 4 passed (4)\n```"), true, "fenced command + passed");
   assert.equal(hasRealEvidenceIn("mọi thứ đều pass"), false, "claim without a command");
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\n```"), false, "command without a result");
@@ -378,9 +434,38 @@ if (args.has("--self-check")) {
   assert.deepEqual(acsMissingIn("Ghi chú: AC-01 sẽ làm sau", ["AC-01"]), ["AC-01"], "prose is not coverage");
   assert.deepEqual(acsMissingIn("<!-- TODO AC-01 -->", ["AC-01"]), ["AC-01"], "a comment is not coverage");
 
-  // adversaryDefects: 09 must carry a verdict and output the adversary ran.
-  assert.equal(adversaryDefects("```\n$ " + sample + "\nexit 0\n```\n**Kết quả: PASS**").length, 0, "verdict + own run");
+  // adversaryDefects: verdict + own run + the side-by-side table whose third
+  // column only an actual re-run can fill.
+  const advOk = [
+    "**Kết quả: PASS**",
+    `| \`${sample}\` | 4 passed | 4 passed (2.1s) | ✔ |`,
+    "```",
+    `$ ${sample}`,
+    "Tests 4 passed (4) in 2.1s",
+    "```",
+  ].join("\n");
+  assert.deepEqual(adversaryDefects(advOk), [], "verdict + own run + filled table");
   assert.ok(adversaryDefects("**Kết quả: PASS**").length, "verdict without evidence is not a review");
+
+  // The copy attack: 09 whose fence is byte-identical to 08's.
+  const ev08 = "```\n$ " + sample + "\nTests 4 passed (4)\n```";
+  const adv09 = `**Kết quả: PASS**\n| \`${sample}\` | 4 passed | 4 passed | ✔ |\n` + ev08;
+  assert.ok(
+    adversaryDefects(adv09, ev08).some((d) => d.includes("byte-identical")),
+    "a fence copied verbatim from 08 must be called out",
+  );
+  assert.deepEqual(
+    adversaryDefects(adv09, "```\n$ " + sample + "\nTests 4 passed (4) in 9.7s\n```").filter((d) => d.includes("byte-identical")),
+    [],
+    "a genuinely different run is not flagged",
+  );
+
+  // Third column empty = the adversary read 08 instead of re-running it.
+  assert.ok(
+    adversaryDefects(`**Kết quả: PASS**\n| \`${sample}\` | 4 passed |  | ? |\n\`\`\`\n$ ${sample}\nexit 0\n\`\`\``)
+      .some((d) => d.includes("Kết quả tự chạy")),
+    "empty self-run column is the gate failing",
+  );
   {
     const advTpl = GATE4_ARTIFACTS.adversarial
       ? join(TASKS_DIR, "_templates", GATE4_ARTIFACTS.adversarial)
@@ -434,6 +519,26 @@ if (args.has("--self-check")) {
     "config.evidenceCommandPattern missing — no command would ever count as evidence",
   );
   assert.ok(CFG.tracker?.urlPattern, "config.tracker.urlPattern is required (task URL shape)");
+  // roleStage powers the retry budget cross-check; a role missing here is a
+  // role whose runaway loop nobody counts.
+  for (const role of CFG.roles ?? [])
+    assert.ok(
+      ROLE_STAGE[role],
+      `config.roleStage.${role} is missing — its retry budget would never be checked`,
+    );
+  for (const [role, st] of Object.entries(ROLE_STAGE))
+    assert.ok(STAGE_ORDER.includes(st), `config.roleStage.${role}: stage "${st}" not in config.stages`);
+  assert.ok((CFG.retryBudget ?? 4) >= 2, "config.retryBudget must be at least 2 (one retry)");
+
+  // handoffBlockCount: the independent measure of rework.
+  {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const d = mkdtempSync(join(tmpdir(), "sh-rb-"));
+    assert.equal(handoffBlockCount(d, "nope"), 0, "no file = never ran");
+    writeFileSync(join(d, "r.md"), "### a\nx\n### b\ny\n### c\nz\n");
+    assert.equal(handoffBlockCount(d, "r"), 3, "counts append-only blocks");
+  }
   // Without a real acTrace.since the default is "9999-12-31", so every AC
   // failure degrades to a warning and pre-commit (--no-warn) blocks nothing.
   // That is the silent no-op this whole self-check exists to prevent.
@@ -615,7 +720,7 @@ function calibrate(tasks) {
 
   // A finding sends a human to rewrite the §5.1.1 thresholds. Below this many
   // closed tasks, "100% of tasks retried implementation" means one hard task.
-  const MIN_SAMPLE = 5;
+  const MIN_SAMPLE = CFG.calibrateMinSample ?? 5;
   const findings = [];
   for (const [stage, r] of Object.entries(retriesByStage)) {
     const share = r.tasks / closed.length;
@@ -722,7 +827,11 @@ for (const { sprint, task, path } of folders) {
   try {
     data = JSON.parse(readFileSync(jsonPath, "utf8"));
   } catch (e) {
-    errors.push(`task.agent.json invalid JSON: ${e.message}`);
+    errors.push(
+      `task.agent.json invalid JSON: ${e.message} — likely a crash mid-write; ` +
+        `write to a temp file in the same dir then mv (SharedRules §6). ` +
+        `Recover the stage from .agent-memory/ handoff blocks.`,
+    );
     results.push({ folder: folderRel, errors, warnings });
     continue;
   }
@@ -773,6 +882,25 @@ for (const { sprint, task, path } of folders) {
   // reading when tuning prompts or splitting tasks.
   for (const [stage, n] of Object.entries(data.attempts ?? {}))
     if (n >= 3) warnings.push(`stage "${stage}" ran ${n}× — gate kept sending it back; worth a look`);
+
+  // Retry budget with teeth. `attempts` is self-reported by the coordinator —
+  // the very actor that loops — so cross-check it against the append-only
+  // handoff blocks, and make an exhausted budget an ERROR, not a note. A task
+  // that needed five runs of one stage is a task that should have been split.
+  const RETRY_BUDGET = CFG.retryBudget ?? 4;
+  for (const role of CFG.roles ?? []) {
+    const runs = handoffBlockCount(join(path, ".agent-memory"), role);
+    const stage = (ROLE_STAGE ?? {})[role];
+    const claimed = stage ? (data.attempts ?? {})[stage] : undefined;
+    if (claimed !== undefined && runs > claimed)
+      warnings.push(
+        `attempts["${stage}"]=${claimed} but .agent-memory/${role}.md has ${runs} handoff block(s) — rework is under-reported (Agents.md §5.5)`,
+      );
+    if (runs >= RETRY_BUDGET)
+      errors.push(
+        `${role} ran ${runs}× (budget ${RETRY_BUDGET}) — the gate keeps bouncing it; split the task or fix the spec instead of retrying (Agents.md §5.5)`,
+      );
+  }
 
   // 3. Required artifacts for reached stage
   const stageIdx = STAGE_ORDER.indexOf(data.currentStage);
@@ -912,9 +1040,11 @@ for (const { sprint, task, path } of folders) {
       const adv = join(path, GATE4_ARTIFACTS.adversarial);
       if (!existsSync(adv))
         errors.push(`status=${data.status} but ${GATE4_ARTIFACTS.adversarial} missing (Gate 5 skipped)`);
-      else
-        for (const d of adversaryDefects(readFileSync(adv, "utf8")))
+      else {
+        const evText = existsSync(ev) ? readFileSync(ev, "utf8") : "";
+        for (const d of adversaryDefects(readFileSync(adv, "utf8"), evText))
           errors.push(`${GATE4_ARTIFACTS.adversarial}: ${d}`);
+      }
     }
   }
 
@@ -961,6 +1091,11 @@ if (CALIBRATE) {
     if (c.findings?.length) {
       console.log("\n   findings:");
       for (const f of c.findings) console.log(`   • ${f}`);
+      if (c.findings.some((f) => f.includes("strong-tier")))
+        console.log(
+          "\n   note: telemetry is self-reported by the coordinator, not measured.\n" +
+            "   Check it against your CLI's own usage log before changing a tier.",
+        );
     } else if (c.tasks) console.log("\n   no threshold looks wrong yet");
   }
   process.exit(0);
