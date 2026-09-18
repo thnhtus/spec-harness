@@ -54,6 +54,10 @@ install_into() {
 
   # adapter + command — của user, không đè
   keep "$SRC"/adapters/example/.mcp.json                   "$P"/.mcp.json
+  # Guardrail tầng permission. Instructions.md §1 cấm push/reset --hard/stash
+  # bằng văn bản; văn bản là thứ model chọn tuân thủ, deny thì không.
+  # `keep`: cài một lần, lần sau không đè — deny-list là của project.
+  keep "$SRC"/adapters/example/settings.json               "$P"/.claude/settings.json
   keep "$SRC"/adapters/example/harness.config.json         "$P"/harness.config.json
   keep "$SRC"/adapters/ProjectRules.template.md            "$P"/docs/agents/ProjectRules.md
   keep "$SRC"/commands/start-task.md                       "$P"/.claude/commands/start-task.md
@@ -93,6 +97,13 @@ if [ "${1:-}" = "--self-test" ]; then
     && { echo "✖ self-test: validator ĐÁNG LẼ phải fail task thiếu artifact"; exit 1; }
   [ -e "$T/.claude/agents/orchestrator.md" ] || { echo "✖ self-test: thiếu subagent"; exit 1; }
   [ -e "$T/.mcp.json" ] || { echo "✖ self-test: thiếu .mcp.json"; exit 1; }
+  # Lệnh phá working tree phải bị chặn ở tầng permission, không chỉ ở văn bản.
+  python3 -c "import json,sys;json.load(open('$T/.claude/settings.json'))" \
+    || { echo "✖ self-test: settings.json không phải JSON hợp lệ"; exit 1; }
+  for pat in 'git push' 'git reset --hard' 'git stash'; do
+    grep -q "Bash($pat" "$T"/.claude/settings.json \
+      || { echo "✖ self-test: settings.json thiếu deny cho '$pat' — guardrail lại chỉ là prompt"; exit 1; }
+  done
   [ -e "$T/.github/workflows/spec-harness.yml" ] \
     || { echo "✖ self-test: thiếu CI workflow — gate chỉ tồn tại ở máy dev"; exit 1; }
   [ -e "$T/.claude/commands/init-project-rules.md" ] \
