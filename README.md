@@ -118,7 +118,7 @@ Xong hết thì `node scripts/validate-tasks.mjs --self-check` phải xanh **tr�
 
 Cách `curl` tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách clone (script báo rõ và dừng, không cài nửa vời).
 
-Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`.
+Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, và `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè).
 
 **Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.sh`, không phải chạy lại `/init-project-rules`.
 
@@ -206,6 +206,6 @@ Những thứ validator bắt mà con người hay bỏ sót:
 
 Validator dependency-free (Node 20+), chạy từ pre-commit, CI, hoặc tay. Chính nó cũng có `--self-check`: assert cho từng predicate, gồm cả ca âm — lịch sử sạch **không** được bịa ra finding, và **template chưa điền không được thoả mãn gate nào**.
 
-Pre-commit chạy `--staged`: chỉ kiểm task folder mà commit đó chạm tới. Một task đang `blocked` chờ BA là trạng thái hợp lệ — để nó chặn mọi commit không liên quan chỉ dạy cả team gõ `--no-verify`, và gate bị bypass theo phản xạ là gate đã chết. CI vẫn quét toàn repo.
+Pre-commit chạy `--staged`: chỉ kiểm task folder mà commit đó chạm tới — nên nó **không** thấy task hỏng mà commit này không đụng vào (đo thật: hỏng task A, commit file B → đi qua; CI cùng cây báo 5 error). Đó là đánh đổi có chủ ý, và CI là lưới cuối. Một task đang `blocked` chờ BA là trạng thái hợp lệ — để nó chặn mọi commit không liên quan chỉ dạy cả team gõ `--no-verify`, và gate bị bypass theo phản xạ là gate đã chết. CI vẫn quét toàn repo.
 
 Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny sẵn `git push`, `git reset --hard`, `git stash`, `git clean`. Luật "đừng phá working tree" viết trong prompt là luật model **chọn** tuân thủ; deny ở tầng permission thì không có chỗ để chọn — cùng lý do đã chọn exit code thay vì lời nhắc.
