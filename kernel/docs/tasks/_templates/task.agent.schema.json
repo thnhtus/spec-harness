@@ -29,17 +29,33 @@
       "minLength": 1,
       "description": "ClickUp task id, e.g. 86d2x6jc0"
     },
-    "taskName": { "type": "string", "minLength": 1 },
+    "taskName": {
+      "type": "string",
+      "minLength": 1
+    },
     "clickupUrl": {
       "type": "string",
       "$comment": "Tracker task URL. Field name is historical (ClickUp); the URL shape is injected from harness.config.json → tracker.urlPattern, so any tracker works without renaming existing task data."
     },
-    "repoName": { "type": "string", "minLength": 1 },
-    "sprintNumber": { "type": "integer", "minimum": 1 },
-    "developer": { "type": "string", "minLength": 1 },
+    "repoName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sprintNumber": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "developer": {
+      "type": "string",
+      "minLength": 1
+    },
     "branchType": {
       "type": "string",
-      "enum": ["feature", "hotfix", "bugfix"]
+      "enum": [
+        "feature",
+        "hotfix",
+        "bugfix"
+      ]
     },
     "layer": {
       "type": "string",
@@ -47,7 +63,11 @@
     },
     "taskComplexity": {
       "type": "string",
-      "enum": ["trivial", "normal", "high"]
+      "enum": [
+        "trivial",
+        "normal",
+        "high"
+      ]
     },
     "currentStage": {
       "type": "string",
@@ -94,25 +114,77 @@
     "complexity": {
       "type": "object",
       "description": "Complexity vector (Agents.md §5.1). taskComplexity is DERIVED from it by formula §5.1.1 — the validator recomputes and rejects a mismatch.",
-      "required": ["vector"],
+      "required": [
+        "vector"
+      ],
       "properties": {
         "vector": {
           "type": "object",
-          "required": ["scope", "uncertainty", "dependency", "dataImpact", "integration", "testing", "blastRadius", "reversibility"],
+          "required": [
+            "scope",
+            "uncertainty",
+            "dependency",
+            "dataImpact",
+            "integration",
+            "testing",
+            "blastRadius",
+            "reversibility"
+          ],
           "properties": {
-            "scope": { "type": "integer", "minimum": 0, "maximum": 2 },
-            "uncertainty": { "type": "integer", "minimum": 0, "maximum": 2 },
-            "dependency": { "type": "integer", "minimum": 0, "maximum": 2 },
-            "dataImpact": { "type": "integer", "minimum": 0, "maximum": 2 },
-            "integration": { "type": "integer", "minimum": 0, "maximum": 2 },
-            "testing": { "type": "integer", "minimum": 0, "maximum": 2 },
-            "blastRadius": { "type": "integer", "minimum": 0, "maximum": 4 },
-            "reversibility": { "type": "integer", "minimum": 0, "maximum": 4 }
+            "scope": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "uncertainty": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "dependency": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "dataImpact": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "integration": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "testing": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2
+            },
+            "blastRadius": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            "reversibility": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            }
           }
         },
-        "effort": { "type": "integer", "minimum": 0, "maximum": 12 },
-        "assessedAt": { "type": "string", "minLength": 1 },
-        "note": { "type": "string" }
+        "effort": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12
+        },
+        "assessedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "type": "string"
+        }
       }
     },
     "docsPath": {
@@ -124,7 +196,9 @@
       "description": "Per-role status. Six canonical FE roles required; extra roles allowed.",
       "additionalProperties": {
         "type": "object",
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
@@ -164,23 +238,82 @@
           "minimum": 0,
           "description": "Times the task came back for code changes after status=reviewing (review comments, MR rejections)."
         },
-        "closedAt": { "type": "string", "minLength": 1 },
-        "note": { "type": "string", "description": "One line: what the estimate missed, in plain words." }
+        "closedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "type": "string",
+          "description": "One line: what the estimate missed, in plain words."
+        }
       }
     },
     "attempts": {
       "type": "object",
       "description": "How many times each stage actually ran. Optimal is 1; >1 means a gate sent it back. This is the harness's Step Efficiency signal — rework is measured, not estimated.",
-      "additionalProperties": { "type": "integer", "minimum": 1 }
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
     },
-    "createdAt": { "type": "string", "minLength": 1 },
-    "updatedAt": { "type": "string", "minLength": 1 }
+    "createdAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updatedAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "telemetry": {
+      "type": "array",
+      "description": "One entry per stage dispatch: which tier actually ran and how long it took. No token counts — those are vendor data (SharedRules §5 forbids a usage field). Model name + wall-clock is enough to answer whether the `strong` tier in Agents.md §5.3 bought anything, which --calibrate cannot ask without it.",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "tier"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tier": {
+            "type": "string",
+            "enum": [
+              "cheap",
+              "mid",
+              "strong",
+              "session-default"
+            ]
+          },
+          "model": {
+            "type": "string",
+            "description": "What the CLI actually called it, e.g. \"sonnet\". Empty when the CLI cannot route per-subagent."
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "startedAt": {
+            "type": "string"
+          },
+          "endedAt": {
+            "type": "string"
+          }
+        }
+      }
+    }
   },
   "allOf": [
     {
       "$comment": "Branch type must match implementer: feature/hotfix => fe-implementer active; bugfix => fe-fix active.",
       "if": {
-        "properties": { "branchType": { "const": "bugfix" } }
+        "properties": {
+          "branchType": {
+            "const": "bugfix"
+          }
+        }
       },
       "then": {
         "properties": {
@@ -188,7 +321,9 @@
             "properties": {
               "fe-implementer": {
                 "properties": {
-                  "status": { "const": "not_applicable" }
+                  "status": {
+                    "const": "not_applicable"
+                  }
                 }
               }
             }
