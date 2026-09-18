@@ -26,10 +26,24 @@ Mọi `AC-nn` của `02-FSD-Review.md` phải có **đúng một** dòng ở đ�
 
 Output cho thấy test tái hiện **fail** trước khi sửa.
 
-### Output / Log
+Test đỏ ở đây là **có chủ đích**, nhưng Gate 4 chặn mọi output thất bại — nên phải khai, đặt dòng này ngay trên block:
 
 ```
-# dán output thật ở đây
+<!-- known-failure: AC-nn reproduce trước khi sửa -->
+```
+
+Không khai thì gate đỏ; mà nếu vì thế bạn xoá luôn output đỏ đi thì mất đúng bằng chứng reproduce-first cần có.
+
+### Output / Log
+
+Chạy qua wrapper để block tự có attestation (`exitCode`/`durationMs`/`gitRev`/`startedAt`):
+
+```bash
+node scripts/run-evidence.mjs --append <task-folder>/08-Test-Evidence.md -- <lệnh ProjectRules §7>
+```
+
+```
+# output thật + khối attestation sẽ được append vào đây
 ```
 
 ## Gate 4 — checklist
