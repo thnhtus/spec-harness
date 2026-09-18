@@ -246,6 +246,15 @@ Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** l
 
 `attempts` ≥ 3 ở một stage → validator cảnh báo. Không phải lỗi (có task khó thật), nhưng đó là tín hiệu đáng đọc khi chỉnh prompt hoặc khi nên tách task.
 
+**Retry budget có răng — và không tin lời khai.** `attempts` do coordinator ghi, mà coordinator chính là actor sẽ lặp nếu nó lặp; không ai tự ghi `attempts: 7` để tố cáo mình. Nên validator đếm **block handoff** trong `.agent-memory/{role}.md` — append-only (SharedRules §4), role không xoá được:
+
+| Điều kiện | Mức |
+| --- | --- |
+| số block > `attempts[stage]` đã khai | **warning** — rework bị khai thiếu |
+| số block ≥ `retryBudget` (mặc định 4) | **error** — hết ngân sách, tách task hoặc sửa spec, đừng retry tiếp |
+
+Đây là chỗ duy nhất harness đo được rework một cách độc lập với lời khai. `retryBudget` khai ở `harness.config.json`.
+
 **Dùng nó để sửa vector, đừng để nó nằm im.** Task nào cũng `implementation: 2` thì hoặc `scope` đang bị chấm thấp, hoặc Gate 3 chưa liệt kê đủ file. Đó là dữ liệu thật để hiệu chỉnh §5.1, thay cho việc đoán trọng số.
 
 ### 5.6. Đóng vòng: `outcome` + `--calibrate`
