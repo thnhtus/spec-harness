@@ -121,6 +121,10 @@ function installInto(P) {
     if (!existsSync(join(SRC, d)))
       die(`✖ nguồn thiếu "${d}/" — bản phát hành hỏng (package.json files: thiếu mục?), không cài nửa vời`);
 
+  // Chụp TRƯỚC khi ghi bất cứ gì: rỗng = harness đứng riêng (bố cục B).
+  // `.git` không tính — README khuyến nghị `git init` cho bố cục đó.
+  const wasEmpty = readdirSync(P).filter((n) => n !== ".git").length === 0;
+
   const kept = [];
   // Copy chỉ khi đích chưa có. Đây là thứ giữ adapter sống qua lần cài lại.
   const keep = (src, dst) => existsSync(dst) ? kept.push(dst) : cpSync(src, dst);
@@ -128,13 +132,28 @@ function installInto(P) {
   for (const d of ["docs", "scripts", "hooks", ".claude/agents", ".claude/commands", ".claude/skills"])
     mkdirSync(join(P, d), { recursive: true });
 
+  // Bố cục A cài ĐÈ LÊN repo code đang có, nên kernel có thể trùng tên với file
+  // của project: `docs/README.md` là ca thường gặp nhất, `scripts/` và
+  // `hooks/pre-commit` cũng có. Kernel vẫn phải đè (nâng phiên bản mà giữ bản cũ
+  // là hỏng kiểu khó tìm hơn), nhưng đè trong im lặng thì user chỉ phát hiện lúc
+  // `git diff` — hoặc không bao giờ. Nên: ghi nhận rồi báo, chỉ file đã tồn tại
+  // và thực sự khác nội dung.
+  const clobbered = [];
+  const over = (src, dst) => {
+    try { if (existsSync(dst) && read(src) !== read(dst)) clobbered.push(dst.slice(P.length + 1)); } catch {}
+    cpSync(src, dst);
+  };
+
   // kernel — luôn ghi đè, đây là phần dùng chung
-  cpSync(join(SRC, "kernel/docs"), join(P, "docs"), { recursive: true });
-  for (const f of ["validate-tasks.mjs", "lease.mjs"])
-    cpSync(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
+  for (const f of readdirSync(join(SRC, "kernel/docs"), { withFileTypes: true })) {
+    if (f.isFile()) over(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
+    else cpSync(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name), { recursive: true });
+  }
+  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs"])
+    over(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md")))
     cpSync(join(SRC, "agents", f), join(P, ".claude/agents", f));
-  cpSync(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
+  over(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   try { chmodSync(join(P, "hooks/pre-commit"), 0o755); } catch {}
   // skill fsd-writer gọi ở Gate 1 — thiếu nó thì stage fsd_write gọi hụt
   cpSync(join(SRC, "skills"), join(P, ".claude/skills"), { recursive: true });
@@ -154,9 +173,63 @@ function installInto(P) {
   keep(join(SRC, "adapters/ci/validate-tasks.yml"), join(P, ".github/workflows/spec-harness.yml"));
 
   const hookSkipped = installHook(P);
+  const signpost = installSignpost(P, wasEmpty);
 
   execFileSync(process.execPath, ["scripts/validate-tasks.mjs", "--self-check"], { cwd: P, stdio: "inherit" });
-  return { kept, hookSkipped };
+  return { kept, hookSkipped, signpost, clobbered };
+}
+
+// Bố cục B (harness/ đứng cạnh fe/ be/): CLI chỉ đọc .claude/ ở cwd và các thư
+// mục CHA, không quét xuống con. Mở CLI ở my-workspace/ thì harness/.claude/
+// vô hình — mất skills, mất /start-task, và (nguy hiểm nhất) mất deny
+// git push/reset --hard trong settings.json. `--add-dir harness` KHÔNG cứu
+// được: nó nạp skills + commands nhưng BỎ QUA settings.json, tức là chạy có vẻ
+// bình thường trong khi guardrail đã biến mất — im lặng, đúng kiểu hỏng tệ nhất.
+// Nên đặt biển báo ở thư mục cha: CLAUDE.md ở cwd luôn được nạp, nên đây là chỗ
+// duy nhất bắt được lỗi ĐÚNG LÚC nó xảy ra.
+// Trả về đường dẫn đã ghi, hoặc null nếu bỏ qua.
+function installSignpost(P, wasEmpty) {
+  const parent = dirname(P);
+  const stale = join(parent, "CLAUDE.md");
+
+  // Cha đã có .claude (user cố ý symlink sang harness/ để mở CLI ở đó) → mở ở
+  // cha là ĐÚNG, biển báo thành báo động giả. Xoá bản cũ của chính mình, đừng
+  // để nâng kernel giữ lại cảnh báo sai giữa bố cục đang chạy đúng.
+  if (existsSync(join(parent, ".claude"))) {
+    try { if (read(stale).includes("spec-harness cài ở")) unlinkSync(stale); } catch {}
+    return null;
+  }
+  // Chỉ bố cục B mới cần biển báo. Nhận diện: đích RỖNG trước khi cài — bố cục B
+  // là `mkdir harness && cd harness`, bố cục A là repo code đã đầy file.
+  // KHÔNG dùng `.git` (README khuyến nghị `git init` cho cả B → không phân biệt
+  // được), cũng KHÔNG dùng `repos` (lúc cài nó còn là template `path: "."`).
+  // Cài lại thì đích không còn rỗng → không tái tạo, nhưng cũng không xoá nhầm
+  // biển báo đang đúng.
+  if (!wasEmpty) return null;
+  if (existsSync(stale)) return null; // của user, không đè
+  const f = stale;
+  const here = P.slice(parent.length + 1);
+  writeFileSync(f, `# Sai thư mục
+
+spec-harness cài ở \`${here}/\`, không phải ở đây.
+
+\`.claude/\` của nó nằm trong \`${here}/\` — CLI không quét xuống thư mục con,
+nên mở ở đây là mất skills, mất \`/start-task\`, và mất cả guardrail deny
+\`git push\` / \`git reset --hard\` trong settings.json.
+
+**Thoát và mở lại ở đúng chỗ:**
+
+\`\`\`bash
+cd ${here}
+claude
+\`\`\`
+
+Từ trong đó vẫn sửa được repo anh em: \`/add-dir ../fe ../be\`.
+
+Đừng dùng \`--add-dir ${here}\` từ đây: nó nạp skills và commands nhưng BỎ QUA
+settings.json, nên guardrail biến mất trong im lặng.
+`);
+  return f;
 }
 
 // ── self-test ──────────────────────────────────────────────────────────────
@@ -197,6 +270,10 @@ if (args[0] === "--self-test") {
   // và hai phiên cùng task sẽ ghi đè handoff của nhau trong im lặng.
   if (spawnSync(process.execPath, ["scripts/lease.mjs", "--self-check"],
       { cwd: T, stdio: "ignore" }).status !== 0) fail("lease.mjs thiếu hoặc self-check đỏ");
+  // Gate 4/5 ở evidenceMode "attested" gọi wrapper này. Thiếu nó thì evidence
+  // quay về kiểu dán tay — gate vẫn xanh, chỉ là không còn kiểm được gì.
+  if (spawnSync(process.execPath, ["scripts/run-evidence.mjs", "--self-check"],
+      { cwd: T, stdio: "ignore" }).status !== 0) fail("run-evidence.mjs thiếu hoặc self-check đỏ");
   if (!existsSync(join(T, ".mcp.json"))) fail("thiếu .mcp.json");
 
   // Lệnh phá working tree phải bị chặn ở tầng permission, không chỉ ở văn bản.
@@ -265,7 +342,47 @@ if (args[0] === "--self-test") {
   mkdirSync(NG, { recursive: true });
   try { installInto(NG); } catch { fail("non-git repo đáng lẽ vẫn cài được"); }
   if (validator(NG, "--quiet") !== 0) fail("validator không chạy được khi không có hook");
+  // bố cục B: biển báo ở cha, và phải chỉ đúng tên thư mục vừa cài
+  if (!existsSync(join(dirname(NG), "CLAUDE.md"))) fail("bố cục B thiếu biển báo ở thư mục cha");
+  if (!read(join(dirname(NG), "CLAUDE.md")).includes("cd ng")) fail("biển báo không chỉ đúng thư mục");
+  // user đã symlink .claude lên cha (cố ý mở CLI ở đó) → biển báo phải TỰ RÚT,
+  // không thì nâng kernel lại dựng cảnh báo sai lên giữa bố cục đang chạy đúng.
+  symlinkSync(join(NG, ".claude"), join(dirname(NG), ".claude"));
+  installInto(NG);
+  if (existsSync(join(dirname(NG), "CLAUDE.md"))) fail("có .claude ở cha mà biển báo vẫn còn");
   rmSync(dirname(NG), { recursive: true, force: true });
+
+  // bố cục B CÓ `git init` (README khuyến nghị) vẫn phải có biển báo — `.git`
+  // không phân biệt được A với B, đây là ca đã regress một lần.
+  const BG = join(mkdtempSync(join(tmpdir(), "sh-")), "bg");
+  mkdirSync(BG, { recursive: true });
+  git(BG, "init", "-q");
+  installInto(BG);
+  if (!existsSync(join(dirname(BG), "CLAUDE.md"))) fail("bố cục B + git init mất biển báo");
+  rmSync(dirname(BG), { recursive: true, force: true });
+
+  // bố cục A (cài vào chính repo code): KHÔNG được rải CLAUDE.md ra ~/code
+  const A = mkrepo("a");
+  writeFileSync(join(A, "package.json"), "{}"); // repo code có sẵn file
+  // docs/README.md là ca va chạm thường gặp nhất ở bố cục A — kernel PHẢI đè
+  // (giữ bản cũ thì nâng phiên bản không có tác dụng), nhưng phải BÁO, không
+  // thì user chỉ biết lúc `git diff`, hoặc không bao giờ.
+  mkdirSync(join(A, "docs"), { recursive: true });
+  writeFileSync(join(A, "docs/README.md"), "# docs của project tôi");
+  const rA = installInto(A);
+  if (!rA.clobbered.includes("docs/README.md")) fail("đè file project mà không báo");
+  if (read(join(A, "docs/README.md")).includes("project tôi")) fail("kernel docs đáng lẽ phải đè");
+  // cài lại: nội dung đã giống nhau → không được báo nhầm
+  if (installInto(A).clobbered.length) fail("cài lại báo đè dù nội dung không đổi");
+  if (existsSync(join(dirname(A), "CLAUDE.md"))) fail("bố cục A không được ghi CLAUDE.md ra thư mục cha");
+  // CLAUDE.md sẵn có của user không bị đè
+  const B2 = join(mkdtempSync(join(tmpdir(), "sh-")), "b2");
+  mkdirSync(B2, { recursive: true });
+  writeFileSync(join(dirname(B2), "CLAUDE.md"), "USER CONTENT");
+  installInto(B2);
+  if (read(join(dirname(B2), "CLAUDE.md")) !== "USER CONTENT") fail("đè mất CLAUDE.md của user");
+  rmSync(dirname(A), { recursive: true, force: true });
+  rmSync(dirname(B2), { recursive: true, force: true });
 
   rmSync(dirname(T), { recursive: true, force: true });
   console.log("✅ install self-test passed");
@@ -277,13 +394,25 @@ if (args.length !== 1) die("dùng: node install.mjs <project-root>");
 const target = resolve(args[0]);
 if (!existsSync(target)) die(`✖ không có thư mục: ${args[0]}`);
 
-const { kept, hookSkipped } = installInto(target);
+const { kept, hookSkipped, signpost, clobbered } = installInto(target);
 
 console.log(`\n✅ đã cài vào ${args[0]}`);
 if (kept.length) {
   console.log("\ngiữ nguyên (đã có sẵn, không đè):");
   for (const k of kept) console.log(`   ${k}`);
 }
+
+if (clobbered.length) console.log(`
+⚠️  ĐÃ ĐÈ file trùng tên của project (kernel bắt buộc đè để nâng được phiên bản):
+${clobbered.map((f) => `   ${f}`).join("\n")}
+    Bản cũ còn trong git: \`git diff\` để xem, \`git checkout -- <file>\` để lấy lại
+    (lấy lại thì harness dùng bản của bạn — tự chịu trách nhiệm tương thích).`);
+
+if (signpost) console.log(`
+ℹ️  đã đặt biển báo ${signpost}
+    Harness đứng cạnh repo code, nên PHẢI mở CLI trong ${args[0]} — mở ở thư mục
+    cha là mất skills, /start-task và guardrail deny git push. Biển báo đó bắt
+    lỗi giúp bạn nếu lỡ mở nhầm.`);
 
 if (hookSkipped) console.log(`
 ℹ️  pre-commit hook chưa cắm (${hookSkipped}) — harness vẫn chạy bình thường.
