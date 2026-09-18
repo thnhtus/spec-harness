@@ -1,6 +1,5 @@
-# Git for Windows mặc định core.autocrlf=true → clone về là script thành CRLF,
-# bash chết ngay `set -o pipefail` ("invalid option name"). Ghim LF cho mọi thứ
-# chạy dưới bash, kể cả file không có đuôi.
-*.sh            text eol=lf
+# hooks/pre-commit vẫn là bash (git gọi nó, không gọi node). Git for Windows mặc
+# định core.autocrlf=true → clone về thành CRLF, bash chết ngay `set -o pipefail`
+# ("invalid option name") — thông báo không hề gợi ra nguyên nhân. Ghim LF.
 hooks/*         text eol=lf
-*.mjs           text eol=lf
+*.sh            text eol=lf
