@@ -53,6 +53,10 @@ Cài dependency: `npm install`. Danh sách lệnh kiểm tra hợp lệ (one-sho
 
 > **URL phải parse được, kể cả khi đang là placeholder.** `https://<git-host>/…` làm CLI chết bằng `ERR_INVALID_URL` ngay lúc khởi động — trước cả khi bạn kịp sửa, vì `<` `>` không hợp lệ trong hostname. Dùng một hostname thật như `example.com` cho tới khi điền giá trị đúng.
 
+Ba server trên là khung mặc định. Project có UI nên khai thêm một server **điều khiển browser** (BrowserOS neo, Playwright, chrome-devtools…): Gate 5 cần nó để drive app thật theo từng AC ([`agents/Adversary.md`](./agents/Adversary.md), skill `pre-qc-gate` §4a) — thiếu thì Gate 5 chỉ còn tầng test. Server chạy local khai bằng `command` + `args` thay cho `type` + `url`.
+
+Đừng khai cho đủ: mỗi server nối vào là một khối tool nằm trong context **mọi lượt**, kể cả lượt không dùng — xem ngân sách ở [`agents/SharedRules.md` §8](./agents/SharedRules.md). Filesystem/shell MCP thì thừa hẳn, CLI đã có sẵn.
+
 `.mcp.json` là **project-scoped**: commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Sau khi sửa: gõ `/mcp` trong phiên để login OAuth từng server; kiểm bằng `claude mcp list`.
 
 Vai trò từng server + quy tắc "không bịa dữ liệu MCP": [`agents/ProjectRules.md` §1](./agents/ProjectRules.md). Kỷ luật payload (summary-first, metadata-first): [`agents/SharedRules.md` §8](./agents/SharedRules.md).
