@@ -109,6 +109,8 @@
     ],
     "since": "2026-07-28"
   },
+  "_evidenceMode": "\"attested\" = Gate 4/5 bắt buộc evidence sinh bởi scripts/run-evidence.mjs (đọc exitCode thật thay vì đọc chữ \"passed\"). \"legacy\" (mặc định) = evidence dán tay vẫn qua, để repo đang chạy dở không đỏ hết khi nâng kernel.",
+  "evidenceMode": "legacy",
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",
   "tracker": {
