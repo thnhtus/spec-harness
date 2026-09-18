@@ -93,6 +93,13 @@ const SCHEMA_PATH = join(TASKS_DIR, "_templates", "task.agent.schema.json");
 const GROUP_PREFIX = CFG.groupPrefix ?? "sprint-";
 const GROUP_FIELD = CFG.groupField ?? "sprintNumber";
 const LINE_CAPS = CFG.lineCaps ?? {};
+// Files whose size is driven by pasted machine output (test logs, adversary
+// re-runs), not by prose the agent chooses to write. A hard cap there would put
+// the agent between "paste the whole output" (Instructions §5, non-negotiable)
+// and "stay under the cap" — and it would trim the evidence. Warn instead: a
+// 400-line 08 usually means the task carries too many AC, which is worth seeing
+// but is not something the implementer can fix by writing less.
+const LINE_WARN = CFG.lineWarn ?? {};
 const HANDOFF_BLOCK_CAP = CFG.handoffBlockCap ?? 30;
 const STAGE_ORDER = CFG.stages ?? [];
 const REQUIRED_AT_STAGE = CFG.requiredAtStage ?? [];
@@ -580,6 +587,15 @@ if (args.has("--self-check")) {
     `docsPath pattern would reject a valid folder like "${sampleDocsPath}"`,
   );
 
+  // lineWarn never blocks: 08/09 hold pasted output, and a cap there buys a
+  // shorter file by making the agent paste less — the opposite of what Gate 4
+  // and Gate 5 exist for.
+  for (const f of Object.keys(LINE_WARN))
+    assert.ok(
+      !LINE_CAPS[f],
+      `${f} is in both lineCaps and lineWarn — a hard cap on pasted output pressures the agent to trim evidence`,
+    );
+
   // Line caps under append-only: the newest block is what the current role
   // controls. Capping the whole file traps a task the gate bounced twice —
   // over the cap, and §5 forbids trimming the history to get back under it.
@@ -974,6 +990,15 @@ for (const { sprint, task, path } of folders) {
     } else if (countLinesIn(text) > cap) {
       errors.push(`${f}: ${countLinesIn(text)} lines exceeds cap ${cap} (SharedRules §8)`);
     }
+  }
+  for (const [f, limit] of Object.entries(LINE_WARN)) {
+    const fp = join(path, f);
+    if (!existsSync(fp)) continue;
+    const n = countLinesIn(readFileSync(fp, "utf8"));
+    if (n > limit)
+      warnings.push(
+        `${f}: ${n} lines (soft limit ${limit}) — pasted output is never trimmed to fit; this usually means the task carries too many AC and should be split (SharedRules §8)`,
+      );
   }
   for (const o of oversizedHandoffBlocks(join(path, ".agent-memory")))
     warnings.push(`.agent-memory/${o.file}: ${o.lines} lines exceeds ${HANDOFF_BLOCK_CAP}`);
