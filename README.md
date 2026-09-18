@@ -46,7 +46,7 @@ Kernel cũng không gắn với một CLI: file role không khai `model:`, khôn
 
 Chọn một trong hai trường hợp — khác nhau ở chỗ `harness.config.json` nằm đâu, kéo theo task docs nằm đâu.
 
-`install.sh` nhận **một tham số: thư mục đích** — nơi harness được cài vào. Thư mục đó phải tồn tại; git repo thì tốt hơn nhưng không bắt buộc (xem ghi chú cuối mục). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
+`install.mjs` nhận **một tham số: thư mục đích** — nơi harness được cài vào. Thư mục đó phải tồn tại; git repo thì tốt hơn nhưng không bắt buộc (xem ghi chú cuối mục). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
 
 ### Trường hợp A — cài **vào trong** repo code
 
@@ -56,12 +56,15 @@ Một repo (FE hoặc BE), task docs nằm cùng chỗ với code. Đây là m�
 cd ~/code/my-app          # ← repo code của bạn, đứng sẵn ở đây
 
 # không cần clone (repo phải public)
-curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- .
+curl -fsSLo install.mjs https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.mjs
+node install.mjs . && rm install.mjs
 
 # hoặc từ bản clone
 git clone --depth 1 https://github.com/thnhtus/spec-harness /tmp/spec-harness
-bash /tmp/spec-harness/install.sh .
+node /tmp/spec-harness/install.mjs .
 ```
+
+Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 20+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
 
 Dấu `.` cuối là thư mục đích = repo bạn đang đứng. Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
 
@@ -74,7 +77,8 @@ cd ~/code/my-workspace    # ← thư mục đang chứa fe/ và be/
 mkdir harness && cd harness
 git init                  # tuỳ chọn — xem "Có cần git init không?" bên dưới
 
-curl -fsSL https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.sh | bash -s -- .
+curl -fsSLo install.mjs https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.mjs
+node install.mjs . && rm install.mjs
 ```
 
 ```
@@ -114,13 +118,68 @@ Rồi tự chạy `node scripts/validate-tasks.mjs --self-check` để xác nh�
 
 Xong hết thì `node scripts/validate-tasks.mjs --self-check` phải xanh **trước task đầu tiên**. Chưa xanh thì gate im lặng no-op và bạn chỉ phát hiện sau vài chục task.
 
+### MCP server nên dùng
+
+Kernel **không** hardcode tên tool MCP (`node install.mjs --self-test` fail nếu có) — nên đổi tracker hay design tool chỉ là sửa `.mcp.json` + ProjectRules §1, không đụng file role. Bốn vai trò dưới đây là những chỗ harness thật sự gọi tới; phần còn lại là tuỳ project.
+
+| Vai trò | Harness dùng ở đâu | Cần không |
+| --- | --- | --- |
+| **tracker** — ClickUp · Linear · Jira · GitHub Issues | Nguồn AC ở Gate 1 (`fsd-writer`), đọc ticket của skill `quick-task` / `fix-bug` / `pre-qc-gate`, ProjectRules §1 | **Bắt buộc.** Thiếu thì Gate 1 không có nguồn yêu cầu và cả chuỗi truy vết AC là tự bịa |
+| **git-host** — GitLab · GitHub | Skill `build-and-mr` tạo MR; kiểm nhánh protected (ProjectRules §3) | Nên có. Thiếu thì skill vẫn push rồi in sẵn title + URL "new merge request" để bạn bấm một phát |
+| **design** — Figma | `fsd-writer` đối chiếu node/screen khi viết `01-FSD.md` | Chỉ khi task bám design. Không có UI thì xoá dòng này |
+| **browser** — BrowserOS neo · Playwright · chrome-devtools | Gate 5: `pre-qc-gate` §4a drive app thật theo từng AC; `fix-bug` chạy repro before/after | Nên có **khi có UI**. Thiếu thì Gate 5 chỉ còn tầng test — mất đúng phần "chạy thật" |
+
+**Đừng thêm cho đủ.** Mỗi server nối vào là một khối tool nằm trong context **mọi lượt**, kể cả lượt không dùng tới nó — ngược với ngân sách token ở `SharedRules` §8. Filesystem/shell MCP thì thừa hẳn: CLI đã có `Read`/`Bash`.
+
+#### Cài
+
+Sửa `.mcp.json` ở repo root (installer đã sinh sẵn khung):
+
+```jsonc
+{
+  "mcpServers": {
+    "tracker":  { "type": "http", "url": "https://mcp.clickup.com/mcp" },
+    "git-host": { "type": "http", "url": "https://gitlab.example.com/api/v4/mcp" },
+    "design":   { "type": "http", "url": "https://mcp.figma.com/mcp" },
+    "browser":  { "command": "npx", "args": ["-y", "@playwright/mcp@latest"] }
+  }
+}
+```
+
+Server remote dùng `type` + `url`; server chạy local dùng `command` + `args` (**không** có `url`). URL tham khảo — vendor đổi endpoint theo thời gian, tra doc chính thức trước khi dán:
+
+| Server | URL |
+| --- | --- |
+| ClickUp | `https://mcp.clickup.com/mcp` |
+| Linear | `https://mcp.linear.app/mcp` |
+| Atlassian (Jira) | `https://mcp.atlassian.com/v1/sse` |
+| GitHub | `https://api.githubcopilot.com/mcp/` |
+| GitLab (self-hosted) | `https://<host>/api/v4/mcp` |
+| Figma | `https://mcp.figma.com/mcp` |
+
+Rồi trong phiên CLI:
+
+```
+/mcp                  # login OAuth từng server
+```
+
+```bash
+claude mcp list       # xác nhận server đã connect trước task đầu tiên
+```
+
+Ba thứ hay sai:
+
+- **Placeholder phải parse được.** `https://<git-host>/…` làm CLI chết bằng `ERR_INVALID_URL` **ngay lúc khởi động** — trước cả khi bạn kịp sửa, vì `<` `>` không hợp lệ trong hostname. Để `example.com` cho tới khi có giá trị thật.
+- **`.mcp.json` là project-scoped** — commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Token OAuth nằm ngoài repo (`~/.claude.json`), không lọt vào commit.
+- **Khai xong phải điền ProjectRules §1.** Bảng ở đó là chỗ duy nhất nói server nào giữ vai trò nào; `/init-project-rules` đọc `.mcp.json` để điền, nên sửa `.mcp.json` **trước** khi chạy lệnh đó.
+
 ### Ghi chú cài đặt
 
-Cách `curl` tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách clone (script báo rõ và dừng, không cài nửa vời).
+Cách `curl` tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. (Tải file rồi chạy chứ không `| bash`: pipe vào `node -` làm mất `import.meta.url`, installer hết biết mình nằm đâu.) Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách clone (script báo rõ và dừng, không cài nửa vời).
 
 Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, và `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè).
 
-**Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.sh`, không phải chạy lại `/init-project-rules`.
+**Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.mjs`, không phải chạy lại `/init-project-rules`.
 
 **Có cần `git init` không?** Không bắt buộc — harness cài được vào thư mục thường, validator vẫn chạy, `--self-check` vẫn xanh. Nhưng thiếu git thì mất ba thứ:
 
