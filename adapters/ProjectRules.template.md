@@ -85,6 +85,18 @@ Ràng buộc xuyên suốt:
 
 > Các lệnh trên phải khớp `evidenceCommandPattern` trong `harness.config.json` — sai là Gate 4 không nhận evidence. Kiểm bằng `node scripts/validate-tasks.mjs --self-check`.
 
+**Chạy chúng qua wrapper, đừng dán output bằng tay:**
+
+```bash
+node scripts/run-evidence.mjs --append <task-folder>/08-Test-Evidence.md -- <lệnh>
+```
+
+Wrapper chạy lệnh thật rồi đóng dấu `exitCode`, `durationMs`, `gitRev`, `startedAt` vào cuối block. Đó là khác biệt giữa *"văn bản này trông giống output test"* và *"tiến trình này đã chạy và exit 0"* — câu đầu một agent chưa chạy gì vẫn viết ra được, câu sau thì không.
+
+Ca nó bắt được mà mọi kiểm-bằng-chữ đều thua: lệnh **in ra `Tests: 12 passed` nhưng exit 1**. Đọc chữ thì xanh; đọc exit code thì đỏ.
+
+Bật thành bắt buộc bằng `"evidenceMode": "attested"` trong `harness.config.json`. Mặc định `"legacy"` — evidence dán tay vẫn qua, để repo đang chạy dở không đỏ hết khi nâng kernel. Chuyển sang `attested` khi mọi lệnh ở bảng trên đã đi qua wrapper.
+
 **Lệnh watch/server — CHỈ user chạy tay, agent KHÔNG bao giờ chạy** (không tự kết thúc → treo phiên): `<dev server, test watch, preview…>`
 
 **Tầng chạy thật khi verify** (skill `pre-qc-gate` §4): `<browser | api | cli | none>`. Repo không có UI thì tầng này là gọi HTTP/CLI/hàm public thật, **không** phải bỏ qua. Harness kiểm tích hợp sẵn có: `<đường dẫn, vd e2e/ hoặc test/integration/>` — không có thì ghi "không có", đừng dựng mới lúc verify.
