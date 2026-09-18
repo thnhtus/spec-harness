@@ -17,7 +17,10 @@ if [ ! -f "$validator" ]; then
 fi
 
 # --no-warn: only errors block. Warnings are backlog, not a reason to stop work.
-if ! node "$validator" --no-warn --quiet; then
+# --staged: only the task folders THIS commit touches. A task parked at `blocked`
+# waiting on a BA is a designed state; letting it block every unrelated commit in
+# the repo just teaches everyone to type --no-verify. CI validates the whole repo.
+if ! node "$validator" --no-warn --quiet --staged; then
   echo
   echo "✖ spec-harness: task docs have errors (see above). Commit blocked."
   echo "  Fix them, or bypass deliberately with: git commit --no-verify"
