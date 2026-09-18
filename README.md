@@ -68,6 +68,10 @@ Installer viết bằng **Node**, không phải bash — chạy y hệt nhau t�
 
 Dấu `.` cuối là thư mục đích = repo bạn đang đứng. Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
 
+Mở CLI ngay tại repo root là xong — `.claude/` nằm sẵn ở đó. Thư mục con (`packages/web/`) và worktree do `/start-task` tạo đều thấy được, vì CLI quét ngược lên cha và `.claude/` được commit vào git. **Đừng thêm `.claude/` vào `.gitignore`** — worktree sẽ rỗng và `/start-task` mất skills giữa chừng. Lệnh `node scripts/validate-tasks.mjs` chạy từ repo root.
+
+Harness cài **đè lên** repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Installer liệt kê ra những file nó vừa đè; bản cũ còn trong git (`git diff`, `git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
+
 ### Trường hợp B — cài **cạnh** các repo code
 
 Nhiều repo (FE + BE), hoặc muốn task docs tách khỏi code. Harness đứng riêng ngang hàng — **tự tạo thư mục trước**, vì nó chưa tồn tại:
@@ -89,6 +93,29 @@ my-workspace/
 ```
 
 Task docs ở `harness/docs/tasks/`, code ở `fe/` + `be/`. `repos` trỏ `../fe`, `../be`. Commit task doc và commit code là **hai repo, hai lần commit**.
+
+**Mở CLI trong `harness/`, không phải `my-workspace/`.** CLI chỉ đọc `.claude/` ở cwd và các thư mục *cha* — không quét xuống con. Mở ở `my-workspace/` thì `harness/.claude/` vô hình: mất skills, mất `/start-task`, và mất cả deny `git push` / `git reset --hard`. Từ trong `harness/` vẫn sửa được repo anh em bằng `/add-dir ../fe ../be`.
+
+`--add-dir harness` từ thư mục cha **không** thay thế được: nó nạp skills và commands nhưng bỏ qua `settings.json`, nên guardrail biến mất trong im lặng — hỏng mà trông như chạy được. Installer đặt sẵn một `CLAUDE.md` cảnh báo ở thư mục cha để bắt lỗi nếu bạn lỡ mở nhầm (có `CLAUDE.md` rồi thì không đè).
+
+#### Vẫn muốn mở CLI ở `my-workspace/`?
+
+Symlink **sáu** thứ lên cha — không chỉ `.claude`. Nạp và chạy là hai chuyện khác nhau: `.claude` lo phần nạp (skills, commands, `settings.json`), bốn cái còn lại lo phần chạy, vì `/start-task` gọi `node scripts/lease.mjs` và `docs/tasks/...` bằng **đường dẫn tương đối tính từ cwd**:
+
+```bash
+cd ~/code/my-workspace
+for x in .claude .mcp.json scripts docs harness.config.json hooks; do ln -s harness/$x $x; done
+```
+
+Thiếu `scripts/` thì `/start-task` chết ở step 0b (`Cannot find module .../scripts/lease.mjs`) — nạp xong vẫn không chạy được.
+
+File thật vẫn nằm trong `harness/`: lease, task folder, evidence đều ghi xuyên symlink về đó, nên vẫn commit chung với task docs và nâng kernel không phải làm lại. Installer thấy `.claude` ở cha thì tự gỡ biển báo cảnh báo.
+
+Đã kiểm end-to-end ở bố cục này: `/start-task` qua được step 0b + step 1, `task.agent.json` và `.lease.d/owner` nằm đúng trong `harness/docs/tasks/`, thư mục cha không có file rác, `git worktree add` vào `../fe` chạy bình thường.
+
+Đổi lại: `fe/` và `be/` giờ nằm trong cwd, agent chạm được mà không cần `/add-dir` — tiện hơn, nhưng mất một lớp chặn tay nhầm.
+
+Windows: `ln -s` cần Developer Mode hoặc admin. Không bật được thì dùng `mklink /D` trong cmd (admin), hoặc mở CLI trong `harness/` như mặc định.
 
 ### Sau khi cài — bắt buộc chạy `/init-project-rules`
 
