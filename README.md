@@ -195,11 +195,17 @@ Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là g
 Những thứ validator bắt mà con người hay bỏ sót:
 
 - **AC rơi giữa đường** — `AC-04` có trong review nhưng không ai đưa vào plan. Bắt **tại Gate 3**, không đợi tới lúc review: mỗi đích trong `acTrace.reachedIn` kiểm ngay khi stage của nó tới, nên implementer không code xong rồi mới biết plan thiếu AC.
-- **Evidence giả** — `08` viết "mọi thứ đều pass" nhưng không có lệnh nào được chạy. Phải có **cả** lệnh **và** kết quả mới tính.
+- **Evidence giả** — `08` viết "mọi thứ đều pass" nhưng không có lệnh nào được chạy. Phải có **cả** lệnh **và** kết quả, và kết quả phải nằm **trong code fence**: chữ "passed" ở ô *Expected* của bảng là kế hoạch, không phải bằng chứng.
+- **Không có AC nào** — task đi qua `fsd_review` mà `02` không khai AC nào thì cả chuỗi truy vết thành vô nghĩa. Bắt ngay, thay vì để một task rỗng đi thẳng tới `reviewing`.
+- **Gate 5 rỗng ruột** — `09` tồn tại là chưa đủ: phải có verdict và output **adversary tự chạy**, không phải bản chép từ `08`.
 - **Template chưa điền** — bản copy nguyên khuôn không được phép thoả mãn traceability (đó là lý do placeholder dùng `AC-nn`, và self-check có regression test cho đúng điều này).
 - **Handoff rỗng** — role báo `done` mà không để lại `Next agent`/`Continue automation`; coordinator route bằng đúng hai trường đó.
 - **Nhảy cóc gate** — `status = reviewing` khi `currentStage` còn ở giữa chừng, hoặc còn role chưa kết thúc.
 - **Câu hỏi BA bị bỏ quên** — `Q-01 | blocking | open` mà task đã đi qua `fsd_review`.
 - **Nhãn độ phức tạp không khớp vector** — chấm vector nhẹ rồi khai `high` (hoặc ngược lại) để đổi tier model.
 
-Validator dependency-free (Node 20+), chạy từ pre-commit, CI, hoặc tay. Chính nó cũng có `--self-check`: assert cho từng predicate, gồm cả ca âm — lịch sử sạch **không** được bịa ra finding.
+Validator dependency-free (Node 20+), chạy từ pre-commit, CI, hoặc tay. Chính nó cũng có `--self-check`: assert cho từng predicate, gồm cả ca âm — lịch sử sạch **không** được bịa ra finding, và **template chưa điền không được thoả mãn gate nào**.
+
+Pre-commit chạy `--staged`: chỉ kiểm task folder mà commit đó chạm tới. Một task đang `blocked` chờ BA là trạng thái hợp lệ — để nó chặn mọi commit không liên quan chỉ dạy cả team gõ `--no-verify`, và gate bị bypass theo phản xạ là gate đã chết. CI vẫn quét toàn repo.
+
+Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny sẵn `git push`, `git reset --hard`, `git stash`, `git clean`. Luật "đừng phá working tree" viết trong prompt là luật model **chọn** tuân thủ; deny ở tầng permission thì không có chỗ để chọn — cùng lý do đã chọn exit code thay vì lời nhắc.
