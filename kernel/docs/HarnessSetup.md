@@ -39,7 +39,7 @@ Cài dependency: `npm install`. Danh sách lệnh kiểm tra hợp lệ (one-sho
 
 ## 3. MCP setup
 
-`install.sh` sinh sẵn `.mcp.json` ở repo root (mẫu: tracker + git host + design tool). Sửa nó cho đúng project — xoá server không dùng, điền host thật:
+`install.mjs` sinh sẵn `.mcp.json` ở repo root (mẫu: tracker + git host + design tool). Sửa nó cho đúng project — xoá server không dùng, điền host thật:
 
 ```json
 {
