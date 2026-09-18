@@ -67,4 +67,4 @@ Nếu task **đổi contract FE↔API**: làm tươi [`../api/`](../api/README.m
 
 ## 8. Forbidden
 
-Commit/push/MR khi chưa được yêu cầu; tuyên bố pass khi chưa chạy; bỏ qua lệnh fail; đổi scope ngầm; xoá file không liên quan; bịa contract; sửa `srs/`/`fsd/`/`api/`; cài/gỡ package chưa duyệt; lệnh ngoài [`./SharedRules.md` §7](./SharedRules.md); thêm trường token/usage vào `task.agent.json`; chạm `.claude/settings.json`.
+Commit/push/MR khi chưa được yêu cầu; tuyên bố pass khi chưa chạy; bỏ qua lệnh fail; đổi scope ngầm; xoá file không liên quan; bịa contract; sửa `srs/`/`fsd/`/`api/`; cài/gỡ package chưa duyệt; lệnh ngoài [`./SharedRules.md` §7](./SharedRules.md); thêm trường token/usage vào `task.agent.json` (`telemetry` là của coordinator, implementer không ghi); chạm `.claude/settings.json`.

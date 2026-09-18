@@ -75,7 +75,7 @@ Task doc nằm tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + template
 Hay gặp nhất trong doc của agent: câu chốt một dòng lặp lại ý vừa nói, "không phải X mà là Y", bộ ba gượng, bold trang trí ở mọi đầu mục, và mở bài dàn cảnh trước khi vào việc. Cắt chúng làm doc ngắn lại — ngắn thì đỡ chạm trần §8.
 - **Không sửa** nội dung `srs/`, `fsd/`, `api/` — chỉ tham chiếu. `docs/api/` sinh tự động nếu project có pipeline riêng (ProjectRules §1).
 - **Không bịa** số liệu test (§7).
-- `task.agent.json` **không** có trường token/usage.
+- `task.agent.json` **không** có trường token/usage (dữ liệu vendor). Trường `telemetry` (stage · tier · model · thời gian) thì **có** — coordinator ghi khi dispatch, `--calibrate` đọc để đối chiếu chi phí với kết quả ([`../Agents.md` §5.6](../Agents.md)).
 
 ---
 
@@ -105,7 +105,9 @@ Khi chuyển sang `done`: điền `outcome` ([`../Agents.md` §5.6](../Agents.md
 
 > **Kiểm tra tự động:** `node scripts/validate-tasks.mjs` enforce các trần dưới đây + schema `task.agent.json` + file bắt buộc theo stage + evidence Gate 4. Dùng trong pre-commit/CI; chi tiết: [`../tasks/README.md` §6](../tasks/README.md).
 
-**Trần kích thước artifact** (đếm theo dòng; vượt trần = gate FAIL của stage đó):
+**Trần kích thước artifact** (đếm theo dòng; vượt trần = gate FAIL của stage đó).
+
+> **Task bị gate trả về:** doc là append-only (§5) và resume phải append `## Cập Nhật — …` ([`../HarnessSetup.md` §7](../HarnessSetup.md)) — nên sau hai vòng, cap cả file thành bẫy đóng: vượt trần mà không được phép cắt. Vì vậy khi doc đã có block `## Cập Nhật`, trần áp cho **block mới nhất** (phần role hiện tại viết, và là phần duy nhất nó được quyền rút gọn); tổng file vượt trần chỉ còn là **warning** nhắc tách appendix.
 
 | Artifact | Trần | Khi vượt |
 | --- | --- | --- |

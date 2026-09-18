@@ -26,14 +26,20 @@ Role này tồn tại để **chứng minh điều ngược lại**: giả đị
 
 ### 3.1. Đối chiếu khai báo với thực tế
 
+> **Code implementer viết CHƯA commit** — harness chỉ cho user commit ([`../Instructions.md` §1](../Instructions.md)). Nên `<base>...HEAD` (ba chấm) ra **rỗng**: nó so hai commit, mà chưa có commit nào. Dùng `merge-base` hai chấm để phủ working tree, và `status --porcelain` để bắt file mới — file untracked hoàn toàn ngoài scope **không** xuất hiện trong `git diff` dưới bất kỳ dạng nào.
+
 ```bash
-git diff --stat <base>...HEAD      # base = nhánh đích ở ProjectRules §3
-git diff <base>...HEAD -- <file ngoài danh sách Gate 3>
+BASE=$(git merge-base origin/<nhánh-đích> HEAD)   # nhánh đích ở ProjectRules §3
+git diff --stat $BASE                              # đã commit + chưa commit
+git status --porcelain                             # file mới (?? = untracked)
+git diff $BASE -- <file ngoài danh sách Gate 3>
 ```
+
+Ba lệnh, không phải một. Bỏ `status --porcelain` là bỏ đúng ca nguy hiểm nhất: một file mới toanh nằm ngoài danh sách Gate 3.
 
 | Kiểm | Finding khi |
 | --- | --- |
-| File trong diff vs danh sách `03` | có file ngoài danh sách mà `06` không khai ở Plan Deviations |
+| File trong diff **+ file untracked** vs danh sách `03` | có file ngoài danh sách mà `06` không khai ở Plan Deviations |
 | AC trong `02` vs bảng AC coverage `08` | thiếu dòng, hoặc `manual` không có ở bảng AC-manual của `03` |
 | Lệnh trong `08` vs lệnh ProjectRules §7 | lệnh không nằm trong danh sách hợp lệ, hoặc là watch-mode |
 | Amendment log | AC bị code làm lệch mà `02` không có dòng amendment ([SharedRules §9.2](./SharedRules.md)) |
@@ -48,8 +54,23 @@ Test xanh chưa chứng minh AC. Với mỗi AC, mở đúng test được khai 
 
 - Test có **assert trạng thái sau hành động**, hay chỉ assert element tồn tại?
 - Mock có nuốt mất chính thứ AC nói không (mock luôn hàm đang test)?
-- Đổi một hằng số trong code — test có đỏ không? Không đỏ = test không bảo vệ gì.
+- Đổi một hằng số trong code — test có đỏ không? Không đỏ = test không bảo vệ gì. **Cách làm hợp lệ:** §3.3.1 — không sửa tree của implementer.
 - Test có `skip`/`only`/`todo` nào mới xuất hiện trong diff không?
+
+#### 3.3.1. Mutation check — làm ở worktree vứt đi
+
+§2 cấm role này sửa code, [`../Instructions.md` §1](../Instructions.md) cấm `git stash`/`restore`/`checkout --`. Nên phép thử "đổi hằng số xem test có đỏ không" **không** làm trên tree của implementer — làm ở một worktree detached, xong thì xoá:
+
+```bash
+BASE=$(git rev-parse HEAD)
+git worktree add --detach /tmp/adv-$$ "$BASE"     # bản sao rời, tree của implementer không bị đụng
+# sửa hằng số trong /tmp/adv-$$, chạy đúng lệnh test của AC đó
+git worktree remove --force /tmp/adv-$$           # chỉ xoá worktree MÌNH vừa tạo
+```
+
+Ba điều kiện để an toàn: worktree do chính role này tạo, `--detach` (không chiếm nhánh), và `remove` đúng đường dẫn vừa tạo. Không đụng worktree nào khác.
+
+> Code chưa commit thì `worktree add` không mang nó theo. Việc cần kiểm là **test có bắt được thay đổi hành vi không** — chạy được trên bản `HEAD` + copy tay đúng file đang xét là đủ. Không copy được (build state, env) → ghi vào "Giới hạn của lượt kiểm này", **đừng** khai là đã thử.
 
 ### 3.4. Tìm thứ AC không nói
 
