@@ -513,6 +513,13 @@ if (args[0] === "--self-test") {
     ])
       if (!errs.some((e) => re.test(e)))
         fail(`task \`reviewing\` rỗng mà validator không báo: ${what} — gate đó rỗng ruột trên bản cài ra`);
+    // telemetry rỗng ở `reviewing` = không bao giờ đo được task này tốn gì, và
+    // đến đây thì mọi dispatch đã chạy xong — không còn lúc nào để bắt nữa.
+    // Warning chứ không error (CLI không phải cái nào cũng báo token), nhưng
+    // phải được NÓI RA, nếu không thì schema có field mà không ai điền.
+    if (!mine.warnings.some((w) => /telemetry is empty/.test(w)))
+      fail("task ở `reviewing` không có telemetry mà validator im lặng — `--calibrate`/`--cost` sẽ không bao giờ có dữ liệu và không ai biết vì sao");
+
     // Xoá ĐÚNG folder vừa dựng: brokenTask() cũng nằm trong sprint-1, và các
     // check phía sau cần nó để chứng minh hook chặn được commit hỏng.
     rmSync(dir, { recursive: true, force: true });

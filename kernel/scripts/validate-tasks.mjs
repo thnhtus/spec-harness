@@ -2190,6 +2190,23 @@ for (const { sprint, task, path } of folders) {
   for (const [stage, n] of Object.entries(data.attempts ?? {}))
     if (n >= 3) warnings.push(`stage "${stage}" ran ${n}× — gate kept sending it back; worth a look`);
 
+  // A schema field nobody fills is a field that does not exist. `telemetry` is
+  // the only record of what a task COST, and by the time it reaches `reviewing`
+  // every dispatch that could have been recorded has already happened -- there
+  // is no later moment to catch it.
+  //
+  // Warning, not error: `tier`/`model` need a CLI that routes per subagent, and
+  // `inputTokens` needs one that reports usage. Neither is universal, so a task
+  // with no telemetry is incomplete, not invalid. But it is the reason
+  // `--calibrate` and `--cost` have nothing to say, and that should be said out
+  // loud once per task rather than discovered a quarter later.
+  if (data.currentStage === "reviewing" && !(data.telemetry ?? []).length)
+    warnings.push(
+      'telemetry is empty at stage "reviewing" — the coordinator appends one entry per dispatch ' +
+        "(/start-task step 6). Without it `--calibrate` cannot weigh the strong tier against outcome, " +
+        "and `--cost` sees only the static rule floor.",
+    );
+
   // 2d. Context bleed: the /clear-between-stages rule, with something behind it.
   {
     const bleed = contextBleed(data.telemetry);
