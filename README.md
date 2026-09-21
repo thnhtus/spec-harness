@@ -205,6 +205,8 @@ Ba thứ hay sai:
 
 Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, và `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè).
 
+**Phát hành phiên bản mới** (chỉ maintainer): `npm version patch && git push --follow-tags`. Workflow `.github/workflows/publish.yml` bắt tag `v*`, kiểm tag khớp `package.json`, chạy self-test rồi `npm publish`. Không có `NPM_TOKEN` — dùng Trusted Publishing (OIDC), token do npm đổi trực tiếp với GitHub nên không có secret nào để rò, và 2FA không hỏi OTP. Bật một lần ở npmjs.com → package → Settings → Trusted Publisher.
+
 **Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.mjs`, không phải chạy lại `/init-project-rules`.
 
 **Có cần `git init` không?** Không bắt buộc — harness cài được vào thư mục thường, validator vẫn chạy, `--self-check` vẫn xanh. Nhưng thiếu git thì mất ba thứ:

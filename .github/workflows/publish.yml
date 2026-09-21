@@ -1,0 +1,45 @@
+# Publish lên npm khi push tag v*.
+#
+# Không có NPM_TOKEN nào ở đây: dùng Trusted Publishing (OIDC). npm đổi token
+# ngắn hạn trực tiếp với GitHub, nên không có secret nào để rò, và 2FA
+# `auth-and-writes` không chặn — OTP chỉ hỏi khi publish từ máy cá nhân.
+#
+# Cần bật một lần trên npmjs.com:
+#   npmjs.com/package/spec-harness → Settings → Trusted Publisher → GitHub Actions
+#   Repository: thnhtus/spec-harness   Workflow: publish.yml
+#
+# Phát hành:  npm version patch && git push --follow-tags
+
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # bắt buộc cho OIDC; thiếu là npm publish từ chối
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing cần npm >= 11.5.1; Node 20 ship npm 10.
+      - run: npm install -g npm@latest
+
+      # Tag và package.json lệch nhau thì tag trỏ vào một version khác cái vừa
+      # publish — về sau `git checkout v0.1.1` ra đúng cây code của 0.1.2.
+      - name: tag phải khớp package.json version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          [ "$tag" = "$pkg" ] || { echo "✖ tag $tag ≠ package.json $pkg"; exit 1; }
+
+      # prepublishOnly cũng chạy self-test, nhưng lúc đó tarball đã pack xong —
+      # chạy trước để hỏng thì fail sớm, và để log đọc ra là fail ở bước nào.
+      - run: node install.mjs --self-test
+      - run: npm publish
