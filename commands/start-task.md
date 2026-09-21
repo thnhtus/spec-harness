@@ -365,11 +365,17 @@ tier the stage just ran on:
 
 ```json
 { "stage": "implementation", "tier": "strong", "model": "opus", "attempt": 2,
-  "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z",
-  "inputTokens": 21400 }
+  "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z" }
 ```
 
-`inputTokens` = the number the CLI reports after that dispatch (omit it if the CLI reports nothing). This is the only thing that shows **the weight of the harness itself**: the floor of rules every subagent must read is multiplied by every stage, every task — if the kernel bloats, it shows up here, or it shows up nowhere.
+**Record `startedAt`/`endedAt` always; leave `inputTokens` out.** You know the
+timestamps for certain — you dispatched the stage. You do not know the token
+count, and a guessed one is worse than none because `--cost` will print it as
+fact. `scripts/collect-telemetry.mjs` fills it in at step 7 by reading the CLI's
+own session log, matched on cwd + branch + that window. That is the only thing
+that shows **the weight of the harness itself**: the floor of rules every
+subagent must read is multiplied by every stage, every task — if the kernel
+bloats, it shows up here, or it shows up nowhere.
 
 The CLI cannot pick a model per subagent → `"tier": "session-default"`, leave
 `model` empty. Do **not** record token/usage (SharedRules §5 forbids it — that is
@@ -379,6 +385,15 @@ vendor data); the model name + wall-clock is enough for `--calibrate` to answer
 Step 7 (you, no subagent): `node scripts/lease.mjs release "$TASK"` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
 errors (it enforces the AC traceability chain, SharedRules §9).
+
+**Then collect token counts** (Claude Code only; a no-op elsewhere):
+
+```bash
+node scripts/collect-telemetry.mjs "$TASK" --write
+```
+
+It never overwrites a count that is already there, and it writes nothing when
+nothing matches — report what it says rather than filling the gap by hand.
 
 **Then write back to the tracker** — read `harness.config.json` → `tracker.writeBack`:
 

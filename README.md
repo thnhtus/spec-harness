@@ -328,7 +328,17 @@ Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny
 
 **Overhead đọc luật — đo bằng `node scripts/validate-tasks.mjs --cost`.** Mỗi dispatch phải đọc `Instructions.md` + `SharedRules.md` + file role trước khi làm gì; 6 stage ≈ **156 KB/task** sàn, trước cả artifact của chính task. Lệnh in bảng theo stage và so được giữa hai bản kernel. Cố tình đo bằng **byte, không phải token**: tokenisation khác nhau theo vendor và trôi theo phiên bản model, một con số trông chính xác mà lệch 30% còn tệ hơn một tỉ lệ không ai nhầm là hoá đơn.
 
-Nửa còn lại — token thật — cần coordinator ghi `telemetry[].inputTokens` ở mỗi dispatch (`/start-task` step 6). `--cost` in ra khi có, và nói thẳng là **không có** khi chưa ai điền. Chưa đo thì đừng báo ROI.
+Nửa còn lại — token thật — **tự thu được**:
+
+```bash
+node scripts/collect-telemetry.mjs docs/tasks/sprint-1/ABC-1-x --write
+```
+
+Chia việc theo cái mỗi bên biết chắc: coordinator ghi `startedAt`/`endedAt` (nó dispatch, không thể sai), script đọc session log của CLI và điền token vào, khớp theo `cwd` + branch + khoảng thời gian đó. Trước đây coordinator được yêu cầu tự gõ số token — thứ nó không biết, nên nó bỏ trống hoặc bịa, và một con số bịa tệ hơn không có vì `--cost` sẽ in nó ra với vẻ mặt tỉnh bơ.
+
+`inputTokens` và `cacheReadTokens` để **riêng**, không cộng: cache read tính tiền khoảng 1/10 và trong phiên thật nhiều gấp ~80 lần input mới (đo được: 866k vs 66M). Gộp một số thì sai hai bậc độ lớn mà vẫn trông hợp lý.
+
+Chỉ chạy với Claude Code — CLI khác không có log đó thì script thoát 0, không ghi gì. Format `.jsonl` là nội bộ của CLI: mọi lỗi parse **báo to**, không bao giờ ghi 0, vì số 0 trông như task rẻ và sẽ có người tin.
 
 **Tracker write-back — tắt mặc định, bật bằng config.** `tracker.writeBack`: `off` (mặc định, chỉ báo cáo) · `comment` (đăng một comment lên ticket: đường dẫn task doc, branch, chỗ chứa evidence) · `status` (comment **và** chuyển ticket sang `tracker.statusOnReview`). Coordinator gọi qua MCP server `tracker`, **không** qua API vendor: ClickUp/Jira/Linear không chung mô hình status lẫn auth, một client viết ở đây là code không ai test được ngoài tracker của chính maintainer.
 

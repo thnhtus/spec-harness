@@ -125,7 +125,7 @@ function wouldClobber(P) {
   };
   for (const f of readdirSync(join(SRC, "kernel/docs"), { withFileTypes: true }))
     if (f.isFile()) chk(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
-  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs"])
+  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs"])
     chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   return out;
@@ -174,7 +174,7 @@ function installInto(P) {
     if (f.isFile()) over(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
     else cpSync(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name), { recursive: true });
   }
-  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs"])
+  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs"])
     over(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md")))
     cpSync(join(SRC, "agents", f), join(P, ".claude/agents", f));
@@ -319,6 +319,10 @@ if (args[0] === "--self-test") {
   // quay về kiểu dán tay — gate vẫn xanh, chỉ là không còn kiểm được gì.
   if (spawnSync(process.execPath, ["scripts/run-evidence.mjs", "--self-check"],
       { cwd: T, stdio: "ignore" }).status !== 0) fail("run-evidence.mjs thiếu hoặc self-check đỏ");
+  // Không có nó thì telemetry phụ thuộc coordinator nhớ gõ số token vào — và
+  // một con số bịa còn tệ hơn không có, vì `--cost` sẽ in nó ra với vẻ mặt tỉnh bơ.
+  if (spawnSync(process.execPath, ["scripts/collect-telemetry.mjs", "--self-check"],
+      { cwd: T, stdio: "ignore" }).status !== 0) fail("collect-telemetry.mjs thiếu hoặc self-check đỏ");
   if (!existsSync(join(T, ".mcp.json"))) fail("thiếu .mcp.json");
 
   // Lệnh phá working tree phải bị chặn ở tầng permission, không chỉ ở văn bản.
@@ -519,6 +523,20 @@ if (args[0] === "--self-test") {
     // phải được NÓI RA, nếu không thì schema có field mà không ai điền.
     if (!mine.warnings.some((w) => /telemetry is empty/.test(w)))
       fail("task ở `reviewing` không có telemetry mà validator im lặng — `--calibrate`/`--cost` sẽ không bao giờ có dữ liệu và không ai biết vì sao");
+
+    // --cost với task THẬT trên đĩa. Chạy nó lúc 0 task không chứng minh gì: cả
+    // một lỗi TDZ (findTaskFolders đọc ONLY trước khi khai báo) vẫn xanh, vì
+    // vòng lặp chưa chạy tới dòng đó. Bug đó có thật, và đây là ca bắt được nó.
+    {
+      const c = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--cost", "--json"],
+        { cwd: T, encoding: "utf8" });
+      if (c.status !== 0) fail(`--cost đỏ khi có task thật: ${(c.stderr || "").split("\n")[0]}`);
+      let cost; try { cost = JSON.parse(c.stdout); }
+      catch { fail("--cost --json không ra JSON parse được"); }
+      if (!(cost.floor?.perTaskBytes > 0) || !(cost.floor?.stages > 0))
+        fail("--cost báo sàn 0 — đọc nhầm layout docs/ thì số 0 trông như tin mừng");
+      if (cost.tasksScanned < 1) fail("--cost không thấy task nào dù task tồn tại trên đĩa");
+    }
 
     // Xoá ĐÚNG folder vừa dựng: brokenTask() cũng nằm trong sprint-1, và các
     // check phía sau cần nó để chứng minh hook chặn được commit hỏng.

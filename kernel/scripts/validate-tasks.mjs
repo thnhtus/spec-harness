@@ -1733,7 +1733,9 @@ if (args.has("--cost")) {
   // Real dispatches, if anyone recorded them. This is the half that needs a
   // human to have filled telemetry in -- report it as measured or as absent,
   // never estimate it.
-  const tasks = findTaskFolders().map(readTask).filter(Boolean);
+  // null, not the default: --cost reports the whole project, and --staged
+  // narrowing it would make the same repo report different costs per commit.
+  const tasks = findTaskFolders(null).map(readTask).filter(Boolean);
   const tel = tasks.flatMap((t) => t.telemetry ?? []).filter((e) => typeof e.inputTokens === "number");
   const withTel = tasks.filter((t) => (t.telemetry ?? []).some((e) => typeof e.inputTokens === "number")).length;
 
@@ -1742,6 +1744,10 @@ if (args.has("--cost")) {
       floor: { baseBytes: fl.baseBytes, perTaskBytes: fl.perTask, stages: fl.stages, byStage: fl.byStage },
       measured: tel.length
         ? { dispatches: tel.length, tasks: withTel, totalInputTokens: tel.reduce((n, e) => n + e.inputTokens, 0),
+            // Kept apart, never summed in: cache reads bill at roughly a tenth
+            // and outnumber fresh input ~80:1, so one combined figure is wrong
+            // by two orders of magnitude while looking entirely reasonable.
+            totalCacheReadTokens: tel.reduce((n, e) => n + (e.cacheReadTokens ?? 0), 0),
             medianPerDispatch: tel.map((e) => e.inputTokens).sort((a, b) => a - b)[Math.floor(tel.length / 2)] }
         : null,
       tasksScanned: tasks.length,
@@ -1761,14 +1767,20 @@ if (args.has("--cost")) {
 
   console.log(`\n── measured (telemetry[].inputTokens) ──`);
   if (!tel.length)
-    console.log(`  none in ${tasks.length} task(s). The coordinator appends it at each dispatch\n` +
-                `  (/start-task step 6). Without it the floor above is the only cost signal,\n` +
-                `  and "the strong tier is worth it" (Agents.md §5.3) stays unfalsifiable.`);
+    console.log(`  none in ${tasks.length} task(s). The coordinator records startedAt/endedAt per\n` +
+                `  dispatch (/start-task step 6) and \`scripts/collect-telemetry.mjs <task> --write\`\n` +
+                `  fills the counts in from the CLI's session log. Without it the floor above is\n` +
+                `  the only cost signal, and "the strong tier is worth it" (Agents.md §5.3)\n` +
+                `  stays unfalsifiable.`);
   else {
     const tot = tel.reduce((n, e) => n + e.inputTokens, 0);
     const sorted = tel.map((e) => e.inputTokens).sort((a, b) => a - b);
     console.log(`  ${tel.length} dispatch(es) across ${withTel} task(s)`);
+    const cache = tel.reduce((n, e) => n + (e.cacheReadTokens ?? 0), 0);
     console.log(`  total ${tot.toLocaleString()} input tokens · median ${sorted[Math.floor(tel.length / 2)].toLocaleString()}/dispatch`);
+    // Separate line, not a subtotal: cache reads bill at roughly a tenth, and
+    // folding them in makes the number ~80x larger and no less believable.
+    if (cache) console.log(`  plus ${cache.toLocaleString()} cache-read tokens (billed at roughly a tenth — priced apart, not added in)`);
     if (withTel < (CFG.calibrateMinSample ?? 5))
       console.log(`  ⚠ ${withTel} task(s) < ${CFG.calibrateMinSample ?? 5} — too few to conclude anything about cost`);
   }
@@ -2077,7 +2089,11 @@ function taskKeyOf(arg) {
   return parts.slice(-2).join("/");
 }
 
-function findTaskFolders() {
+// `only` defaults to the module-level ONLY, but as a DEFAULT PARAMETER, not a
+// closure read: the default is evaluated only when the argument is omitted, so
+// an early caller (--cost, which runs before ONLY is initialised and wants every
+// task regardless of --staged) can pass null and not trip the temporal dead zone.
+function findTaskFolders(only = ONLY) {
   const folders = [];
   if (!existsSync(TASKS_DIR)) return folders;
   for (const sprint of readdirSync(TASKS_DIR)) {
@@ -2086,7 +2102,7 @@ function findTaskFolders() {
     for (const task of readdirSync(sprintPath)) {
       const taskPath = join(sprintPath, task);
       if (!statSync(taskPath).isDirectory()) continue;
-      if (ONLY && !ONLY.has(`${sprint}/${task}`)) continue;
+      if (only && !only.has(`${sprint}/${task}`)) continue;
       folders.push({ sprint, task, path: taskPath });
     }
   }
@@ -2267,6 +2283,22 @@ for (const { sprint, task, path } of folders) {
         "(/start-task step 6). Without it `--calibrate` cannot weigh the strong tier against outcome, " +
         "and `--cost` sees only the static rule floor.",
     );
+
+  // An entry without a window can never be costed: collect-telemetry.mjs matches
+  // on cwd + branch + [startedAt, endedAt], and refuses to attribute anything
+  // without one rather than billing a whole session to one stage. Say so while
+  // the run is still fresh enough to fix.
+  {
+    const blind = (data.telemetry ?? []).filter(
+      (e) => typeof e?.inputTokens !== "number" && !(e?.startedAt && e?.endedAt),
+    );
+    if (blind.length)
+      warnings.push(
+        `${blind.length} telemetry entr${blind.length === 1 ? "y has" : "ies have"} no startedAt/endedAt ` +
+          `(${blind.map((e) => e.stage ?? "?").join(", ")}) — scripts/collect-telemetry.mjs matches on that window, ` +
+          "so their cost can never be recovered",
+      );
+  }
 
   // 2d. Context bleed: the /clear-between-stages rule, with something behind it.
   {
