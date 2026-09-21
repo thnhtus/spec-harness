@@ -33,6 +33,7 @@ import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -515,6 +516,10 @@ const ATTEST_MARK = "--- spec-harness attestation ---";
 // --self-check đòi khai tường minh; chỗ này chỉ là fallback cho đường chạy khác.
 const EVIDENCE_MODE = CFG.evidenceMode ?? "legacy";
 
+// Phải giữ được CẢ output đứng trước attestation, không chỉ các field: outputHash
+// là lời khai "attestation này thuộc về output kia", và kiểm nó thì phải có "kia".
+const hashOutput = (s) => createHash("sha256").update(s, "utf8").digest("hex").slice(0, 16);
+
 function attestationsIn(text) {
   const out = [];
   for (const m of text.matchAll(/--- spec-harness attestation ---\n([\s\S]*?)(?:```|$)/g)) {
@@ -524,11 +529,21 @@ function attestationsIn(text) {
     };
     const code = get("exitCode");
     if (code === null) continue;
+    // Thân block = từ sau dòng mở fence tới ngay trước marker. Không có fence mở
+    // (khối dán trần) thì body = null → không kiểm hash được, và điều đó tự nó
+    // đã bị durationMs/thiếu-field bắt.
+    const before = text.slice(0, m.index);
+    const fenceAt = before.lastIndexOf("```");
+    const body = fenceAt === -1
+      ? null
+      : before.slice(before.indexOf("\n", fenceAt) + 1, before.length - 1);
     out.push({
       exitCode: Number(code),
       durationMs: Number(get("durationMs") ?? NaN),
       gitRev: get("gitRev"),
       startedAt: get("startedAt"),
+      outputHash: get("outputHash"),
+      body,
     });
   }
   return out;
@@ -552,6 +567,15 @@ function attestationDefects(text, label, mode = EVIDENCE_MODE) {
     // khối được gõ tay thiếu field. Cả hai đều là attestation không đáng tin.
     if (!Number.isFinite(a.durationMs) || a.durationMs <= 0)
       d.push(`${label}: attestation có durationMs không hợp lệ ("${a.durationMs}") — khối này không do run-evidence.mjs sinh ra`);
+    // outputHash buộc attestation vào output nằm cạnh nó. Thiếu field hoặc lệch
+    // hash = hai ca bịa rẻ nhất: chép khối từ task khác, hoặc chạy thật rồi sửa
+    // output cho đẹp. Cả hai đều qua được mọi kiểm tra theo field.
+    if (a.body !== null) {
+      if (!a.outputHash)
+        d.push(`${label}: attestation thiếu outputHash — khối cũ hoặc gõ tay; chạy lại qua \`node scripts/run-evidence.mjs\``);
+      else if (hashOutput(a.body) !== a.outputHash)
+        d.push(`${label}: outputHash không khớp output trong fence — output đã bị sửa sau khi chạy, hoặc attestation chép từ nơi khác`);
+    }
   }
   return d;
 }
@@ -1069,11 +1093,25 @@ if (args.has("--self-check")) {
   // Đây là ca wrapper sinh ra để bắt, và là ca mọi kiểm-bằng-regex đều thua:
   // output in ra "passed" nhưng lệnh exit khác 0.
   {
-    const att = (code, dur = 12, at = "2026-09-18T09:00:00Z") =>
-      ["```", "$ " + sample, "Tests: 12 passed", ATTEST_MARK, `exitCode: ${code}`,
-       `durationMs: ${dur}`, "gitRev: a3f9c1e", `startedAt: ${at}`, "```"].join("\n");
+    // Dựng block y như run-evidence.mjs dựng, gồm cả outputHash — nếu không thì
+    // mọi ca dưới đây chỉ test được vế "thiếu hash", không test được vế nào khác.
+    const att = (code, dur = 12, at = "2026-09-18T09:00:00Z", out = "Tests: 12 passed") => {
+      const body = `$ ${sample}\n${out}`;
+      return ["```", body, ATTEST_MARK, `exitCode: ${code}`, `durationMs: ${dur}`,
+              "gitRev: a3f9c1e", `startedAt: ${at}`, `outputHash: ${hashOutput(body)}`, "```"].join("\n");
+    };
 
     assert.deepEqual(attestationDefects(att(0), "08"), [], "attestation exit 0 là sạch");
+    // outputHash: hai ca bịa rẻ nhất mà kiểm-theo-field cho qua hết.
+    assert.ok(
+      attestationDefects(att(0).replace("Tests: 12 passed", "Tests: 99 passed"), "08")
+        .some((d) => /outputHash không khớp/.test(d)),
+      "sửa output sau khi chạy mà giữ attestation phải bị bắt",
+    );
+    assert.ok(
+      attestationDefects(att(0).replace(/outputHash: .+/, ""), "08").some((d) => /thiếu outputHash/.test(d)),
+      "attestation không có outputHash là khối gõ tay hoặc bản cũ",
+    );
     assert.ok(
       attestationDefects(att(1), "08").some((d) => /exitCode 1/.test(d)),
       "in ra passed mà exitCode 1 phải bị bắt — regex không bao giờ thấy được điều này",

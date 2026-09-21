@@ -273,7 +273,7 @@ Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là g
 Những thứ validator bắt mà con người hay bỏ sót:
 
 - **AC rơi giữa đường** — `AC-04` có trong review nhưng không ai đưa vào plan. Bắt **tại Gate 3**, không đợi tới lúc review: mỗi đích trong `acTrace.reachedIn` kiểm ngay khi stage của nó tới, nên implementer không code xong rồi mới biết plan thiếu AC.
-- **Evidence giả** — `08` viết "mọi thứ đều pass" nhưng không có lệnh nào được chạy. Phải có **cả** lệnh **và** kết quả, và kết quả phải nằm **trong code fence**: chữ "passed" ở ô *Expected* của bảng là kế hoạch, không phải bằng chứng.
+- **Evidence giả** — `08` viết "mọi thứ đều pass" nhưng không có lệnh nào được chạy. Ở `evidenceMode: "attested"` thì mạnh hơn: evidence phải do `run-evidence.mjs` sinh, và `outputHash` buộc attestation vào đúng output cạnh nó — chép khối từ task khác hay sửa output sau khi chạy đều lệch hash. Phải có **cả** lệnh **và** kết quả, và kết quả phải nằm **trong code fence**: chữ "passed" ở ô *Expected* của bảng là kế hoạch, không phải bằng chứng.
 - **Không có AC nào** — task đi qua `fsd_review` mà `02` không khai AC nào thì cả chuỗi truy vết thành vô nghĩa.
 - **Gate 5 rỗng ruột** — `09` tồn tại là chưa đủ: phải có verdict và output **adversary tự chạy**, không phải bản chép từ `08`.
 - **Template chưa điền** — bản copy nguyên khuôn không được phép thoả mãn traceability (đó là lý do placeholder dùng `AC-nn`, và self-check có regression test cho đúng điều này).

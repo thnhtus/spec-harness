@@ -18,8 +18,22 @@
 
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readFileSync, existsSync } from "node:fs";
+import { createHash } from "node:crypto";
 
 export const MARK = "--- spec-harness attestation ---";
+
+// outputHash buộc attestation vào ĐÚNG output nằm cạnh nó.
+//
+// Không có nó, hai cách bịa rẻ nhất đều lọt: (1) chép nguyên khối attestation
+// từ task khác dán xuống dưới output tự viết, (2) chạy thật rồi sửa output
+// trong fence cho đẹp mà giữ nguyên attestation. Cả hai đều "có attestation
+// hợp lệ" với mọi kiểm tra theo field.
+//
+// Đây KHÔNG phải chữ ký: hàm hash công khai, một agent chịu khó vẫn tự tính
+// được. Nó đóng đúng hai lỗ trên — hai lỗ mà một agent lười sẽ rơi vào — và
+// để lại thứ adversary đối chiếu được bằng một lệnh. Chống được kẻ cố ý thì
+// phải có máy chủ ký, và đó là cái giá sai cho một harness chạy trên máy dev.
+export const hashOutput = (s) => createHash("sha256").update(s, "utf8").digest("hex").slice(0, 16);
 
 // Thứ tự cố định: validator so field theo tên, nhưng người đọc diff thì so theo
 // dòng — giữ ổn định để diff hai lần chạy chỉ hiện cái thật sự đổi.
@@ -30,6 +44,7 @@ export function renderAttestation(a) {
     `durationMs: ${a.durationMs}`,
     `gitRev: ${a.gitRev}`,
     `startedAt: ${a.startedAt}`,
+    `outputHash: ${a.outputHash}`,
   ].join("\n");
 }
 
@@ -48,6 +63,7 @@ export function parseAttestation(text) {
     durationMs: Number(get("durationMs") ?? NaN),
     gitRev: get("gitRev"),
     startedAt: get("startedAt"),
+    outputHash: get("outputHash"),
   };
 }
 
@@ -67,12 +83,20 @@ export function runEvidence(argv) {
   // Lệnh không tồn tại: spawn lỗi, status null. Đó là exit khác 0 về mặt ý nghĩa
   // — coi là 0 thì một lệnh gõ sai tên sẽ thành bằng chứng xanh.
   const exitCode = r.error ? 127 : (r.status ?? 1);
+  // Hash phủ lên ĐÚNG hai dòng người ta hay sửa: lệnh đã chạy và output của nó.
+  const cmdLine = `$ ${argv.join(" ")}`;
+  const body = `${cmdLine}\n${out.trimEnd()}`;
   return {
     block: [
       "```",
-      `$ ${argv.join(" ")}`,
-      out.trimEnd(),
-      renderAttestation({ exitCode, durationMs: Date.now() - t0, gitRev: gitRev(), startedAt: started.toISOString() }),
+      body,
+      renderAttestation({
+        exitCode,
+        durationMs: Date.now() - t0,
+        gitRev: gitRev(),
+        startedAt: started.toISOString(),
+        outputHash: hashOutput(body),
+      }),
       "```",
     ].join("\n"),
     exitCode,
@@ -104,6 +128,22 @@ if (process.argv[2] === "--self-check") {
   // Chạy lại append vào cùng file: phải đọc được block MỚI NHẤT, không phải cũ.
   const two = `${runEvidence([process.execPath, "-e", "process.exit(1)"]).block}\n${ok.block}`;
   assert.equal(parseAttestation(two).exitCode, 0, "đọc attestation mới nhất, không phải cái đầu tiên");
+
+  // outputHash buộc attestation vào output NẰM CẠNH NÓ. Hai ca dưới là đúng hai
+  // cách bịa rẻ nhất mà mọi kiểm tra theo field đều cho qua.
+  const bodyOf = (blk) => {
+    const lines = blk.split("\n");
+    return lines.slice(1, lines.indexOf(MARK)).join("\n");
+  };
+  assert.equal(hashOutput(bodyOf(ok.block)), a.outputHash, "block do wrapper sinh ra thì hash khớp");
+  // (1) chạy thật rồi sửa output trong fence cho đẹp, giữ nguyên attestation
+  const tampered = ok.block.replace("Tests: 4 passed", "Tests: 999 passed");
+  assert.notEqual(hashOutput(bodyOf(tampered)), parseAttestation(tampered).outputHash,
+    "sửa output mà giữ attestation phải lệch hash");
+  // (2) chép attestation của task khác dán dưới output tự viết
+  const stolen = ["```", "$ npm run test:all", "Tests: 50 passed", renderAttestation(a), "```"].join("\n");
+  assert.notEqual(hashOutput(bodyOf(stolen)), parseAttestation(stolen).outputHash,
+    "attestation chép từ nơi khác phải lệch hash");
 
   console.log("✅ run-evidence self-check passed");
   process.exit(0);

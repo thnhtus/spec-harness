@@ -91,7 +91,7 @@ Ràng buộc xuyên suốt:
 node scripts/run-evidence.mjs --append <task-folder>/08-Test-Evidence.md -- <lệnh>
 ```
 
-Wrapper chạy lệnh thật rồi đóng dấu `exitCode`, `durationMs`, `gitRev`, `startedAt` vào cuối block. Đó là khác biệt giữa *"văn bản này trông giống output test"* và *"tiến trình này đã chạy và exit 0"* — câu đầu một agent chưa chạy gì vẫn viết ra được, câu sau thì không.
+Wrapper chạy lệnh thật rồi đóng dấu `exitCode`, `durationMs`, `gitRev`, `startedAt`, `outputHash` vào cuối block. `outputHash` buộc attestation vào **đúng output nằm cạnh nó**: chép khối từ task khác, hoặc chạy thật rồi sửa output cho đẹp, đều làm hash lệch và validator chặn. Đó là khác biệt giữa *"văn bản này trông giống output test"* và *"tiến trình này đã chạy và exit 0"* — câu đầu một agent chưa chạy gì vẫn viết ra được, câu sau thì không.
 
 Ca nó bắt được mà mọi kiểm-bằng-chữ đều thua: lệnh **in ra `Tests: 12 passed` nhưng exit 1**. Đọc chữ thì xanh; đọc exit code thì đỏ.
 
