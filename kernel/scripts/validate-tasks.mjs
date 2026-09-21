@@ -1506,6 +1506,19 @@ if (args.has("--self-check")) {
     assert.ok(/^(Bash|Read|Write|Edit|WebFetch)\(.+\)$/.test(r),
       `REQUIRED_DENY entry ${JSON.stringify(r)} is not a whole rule — a fragment makes the match ambiguous and the check silently passes on rules that are not there`);
   assert.equal(new Set(REQUIRED_DENY).size, REQUIRED_DENY.length, "REQUIRED_DENY has a duplicate");
+
+  // A vendor name in the kernel schema is a project detail that climbed one
+  // level up -- same bug as `fe-*` roles and a hardcoded doc language, and it
+  // is only ever noticed by the team that uses a different tracker. Config can
+  // change the URL *shape* (tracker.urlPattern); it cannot rename a field.
+  {
+    const sch = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
+    const names = [...Object.keys(sch.properties ?? {}), ...(sch.required ?? [])];
+    for (const n of names)
+      assert.ok(!/clickup|jira|linear|asana|trello/i.test(n),
+        `task.agent.schema.json field ${JSON.stringify(n)} names a specific tracker \u2014 every other team then stores their own URL in a field named after someone else's tool; use tracker.urlPattern for the shape instead`);
+    assert.ok(sch.required?.includes("trackerUrl"), "trackerUrl must stay required \u2014 without it Gate 1 has no requirement source to read");
+  }
   // The reason those four .env rules are in the list at all: `Read(.env)` denies
   // the Read tool, and the agent still has Bash.
   assert.ok(
@@ -1891,8 +1904,8 @@ function findTaskFolders() {
 // the shipped file stays generic and config stays the single source of truth.
 const schema = JSON.parse(readFileSync(SCHEMA_PATH, "utf8"));
 const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-if (CFG.tracker?.urlPattern && schema.properties?.clickupUrl)
-  schema.properties.clickupUrl.pattern = CFG.tracker.urlPattern;
+if (CFG.tracker?.urlPattern && schema.properties?.trackerUrl)
+  schema.properties.trackerUrl.pattern = CFG.tracker.urlPattern;
 // layer: the kernel ships no fixed value — a FE-only project declares ["frontend"],
 // a BE or monorepo project declares its own. Without this the schema would reject
 // every non-frontend task.
@@ -1938,6 +1951,19 @@ for (const { sprint, task, path } of folders) {
     );
     results.push({ folder: folderRel, errors, warnings });
     continue;
+  }
+
+  // The field was called `clickupUrl` until 0.1.2 -- a vendor name baked into
+  // the kernel schema, the same class of leak as `fe-*` roles and a hardcoded
+  // doc language. Renaming it outright would fail every task file already on
+  // disk, so accept the old name for one version and say so once per task.
+  // Delete this block (and the alias) in 0.2.
+  if (data.clickupUrl !== undefined && data.trackerUrl === undefined) {
+    data.trackerUrl = data.clickupUrl;
+    warnings.push(
+      'task.agent.json uses `clickupUrl`, renamed to `trackerUrl` in 0.1.2 \u2014 ' +
+        'still accepted, but dropped in 0.2. Rename the field (the value is unchanged).',
+    );
   }
 
   // 1. Schema

@@ -7,7 +7,7 @@
 | Field | Value |
 | --- | --- |
 | Task ID | `{taskId}` |
-| Task URL | {clickupUrl} |
+| Task URL | {trackerUrl} |
 | Task name | {taskName} |
 | Sprint | {sprintNumber} |
 | Repo | <repo> |
@@ -22,7 +22,7 @@
 
 | Source | Link / ID | Note |
 | --- | --- | --- |
-| Tracker task | {clickupUrl} | the requirement source |
+| Tracker task | {trackerUrl} | the requirement source |
 | Design tool | unavailable | fill in if a design exists |
 | Related SRS | `../../../srs/…` | the relevant module |
 | Related FSD | `../../../fsd/…` | the relevant screen / node |

@@ -19,4 +19,4 @@ node scripts/validate-tasks.mjs --self-check
 
 Nó fail nếu config tự mâu thuẫn (stage không khớp `requiredAtStage`, routing trỏ role không tồn tại, `evidenceSampleCommand` không khớp pattern, `docsPath` regex sinh ra lại từ chối chính folder hợp lệ). Config sai kiểu đó khiến gate im lặng no-op — fail sớm rẻ hơn nhiều.
 
-> Trường `clickupUrl` trong `task.agent.json` giữ tên cũ vì lý do lịch sử — hình dạng URL lấy từ `tracker.urlPattern`, nên Linear/Jira/GitHub Issues đều dùng được mà không phải đổi dữ liệu task đã có.
+> Trường trong `task.agent.json` tên là `trackerUrl`; hình dạng URL lấy từ `tracker.urlPattern`, nên Linear/Jira/GitHub Issues đều dùng được. Task cũ ghi `clickupUrl` vẫn chạy (validator đổi tên trong bộ nhớ và cảnh báo) — hết hỗ trợ ở 0.2.

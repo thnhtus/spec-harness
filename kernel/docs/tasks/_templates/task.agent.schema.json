@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spec-harness/kernel/task.agent.schema.json",
   "title": "task.agent.json — spec-harness task state",
-  "description": "Machine-readable state for one ClickUp task. Normative field list: docs/agents/SharedRules.md §6.",
+  "description": "Machine-readable state for one tracker task. Normative field list: docs/agents/SharedRules.md §6.",
   "type": "object",
   "additionalProperties": true,
   "required": [
     "taskId",
     "taskName",
-    "clickupUrl",
+    "trackerUrl",
     "repoName",
     "sprintNumber",
     "developer",
@@ -27,15 +27,15 @@
     "taskId": {
       "type": "string",
       "minLength": 1,
-      "description": "ClickUp task id, e.g. 86d2x6jc0"
+      "description": "Tracker task id, e.g. 86d2x6jc0"
     },
     "taskName": {
       "type": "string",
       "minLength": 1
     },
-    "clickupUrl": {
+    "trackerUrl": {
       "type": "string",
-      "$comment": "Tracker task URL. Field name is historical (ClickUp); the URL shape is injected from harness.config.json → tracker.urlPattern, so any tracker works without renaming existing task data."
+      "$comment": "Tracker task URL. The shape is injected from harness.config.json → tracker.urlPattern, so any tracker works. `clickupUrl` is accepted as a deprecated alias for one version: the validator renames it in memory and warns."
     },
     "repoName": {
       "type": "string",
