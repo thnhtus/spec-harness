@@ -340,6 +340,67 @@ function deriveComplexity(vector) {
   return { effort, label: RANK[Math.max(RANK.indexOf(base), RANK.indexOf(riskFloor))] };
 }
 
+// The vector is only as good as what it was scored from. Nothing above checks
+// that: `scope: 0` derives a label just as validly whether it came from `rg -l`
+// or from a feeling, and the cheapest failure in this harness is a vector scored
+// from the task description alone — `uncertainty` guessed low is what produces
+// `fsd_review` retries, and rework costs more than every model decision combined.
+//
+// So each soft dimension must name the count it came from. These are the only
+// two directions that are actually derivable (a count cannot tell you e2e is
+// needed, so `testing: 2` stays the agent's call):
+//   filesTouched == 1  ⇒ scope == 0     · filesTouched > 5 ⇒ scope == 2
+//   existingTests == 0 ⇒ testing >= 1   (nothing covers it yet, by definition)
+// and `questions` makes `uncertainty` answerable: a listed blocker means the
+// requirement is not clear, an empty list means it is. Both directions, because
+// the loophole is symmetric.
+//
+// Second rule, same function: a task big enough to be worth splitting must say
+// it considered splitting -- at BOOTSTRAP, not after `retryBudget` is spent.
+// `status: split` already exists but only as an exit from an exhausted budget,
+// by which point the money is gone. Two `normal` tasks run cheaper than one
+// `high` task that bounces twice.
+const SPLIT_EFFORT = 9;
+
+export function vectorEvidenceDefects(complexity) {
+  const v = complexity?.vector;
+  if (!v) return [];
+  const out = [];
+  const c = complexity.counts ?? {};
+  const num = (k) => (Number.isInteger(c[k]) ? c[k] : null);
+
+  const files = num("filesTouched");
+  if (files === null)
+    out.push("complexity.counts.filesTouched missing — `scope` scored from the task description is the cheapest way to under-estimate a task (Agents.md §5.1)");
+  else if (files === 1 && v.scope !== 0)
+    out.push(`counts.filesTouched=1 but scope=${v.scope} — one file is scope 0`);
+  else if (files > 5 && v.scope !== 2)
+    out.push(`counts.filesTouched=${files} but scope=${v.scope} — more than 5 files is scope 2`);
+
+  const tests = num("existingTests");
+  if (tests === null)
+    out.push("complexity.counts.existingTests missing — `testing` needs to know whether anything covers this code today (Agents.md §5.1)");
+  else if (tests === 0 && (v.testing ?? 0) < 1)
+    out.push("counts.existingTests=0 but testing=0 — nothing covers this yet, so it cannot be 'test sẵn phủ được'");
+
+  const q = complexity.questions;
+  if (!Array.isArray(q))
+    out.push("complexity.questions missing — `uncertainty` is the dimension most often scored low, and the check is concrete: write the list of things you cannot build without knowing (Agents.md §5.1)");
+  else if (q.length === 0 && (v.uncertainty ?? 0) > 0)
+    out.push(`uncertainty=${v.uncertainty} but complexity.questions is empty — name what is unclear or score it 0`);
+  else if (q.length > 0 && (v.uncertainty ?? 0) === 0)
+    out.push(`complexity.questions lists ${q.length} open question(s) but uncertainty=0`);
+
+  const { effort } = deriveComplexity(v);
+  const oversized = effort >= SPLIT_EFFORT || ((v.scope ?? 0) === 2 && (v.uncertainty ?? 0) === 2);
+  if (oversized && !String(complexity.splitEvaluated ?? "").trim())
+    out.push(
+      `effort=${effort} scope=${v.scope} uncertainty=${v.uncertainty} — a task this size must record complexity.splitEvaluated: either the child task IDs, or why it cannot ship in parts (Agents.md §5.1.4)`,
+    );
+
+  return out;
+}
+
 // Which road a task takes: the full harness, or the quick-task / fix-bug escape
 // hatch. That boundary used to be prose ("bug nhỏ", "khi user nói rõ"), so it
 // failed both ways -- overuse turns the harness into scenery, underuse charges
@@ -1073,6 +1134,80 @@ if (args.has("--self-check")) {
     assert.equal(contextBleed(tel(0, 0, 0, 9000)), null, "a zero first reading must not divide into a finding");
   }
 
+  // vector evidence: the vector decides model tier, gate weight and worktree, so
+  // a vector scored from vibes routes real money. Both directions get a case --
+  // demanding counts that contradict the score is as broken as demanding none.
+  {
+    const ok = {
+      vector: { scope: 1, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 1, blastRadius: 0, reversibility: 0 },
+      counts: { filesTouched: 3, existingTests: 0 },
+      questions: [],
+    };
+    const d = (o) => vectorEvidenceDefects(o);
+    assert.deepEqual(d(ok), [], "a fully evidenced vector is silent");
+    assert.deepEqual(d(undefined), [], "no complexity block at all is handled elsewhere (§5.1 warning)");
+    assert.deepEqual(d({ counts: ok.counts, questions: [] }), [], "counts without a vector: nothing to cross-check");
+
+    assert.ok(d({ ...ok, counts: { existingTests: 0 } })[0].includes("filesTouched"), "missing filesTouched is named");
+    assert.ok(d({ ...ok, counts: { filesTouched: 3 } })[0].includes("existingTests"), "missing existingTests is named");
+    assert.ok(d({ vector: ok.vector, counts: ok.counts })[0].includes("questions"), "missing questions is named");
+
+    // counts must actually constrain the score, or they are decoration.
+    assert.ok(
+      d({ ...ok, counts: { filesTouched: 1, existingTests: 0 } }).some((x) => x.includes("one file is scope 0")),
+      "1 file cannot be scope 1",
+    );
+    assert.ok(
+      d({ ...ok, counts: { filesTouched: 9, existingTests: 0 } }).some((x) => x.includes("more than 5 files")),
+      "9 files cannot be scope 1",
+    );
+    assert.deepEqual(
+      d({ vector: { ...ok.vector, scope: 2 }, counts: { filesTouched: 9, existingTests: 0 }, questions: [] }),
+      [],
+      "9 files with scope 2 is consistent",
+    );
+    assert.ok(
+      d({ vector: { ...ok.vector, testing: 0 }, counts: { filesTouched: 3, existingTests: 0 }, questions: [] })
+        .some((x) => x.includes("existingTests=0")),
+      "no test covers it ⇒ testing cannot be 0",
+    );
+    assert.deepEqual(
+      d({ vector: { ...ok.vector, testing: 0 }, counts: { filesTouched: 3, existingTests: 4 }, questions: [] }),
+      [],
+      "existing tests cover it ⇒ testing 0 is fine",
+    );
+
+    // uncertainty is the expensive one, so it is checked in both directions.
+    assert.ok(
+      d({ vector: { ...ok.vector, uncertainty: 2 }, counts: ok.counts, questions: [] })[0].includes("empty"),
+      "uncertainty>0 with no listed question",
+    );
+    assert.ok(
+      d({ ...ok, questions: ["which role sees the button?"] })[0].includes("uncertainty=0"),
+      "a listed blocker contradicts uncertainty 0",
+    );
+
+    // split-before-spend: the point is to fire at bootstrap, not after retries.
+    const big = { scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 1, testing: 1, blastRadius: 1, reversibility: 1 };
+    const bigOk = { vector: big, counts: { filesTouched: 9, existingTests: 0 }, questions: ["q"] };
+    assert.ok(d(bigOk).some((x) => x.includes("splitEvaluated")), "effort 10 must record a split decision");
+    assert.deepEqual(
+      d({ ...bigOk, splitEvaluated: "cannot split: one migration, one deploy" }),
+      [],
+      "an answered split decision clears it",
+    );
+    assert.ok(d({ ...bigOk, splitEvaluated: "   " }).some((x) => x.includes("splitEvaluated")), "blank is not an answer");
+    assert.ok(
+      d({
+        vector: { scope: 2, uncertainty: 2, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 },
+        counts: { filesTouched: 9, existingTests: 0 },
+        questions: ["q"],
+      }).some((x) => x.includes("splitEvaluated")),
+      "wide AND unclear at effort 4 still asks the question",
+    );
+    assert.deepEqual(d(ok), [], "a small task is never asked to split");
+  }
+
   // triage: which road a task takes. The failure this guards is symmetric --
   // overusing the escape hatch makes the harness scenery, underusing it charges
   // 7 stages for a copy change -- so both directions get a case.
@@ -1502,6 +1637,11 @@ for (const { sprint, task, path } of folders) {
       warnings.push(
         `vector scored higher at bootstrap than at triage (${raised.join(", ")}) — the lower score is what decided whether this task needed the harness (§5.1.3)`,
       );
+
+    // Same since-cutoff as outcome/AC trace: tasks started under the harness owe
+    // the evidence, tasks that predate it stay warnings.
+    const sink = outcomeIsBlocking(data) ? errors : warnings;
+    for (const d of vectorEvidenceDefects(data.complexity)) sink.push(d);
   } else if (STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("bootstrap")) {
     warnings.push("complexity.vector missing — taskComplexity is an unchecked guess (Agents.md §5.1)");
   }

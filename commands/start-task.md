@@ -71,8 +71,28 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
    [`docs/Agents.md` §5.1](../../docs/Agents.md), **không** đọc code sâu, không
    sửa gì. Mục tiêu là biết task chạm đâu, không phải hiểu hết.
 
+   Ba chiều phải ra từ **số đo**, không từ mô tả task — ghi lại để điền
+   `complexity.counts` / `complexity.questions` ở step 1 (validator đối chiếu
+   chúng với vector và chặn nếu mâu thuẫn):
+
+   ```bash
+   rg -l '<symbol chính>' <src> | wc -l      # → counts.filesTouched  (1 ⇒ scope 0 · >5 ⇒ scope 2)
+   rg -l '<symbol chính>' <src> -g '*test*'  # → counts.existingTests (0 ⇒ testing ≥ 1)
+   ```
+
+   Chiều thứ ba không có lệnh: viết ra danh sách *"không làm được nếu không biết
+   X"* → `questions[]`. Rỗng ⇒ `uncertainty 0`, có mục ⇒ `≥ 1`. **Chưa đi tìm
+   thì chưa được kết luận rỗng** — đây là chiều bị chấm thấp nhiều nhất, và nó
+   chính là thứ sinh ra `fsd_review` chạy lại.
+
 4. **Tính `taskComplexity`** bằng công thức §5.1.1 (`max(base, riskFloor)`).
    Đừng tự phán nhãn — điền vector, để công thức ra nhãn. Validator kiểm lại.
+
+   `effort ≥ 9`, hoặc `scope 2` kèm `uncertainty 2` → **dừng, hỏi user: tách
+   được thành 2 task ship riêng không?** ([§5.1.4](../../docs/Agents.md)). Tách
+   thì chạy lại step 0 cho từng task con. Không tách được thì ghi lý do vào
+   `complexity.splitEvaluated` — validator chặn nếu để trống. Hỏi ở đây rẻ; hỏi
+   sau khi hết `retryBudget` thì tiền đã đốt xong.
 
 5. **Triage** — task này có cần harness không:
 

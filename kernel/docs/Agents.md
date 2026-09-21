@@ -127,6 +127,18 @@ Quy tắc nhánh (tạo từ `develop` với `--ff-only`, ngoại lệ nhánh us
 
 `effort = tổng` (0–12).
 
+**Chấm từ số đo, không từ mô tả task.** Mô tả task là thứ nói thiếu nhất, và vector chấm từ nó là cách rẻ nhất để ước lượng thấp — mà ước lượng thấp đẻ ra retry, và retry đắt hơn mọi quyết định model cộng lại. Nên ba chiều dễ đo phải đi kèm số, ghi vào `complexity.counts` / `complexity.questions`:
+
+| Chiều | Chạy | Ràng buộc validator enforce |
+| --- | --- | --- |
+| `scope` | `rg -l '<symbol chính>' <src> \| wc -l` → `counts.filesTouched` | `1` ⇒ `scope 0` · `>5` ⇒ `scope 2` |
+| `testing` | đếm test file đang phủ code đó → `counts.existingTests` | `0` ⇒ `testing ≥ 1` |
+| `uncertainty` | viết ra danh sách "không làm được nếu không biết X" → `questions[]` | rỗng ⇒ `uncertainty 0` · có mục ⇒ `uncertainty ≥ 1` |
+
+Ba chiều còn lại (`dependency`, `dataImpact`, `integration`) không có phép đếm nào nói đúng được, nên vẫn là phán đoán — nhưng `note` nên nêu file/contract cụ thể đã thấy.
+
+`uncertainty` là chiều bị chấm thấp nhiều nhất và đắt nhất: nó chính là thứ sinh ra `fsd_review ≥ 2`. Luật: **chưa viết ra được danh sách câu hỏi thì chưa được chấm `uncertainty: 0`** — "rỗng" phải là kết luận sau khi tìm, không phải mặc định.
+
 **Hai chiều rủi ro**, tách riêng vì chúng **không đi cùng kích thước**:
 
 | Chiều | Ý nghĩa | Thang |
@@ -154,12 +166,17 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
 ```json
 "complexity": {
   "vector": { "scope": 2, "uncertainty": 1, "dependency": 2, "dataImpact": 2,
-              "integration": 1, "testing": 3, "blastRadius": 2, "reversibility": 1 },
-  "effort": 9,
+              "integration": 1, "testing": 2, "blastRadius": 2, "reversibility": 1 },
+  "effort": 10,
+  "counts": { "filesTouched": 9, "existingTests": 0 },
+  "questions": ["notification gửi cho role nào khi nhân viên bị gỡ khỏi phòng ban?"],
+  "splitEvaluated": "tách thành ABC-12 (resolver) + ABC-13 (notification) — ship riêng được",
   "assessedAt": "bootstrap",
   "note": "chạm resolver nhân viên + notification; test cần mock queue"
 }
 ```
+
+`counts` và `questions` **không phải chú thích** — validator đối chiếu chúng với vector và chặn nếu mâu thuẫn (`filesTouched: 1` mà `scope: 1`, `questions` rỗng mà `uncertainty: 2`, …). Thiếu chúng cũng là error với task tạo sau `acTrace.since`; task cũ hơn chỉ warning.
 
 `taskComplexity` (trường cũ) vẫn là nơi đọc nhanh; `complexity.vector` là **cơ sở** của nó. Validator tính lại công thức từ vector — lệch với `taskComplexity` là **error**. Đó là chỗ "deterministic" có răng: agent không ghi được vector thấp rồi tuyên bố `high`, hay ngược lại.
 
@@ -173,6 +190,26 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
 Chỉ được **nâng**. Hạ để chạy nhẹ đi là né gate — muốn hạ thì `needs_clarification`, hỏi user.
 
 Vector tăng lên `high` sau khảo sát → stage sau dùng model theo cột `high` (§5.3), và nếu `blastRadius ≥ 3` thì planner nêu ở Risk để user biết trước khi implementer chạy.
+
+### 5.1.4. Tách task **trước** khi đốt budget
+
+Đòn bẩy chi phí lớn nhất không nằm ở chọn model — nằm ở chỗ một task quá to. So sánh thẳng:
+
+| | 1 task `high` | 2 task `normal` |
+| --- | --- | --- |
+| Stage | 7 × tier `strong` ở 3 role | 14 × tier `mid` |
+| Gate 1/2 | đầy đủ + soi kỹ | rút gọn được |
+| Retry | xác suất cao (spec rộng, plan dễ sai chỗ) | mỗi task hẹp, ít bật |
+
+Số stage gấp đôi nhưng tier rẻ hơn và rework ít hơn — tổng thường **rẻ hơn**, và cái rẻ đi rõ nhất là rework.
+
+`status = split` (§5.5) đã có, nhưng nó là lối thoát khi **hết** `retryBudget` — lúc đó tiền đã đốt xong. Nên có thêm một chốt ở bootstrap:
+
+> `effort ≥ 9`, **hoặc** `scope = 2` kèm `uncertainty = 2` → phải điền `complexity.splitEvaluated`.
+
+Hai giá trị hợp lệ: danh sách taskId con (đã tách), hoặc lý do không tách được ("một migration, một lần deploy — không ship riêng được"). Validator chặn nếu để trống. Nó không ép tách — nó ép **trả lời câu hỏi có tách không** vào đúng lúc câu trả lời còn rẻ.
+
+`scope 2 + uncertainty 2` lọt vào dù `effort` chưa tới 9 vì đó là tổ hợp tệ nhất: rộng **và** chưa rõ. Task kiểu đó gần như luôn bật ở `fsd_review` rồi bật tiếp ở `implementation`.
 
 ### 5.2. Độ nặng luồng
 

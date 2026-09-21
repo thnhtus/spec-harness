@@ -192,6 +192,35 @@
           "type": "string",
           "minLength": 1
         },
+        "counts": {
+          "type": "object",
+          "description": "Measured numbers the vector was scored from. The validator cross-checks them against the vector, so they are evidence, not decoration (Agents.md 5.1).",
+          "properties": {
+            "filesTouched": {
+              "type": "integer",
+              "minimum": 0,
+              "$comment": "rg -l '<symbol>' <src> | wc -l. 1 => scope 0, >5 => scope 2."
+            },
+            "existingTests": {
+              "type": "integer",
+              "minimum": 0,
+              "$comment": "Test files already covering the code. 0 => testing >= 1."
+            }
+          }
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Things that cannot be built without an answer. Empty => uncertainty 0; non-empty => uncertainty >= 1. Writing the list is the check."
+        },
+        "splitEvaluated": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Required at effort >= 9, or scope 2 + uncertainty 2: the child task IDs, or why this cannot ship in parts (Agents.md 5.1.4)."
+        },
         "note": {
           "type": "string"
         }
