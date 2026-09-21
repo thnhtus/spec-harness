@@ -256,11 +256,13 @@ taskComplexity = max(base, riskFloor)
 Có một lối thoát — skill `quick-task` / `fix-bug` — và ranh giới của nó cũng là exit code, không phải cảm giác "task này nhỏ":
 
 ```bash
-node scripts/validate-tasks.mjs --triage '<vector>' --branch-type bugfix
+node scripts/validate-tasks.mjs --triage '<vector>' --branch-type bugfix --task-id ABC-1
 # fix-bug → exit 0 · harness → exit 10
 ```
 
 Dùng lại đúng vector và đúng `riskFloor` ở trên, không phát minh ngưỡng thứ hai: không `trivial`, hoặc bất kỳ chiều rủi ro nào ≥ 2 → ra harness. Ranh giới này hỏng được **cả hai chiều**: lạm dụng lối thoát thì harness thành cảnh trí, không dám dùng thì một task đổi copy vẫn ăn 7 stage. Bỏ qua harness vẫn được (`--force "<lý do>"`) — nhưng ghi vào `_triage.log`: bỏ qua là quyết định hợp lệ, bỏ qua không dấu vết thì không.
+
+Vẫn còn một đường vòng: vector do agent chấm, nên chấm `scope: 0` thay vì `1` là verdict thành `quick-task`. Khác với nhãn complexity (validator tính lại từ vector đã lưu), triage chạy **trước** khi có `task.agent.json` nên không có gì để đối chiếu. Nên **mọi** lần triage đều vào `_triage.log` (không chỉ lúc `--force` — ghi mỗi ca đã thú nhận thì bỏ sót đúng ca cần bắt), và vector bootstrap cao hơn vector triage → warning nêu đích danh chiều nào. Nó không làm ai trung thực hơn; nó chuyển việc chấm thấp để né gate từ "lọt" thành "có log" — cùng mức phòng thủ `run-evidence.mjs` đã chọn.
 
 `technical-planner` khảo sát code xong phải đối chiếu lại vector. Chỉ được **nâng** — hạ để chạy nhẹ đi là né gate.
 

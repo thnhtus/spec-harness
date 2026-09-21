@@ -16,7 +16,7 @@ Feature/task chung (không phải bug) → dùng `quick-task` hoặc `/start-tas
 vector 8 chiều (`docs/Agents.md` §5.1) rồi hỏi:
 
 ```bash
-node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type bugfix
+node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type bugfix --task-id <taskId>
 ```
 
 Verdict `harness` (exit 10) → **nói với user**, đừng im lặng chạy tiếp. Đúng

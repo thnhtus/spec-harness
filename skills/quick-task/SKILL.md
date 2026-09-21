@@ -16,7 +16,7 @@ User **chưa** nói vậy mà đưa link ClickUp → dùng `/start-task`.
 (`docs/Agents.md` §5.1) rồi hỏi:
 
 ```bash
-node scripts/validate-tasks.mjs --triage '<vector JSON>'
+node scripts/validate-tasks.mjs --triage '<vector JSON>' --task-id <taskId>
 ```
 
 Verdict `harness` (exit 10) → **nói với user**, đừng im lặng chạy tiếp. Task một

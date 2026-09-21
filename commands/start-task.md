@@ -77,8 +77,11 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
 5. **Triage** — task này có cần harness không:
 
    ```bash
-   node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type <feature|bugfix|hotfix>
+   node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type <feature|bugfix|hotfix> --task-id <taskId>
    ```
+
+   `--task-id` là bắt buộc trên thực tế: thiếu nó thì không ghi `_triage.log`,
+   và vector chấm ở đây không đối chiếu được với vector bootstrap ghi sau đó.
 
    | Exit | Verdict | Làm gì |
    | --- | --- | --- |
@@ -90,9 +93,14 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
    trông nhỏ cỡ nào.
 
    User muốn chạy harness dù verdict là escape hatch → cứ chạy, không cần gì thêm.
-   Ngược lại (verdict `harness` mà user muốn bỏ qua) → `--force "<lý do>"`, nó ghi
-   verdict + vector + lý do vào `_triage.log`. Bỏ qua harness là quyết định hợp
-   lệ; bỏ qua mà không để lại dấu vết thì không.
+   Ngược lại (verdict `harness` mà user muốn bỏ qua) → `--force "<lý do>"`. Bỏ qua
+   harness là quyết định hợp lệ; bỏ qua mà không để lại dấu vết thì không.
+
+   **Chấm thật, đừng chấm để ra kết quả mong muốn.** Mọi lần triage đều vào
+   `_triage.log`, và validator đối chiếu với vector bootstrap: chấm nhẹ ở đây rồi
+   chấm nặng ở bootstrap → warning nêu đích danh chiều nào. Điều chỉnh lên sau
+   khảo sát là bình thường (§5.1.3) — warning chỉ nói rõ: con số thấp hơn là con
+   số đã quyết định task này có cần harness hay không.
 
 Kết quả bước 0 quyết định ba thứ ở bước 1–2 dưới đây.
 

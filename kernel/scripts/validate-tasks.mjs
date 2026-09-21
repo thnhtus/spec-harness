@@ -252,6 +252,36 @@ function handoffBlockCount(memDir, role) {
   return (readFileSync(f, "utf8").match(/^### /gm) ?? []).length;
 }
 
+// The vector triage was answered with, if it left a trace.
+//
+// Triage runs BEFORE task.agent.json exists, so unlike deriveComplexity (which
+// the validator recomputes from the stored vector) nothing could check it. An
+// agent wanting to skip the harness only had to score `scope: 0` instead of 1.
+//
+// This does not make anyone honest. It makes scoring low to dodge the harness
+// leave a trace -- the same level of defence run-evidence.mjs settled on: move
+// it from "slipped through" to "deliberate, and logged".
+export function triageVectorFor(logPath, taskId) {
+  if (!existsSync(logPath)) return null;
+  let found = null;
+  for (const line of readFileSync(logPath, "utf8").split("\n")) {
+    const col = line.split("\t");
+    if (col.length < 5 || col[1] !== taskId) continue;
+    try { found = JSON.parse(col[4]); } catch { /* a corrupt line must not fabricate a finding */ }
+  }
+  return found; // last entry wins: a re-triage supersedes the earlier answer
+}
+
+// Dimensions scored higher at bootstrap than they were at triage. Only the
+// upward direction matters: scoring low is how you dodge the harness, scoring
+// high costs you nothing to gain.
+export function vectorRaisedSince(triaged, bootstrap) {
+  if (!triaged || !bootstrap) return [];
+  return Object.keys(bootstrap)
+    .filter((k) => (bootstrap[k] ?? 0) > (triaged[k] ?? 0))
+    .map((k) => `${k} ${triaged[k] ?? 0}→${bootstrap[k]}`);
+}
+
 // Did the coordinator actually clear context between stages?
 //
 // start-task.md requires it and calls skipping it "a known failure of this
@@ -981,6 +1011,32 @@ if (args.has("--self-check")) {
     assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
   }
 
+  // triage log: closing the one loophole --triage still had. The parser must be
+  // strict about what it accepts -- a finding invented from a corrupt line sends
+  // someone hunting a dishonesty that never happened.
+  {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const d = mkdtempSync(join(tmpdir(), "sh-tr-"));
+    const log = join(d, "_triage.log");
+    assert.equal(triageVectorFor(log, "A-1"), null, "no log file → nothing to compare");
+    writeFileSync(
+      log,
+      `2026-01-01\tA-1\tquick-task\t-\t{"scope":0}\t\n` +
+        `2026-01-01\tB-2\tharness\tforced\t{"scope":2}\twhy\n` +
+        `rubbish line\n` +
+        `2026-01-02\tA-1\tquick-task\t-\t{"scope":1}\t\n`,
+    );
+    assert.deepEqual(triageVectorFor(log, "A-1"), { scope: 1 }, "last entry wins: a re-triage supersedes");
+    assert.deepEqual(triageVectorFor(log, "B-2"), { scope: 2 }, "finds the right task");
+    assert.equal(triageVectorFor(log, "C-3"), null, "task not in the log → no finding");
+
+    assert.deepEqual(vectorRaisedSince({ scope: 0 }, { scope: 2, testing: 1 }), ["scope 0→2", "testing 0→1"], "names each raised dimension");
+    assert.deepEqual(vectorRaisedSince({ scope: 2 }, { scope: 2 }), [], "unchanged → silent");
+    assert.deepEqual(vectorRaisedSince({ scope: 2 }, { scope: 1 }), [], "lowered at bootstrap is not this check's business");
+    assert.deepEqual(vectorRaisedSince(null, { scope: 2 }), [], "never triaged → nothing to compare");
+  }
+
   // split: the named exit from an exhausted retry budget. Both halves matter --
   // without children it must stay an error, or "split" is just a bypass.
   {
@@ -1118,13 +1174,21 @@ if (args.has("--triage")) {
     console.error("✖ --force needs a reason — skipping the harness is a decision, and a decision with no trace is not reviewable");
     process.exit(2);
   }
-  if (force) {
+  // Log EVERY run, not just forced ones. Logging only the forced case records
+  // exactly the decision that was already confessed, and misses the quiet one:
+  // scoring `scope: 0` instead of `1` to make the verdict come out "quick-task".
+  // The vector is scored again at bootstrap, so a low score here becomes
+  // checkable against the one that lands in task.agent.json.
+  const taskId = flagVal("--task-id");
+  if (taskId) {
     const { appendFileSync, mkdirSync } = await import("node:fs");
     mkdirSync(TASKS_DIR, { recursive: true });
     appendFileSync(
       join(TASKS_DIR, "_triage.log"),
-      `${new Date().toISOString()}\t${r.verdict}\tforced\t${JSON.stringify(vector)}\t${force}\n`,
+      `${new Date().toISOString()}\t${taskId}\t${r.verdict}\t${force ? "forced" : "-"}\t${JSON.stringify(vector)}\t${force ?? ""}\n`,
     );
+  } else if (force) {
+    console.error("⚠ --force without --task-id: the decision is not attributable to a task");
   }
 
   if (AS_JSON) console.log(JSON.stringify({ ...r, forced: force ?? null }));
@@ -1424,6 +1488,20 @@ for (const { sprint, task, path } of folders) {
       );
     if (data.complexity.effort !== undefined && data.complexity.effort !== effort)
       errors.push(`complexity.effort=${data.complexity.effort} but vector sums to ${effort}`);
+
+    // Was this task scored lighter at triage than at bootstrap? Warning, not
+    // error: the honest reason (a quick Glob/Grep saw less than bootstrap did)
+    // is common and legitimate -- §5.1.3 explicitly expects the vector to be
+    // revised upward. What is worth surfacing is that the lower score is what
+    // answered "does this need the harness at all".
+    const raised = vectorRaisedSince(
+      triageVectorFor(join(TASKS_DIR, "_triage.log"), data.taskId),
+      data.complexity.vector,
+    );
+    if (raised.length)
+      warnings.push(
+        `vector scored higher at bootstrap than at triage (${raised.join(", ")}) — the lower score is what decided whether this task needed the harness (§5.1.3)`,
+      );
   } else if (STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("bootstrap")) {
     warnings.push("complexity.vector missing — taskComplexity is an unchecked guess (Agents.md §5.1)");
   }
