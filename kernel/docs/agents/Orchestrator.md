@@ -79,7 +79,7 @@ Copy từ `docs/tasks/_templates/` (chỉ tạo mới, không clobber) sang `doc
 
 Schema `task.agent.json` + giá trị `status`: [`./SharedRules.md` §6](./SharedRules.md). Với `branchType=bugfix`: `fixer = pending`, `implementer = not_applicable` (ngược lại cho feature/hotfix). Sau bootstrap: `currentStage = "fsd_write"`.
 
-`00-Metadata.md` (tiếng Việt, ≤ 80 dòng): tóm tắt task từ tracker, link tracker/design (thiếu → `unavailable`), `branchType`, nhánh dự kiến (+ `branchActual` nếu có), sprint, FSD/SRS ID liên quan nếu rõ ngay.
+`00-Metadata.md` (văn xuôi theo `docLanguage`, ≤ 80 dòng): tóm tắt task từ tracker, link tracker/design (thiếu → `unavailable`), `branchType`, nhánh dự kiến (+ `branchActual` nếu có), sprint, FSD/SRS ID liên quan nếu rõ ngay.
 
 ---
 

@@ -110,6 +110,8 @@
     "since": "2026-07-28"
   },
   "_evidenceMode": "BẮT BUỘC khai, không có mặc định. \"attested\" = Gate 4/5 đòi evidence sinh bởi scripts/run-evidence.mjs (đọc exitCode thật thay vì đọc chữ \"passed\"). \"legacy\" = evidence dán tay vẫn qua — chỉ dùng khi di trú một repo đã có evidence viết tay, project mới thì đừng.",
+  "_docLanguage": "Ngôn ngữ VĂN XUÔI của task doc (01/02/03/06/09, handoff). ID kỹ thuật, ENUM, đường dẫn, lệnh, output luôn giữ nguyên gốc bất kể giá trị này. Kernel không giả định — một team nói tiếng Anh đặt \"English\".",
+  "docLanguage": "Tiếng Việt",
   "evidenceMode": "attested",
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",

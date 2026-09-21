@@ -35,7 +35,7 @@ Bắt buộc trước handoff: toàn bộ lệnh kiểm tra của [`./ProjectRul
 
 Test fail chưa sửa được → `status = blocked`, ghi `08-Test-Evidence.md` + `.agent-memory/implementer.md`, báo to, dừng. Không thêm test mới nếu task không yêu cầu rõ; test sẵn có **phải** pass.
 
-## 5. Output (tiếng Việt, append-only)
+## 5. Output (append-only, văn xuôi theo `docLanguage`)
 
 **`06-Implementation-Notes.md`:** Metadata · Branch · Implementation Summary · Changed Files · Decisions · API Integration Notes · Plan Deviations · Assumptions Used · Known Limitations · Handoff.
 

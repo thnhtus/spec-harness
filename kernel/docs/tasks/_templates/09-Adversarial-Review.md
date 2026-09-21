@@ -1,6 +1,6 @@
 # 09 — Adversarial Review: {taskName}
 
-> Sinh bởi `adversary` (stage `adversarial_review`, **Gate 5**). Mặc định FAIL — PASS phải kiếm được bằng bằng chứng tự thu. Append-only, tiếng Việt.
+> Sinh bởi `adversary` (stage `adversarial_review`, **Gate 5**). Mặc định FAIL — PASS phải kiếm được bằng bằng chứng tự thu. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
 > **Output ở đây phải là thứ role này TỰ chạy**, không chép từ `08-Test-Evidence.md`.
 
 **Kết quả: PASS | FAIL | UNCERTAIN** · {ngày}

@@ -1,6 +1,6 @@
 # 08 — Test Evidence: {taskName}
 
-> Sinh bởi implementer (`implementer` / `fixer`), stage `implementation`, **Gate 4**. Dán **output thật** của lệnh; không claim pass khi chưa chạy. Append-only, tiếng Việt.
+> Sinh bởi implementer (`implementer` / `fixer`), stage `implementation`, **Gate 4**. Dán **output thật** của lệnh; không claim pass khi chưa chạy. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
 > **Evidence mặc định = unit test giới hạn đúng test file của task** (nhanh, ít RAM); full-suite chỉ khi §7 yêu cầu. Danh sách lệnh one-shot hợp lệ: [`../../agents/ProjectRules.md` §7](../../agents/ProjectRules.md).
 
 ## Kết quả lệnh

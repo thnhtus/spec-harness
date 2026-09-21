@@ -456,6 +456,20 @@ if (args[0] === "--self-test") {
   if (layerLock.length)
     fail("kernel khoá vào một layer (role tên theo layer) — dùng `implementer`/`fixer`:", layerLock.join("\n"));
 
+  // Cùng một bug, khác trục: ngôn ngữ văn xuôi của task doc là lựa chọn của
+  // project. Hàn "tiếng Việt" vào kernel nghĩa là một team nói tiếng Anh cài
+  // harness này rồi bị bảo viết task doc bằng tiếng Việt. Nó thuộc về
+  // harness.config.json → docLanguage.
+  const langLock = [];
+  for (const d of ["docs", ".claude/agents"])
+    for (const f of walk(join(T, d)))
+      read(f).split("\n").forEach((l, i) => {
+        if (/(ti|Ti)ếng Việt/.test(l) && !l.includes("docLanguage"))
+          langLock.push(`    ${f}:${i + 1}: ${l.trim().slice(0, 100)}`);
+      });
+  if (langLock.length)
+    fail("kernel hardcode ngôn ngữ task doc — trỏ về `harness.config.json → docLanguage`:", langLock.join("\n"));
+
   // … và chứng minh bằng một config BACKEND thật, không chỉ bằng việc vắng chữ
   // "fe". Một project BE thuần phải qua được --self-check mà không sửa kernel.
   {

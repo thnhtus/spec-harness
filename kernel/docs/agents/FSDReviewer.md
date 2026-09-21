@@ -68,7 +68,7 @@ Intent: end-user nộp tệp tại node Upload trước khi chuyển bước (ng
 | AC-ID | Tiêu chí | Source | Status |
 | --- | --- | --- | --- |
 | AC-01 | Khi node yêu cầu tệp, phải upload ≥ 1 tệp hợp lệ thì nút "Hoàn tất bước" mới enable | `FSD-UPLOAD-…` | confirmed |
-| AC-02 | Tệp sai định dạng/quá dung lượng bị từ chối kèm thông báo tiếng Việt | design tool: Upload-error | assumed |
+| AC-02 | Tệp sai định dạng/quá dung lượng bị từ chối kèm thông báo lỗi cho người dùng | design tool: Upload-error | assumed |
 
 | Q-ID | Câu hỏi | Type | Status |
 | --- | --- | --- | --- |

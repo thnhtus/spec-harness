@@ -152,7 +152,7 @@ Installer chỉ chép file. Nó **không** biết project bạn dùng stack gì,
 | Điền vào | Gì |
 | --- | --- |
 | `docs/agents/ProjectRules.md` | §1 nguồn truth MCP · §2 guardrail source · §3 quy tắc nhánh · §7 lệnh kiểm tra |
-| `harness.config.json` | `repos`, `layers`, `models`, `evidenceCommandPattern` + `evidenceSampleCommand` |
+| `harness.config.json` | `repos`, `layers`, `models`, `docLanguage`, `evidenceCommandPattern` + `evidenceSampleCommand` |
 
 Rồi tự chạy `--self-check` để xác nhận config không tự mâu thuẫn.
 

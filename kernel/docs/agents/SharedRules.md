@@ -3,7 +3,7 @@
 > **Tài liệu:** `docs/agents/SharedRules.md` — **nơi định nghĩa duy nhất** (normative home) cho: format handoff (§4), quy ước task doc (§5), giá trị `status` (§6), ngân sách ngữ cảnh/artifact (§8), và truy vết AC + amendment spec (§9). Tài liệu khác **link về đây**, không chép lại.
 > **Phần thuộc về project** — nguồn truth/tracker, guardrail source, quy tắc nhánh, lệnh kiểm tra — định nghĩa tại [`ProjectRules.md`](./ProjectRules.md). Kernel không biết project dùng stack nào.
 > **Thứ tự ưu tiên khi xung đột:** [`../Instructions.md`](../Instructions.md) > SharedRules > ProjectRules > role file (trừ khi role file ghi rõ "override").
-> **Ngôn ngữ:** Tiếng Việt; token kỹ thuật (ENUM, ID, lệnh, đường dẫn) giữ nguyên gốc.
+> **Ngôn ngữ:** văn xuôi viết bằng `harness.config.json → docLanguage`; token kỹ thuật (ENUM, ID, lệnh, đường dẫn) giữ nguyên gốc bất kể giá trị đó. Kernel không chọn hộ — một team nói tiếng Anh đặt `"English"`.
 
 ---
 
@@ -61,7 +61,7 @@ Task doc nằm tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + template
 | `09-Adversarial-Review.md` | adversary | Kiểm đối kháng: tự chạy lại lệnh, soi diff + test, finding (Gate 5) |
 | `.agent-memory/{role}.md` | từng role | Handoff (§4) |
 
-- **Append-only, tiếng Việt**, ID kỹ thuật giữ nguyên (`FR-…`, `FSD-<MOD>-nnn`, ENUM, path, lệnh).
+- **Append-only**, văn xuôi theo `docLanguage`, ID kỹ thuật giữ nguyên (`FR-…`, `FSD-<MOD>-nnn`, ENUM, path, lệnh).
 
 **Văn xuôi phải đọc được — dùng skill `humanizer`.** Task doc có người đọc: BA đọc `02`, dev khác đọc `06`, reviewer đọc `09`. Trước khi đóng stage, chạy `humanizer` trên **phần văn xuôi** mình vừa viết:
 

@@ -1,6 +1,6 @@
 # 06 — Implementation Notes: {taskName}
 
-> Sinh bởi `implementer` (feature/hotfix) hoặc `fixer` (bugfix), stage `implementation`, **Gate 4**. Append-only, tiếng Việt.
+> Sinh bởi `implementer` (feature/hotfix) hoặc `fixer` (bugfix), stage `implementation`, **Gate 4**. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
 > **≤ 250 dòng** ([`../../agents/SharedRules.md` §8](../../agents/SharedRules.md)) — đây là văn xuôi (Decisions, Deviations, Known Limitations), cắt được. Output lệnh thì dán vào `08`, nơi không có trần.
 
 ## Metadata

@@ -50,7 +50,7 @@ Orchestrator **copy** `docs/tasks/_templates/` → thư mục task rồi điền
 
 ## 4. Quy ước
 
-- **Append-only**, **tiếng Việt**, ID kỹ thuật giữ nguyên — chi tiết: [`../agents/SharedRules.md` §5](../agents/SharedRules.md).
+- **Append-only**, văn xuôi theo `harness.config.json → docLanguage`, ID kỹ thuật giữ nguyên — chi tiết: [`../agents/SharedRules.md` §5](../agents/SharedRules.md).
 - `task.agent.json` **không** có trường token/usage; trường `telemetry` (stage · tier · model · thời gian) thì có.
 - Lệnh evidence Gate 4: danh sách one-shot tại [`../agents/SharedRules.md` §7](../agents/SharedRules.md) — không chép bảng lệnh vào đây.
 

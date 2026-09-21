@@ -1,6 +1,6 @@
 # {role} — handoff
 
-> Khuôn mẫu handoff giữa các stage. Copy thành `.agent-memory/{role}.md` cho từng role tham gia (vd `orchestrator.md`, `fsd-writer.md`, `fsd-reviewer.md`, `technical-planner.md`, `implementer.md`, `fixer.md`, `adversary.md`). Append-only, tiếng Việt.
+> Khuôn mẫu handoff giữa các stage. Copy thành `.agent-memory/{role}.md` cho từng role tham gia (vd `orchestrator.md`, `fsd-writer.md`, `fsd-reviewer.md`, `technical-planner.md`, `implementer.md`, `fixer.md`, `adversary.md`). Append-only; văn xuôi theo `harness.config.json → docLanguage`.
 
 ## Next Handoff → {next-role}
 

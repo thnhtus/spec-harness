@@ -1,6 +1,6 @@
 # 03 — Technical Plan: {taskName}
 
-> Sinh bởi `technical-planner` (stage `technical_plan`, **Gate 3**). Trỏ màn hình trong `fsd/` + contract trong `api/`. Append-only, tiếng Việt.
+> Sinh bởi `technical-planner` (stage `technical_plan`, **Gate 3**). Trỏ màn hình trong `fsd/` + contract trong `api/`. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
 
 ## File sẽ đổi
 

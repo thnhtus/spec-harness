@@ -1,6 +1,6 @@
 # 00 — Metadata: {taskName}
 
-> Sinh bởi `orchestrator` ở stage bootstrap. Append-only, tiếng Việt.
+> Sinh bởi `orchestrator` ở stage bootstrap. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
 
 ## Thông tin task
 

@@ -970,6 +970,13 @@ if (args.has("--self-check")) {
   // Inheriting that from an unset field is how the product's whole claim fails
   // silently — so the field is required, and choosing legacy has to be a choice
   // someone typed.
+  // Prose language is a project choice, not a kernel constant. Welding it in is
+  // the same bug as naming the roles fe-*: an English-speaking team installs
+  // this and gets told to write task docs in Vietnamese.
+  assert.ok(
+    typeof CFG.docLanguage === "string" && CFG.docLanguage.trim(),
+    'config.docLanguage is required (e.g. "English", "Tiếng Việt") — the kernel does not pick a prose language for you',
+  );
   assert.ok(
     ["attested", "legacy"].includes(CFG.evidenceMode),
     `config.evidenceMode must be "attested" or "legacy" (got ${JSON.stringify(CFG.evidenceMode)}) — there is no default: "legacy" lets Gate 4 accept evidence no process ever produced`,
