@@ -1,5 +1,5 @@
 # spec-harness gate ở CI — chỗ `git commit --no-verify` không với tới được.
-# Cài: cp adapters/ci/validate-tasks.yml .github/workflows/
+# Bản của chính repo spec-harness (validator ở kernel/scripts/).
 name: spec-harness
 
 on: [push, pull_request]
@@ -13,5 +13,16 @@ jobs:
         with: { node-version: '20' }
       # --preflight trước: config tự mâu thuẫn (hoặc repos[].path sai) thì mọi
       # check sau im lặng no-op. Bao gồm --self-check.
-      - run: node scripts/validate-tasks.mjs --preflight
-      - run: node scripts/validate-tasks.mjs
+      - run: node kernel/scripts/validate-tasks.mjs --preflight
+      - run: node kernel/scripts/validate-tasks.mjs
+      - run: node install.mjs --self-test
+
+      # Self-test ở trên chạy từ CÂY REPO — nó thấy mọi file, kể cả file mà
+      # installer quên copy hoặc package.json quên khai trong `files:`. Nên chạy
+      # lại đúng self-test đó trên tarball đã pack: đó mới là thứ người dùng nhận.
+      # Thiếu bước này thì "thêm folder mới, quên khai" là lỗi CI không bao giờ thấy.
+      - name: self-test trên tarball đã pack (không phải trên cây repo)
+        run: |
+          npm pack --silent | tail -1 | xargs -I{} tar xzf {} -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/package"
+          node install.mjs --self-test

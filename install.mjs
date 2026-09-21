@@ -285,6 +285,19 @@ if (args[0] === "--self-test") {
 
   if (!existsSync(join(T, ".github/workflows/spec-harness.yml")))
     fail("thiếu CI workflow — gate chỉ tồn tại ở máy dev");
+
+  // Hai workflow, hai bố cục khác nhau: adapter gọi `scripts/` (project đã cài),
+  // workflow của chính repo này gọi `kernel/scripts/`. Chúng giống nhau đủ để
+  // một lần `cp adapters/ci/... .github/workflows/` trông như đồng bộ hoá và
+  // thực ra làm chết CI của repo nguồn (đã xảy ra thật). Chốt cả hai chiều.
+  {
+    const adapter = read(join(SRC, "adapters/ci/validate-tasks.yml"));
+    if (adapter.includes("kernel/scripts/"))
+      fail("adapters/ci/validate-tasks.yml gọi kernel/scripts/ — project đã cài không có thư mục đó");
+    const own = join(SRC, ".github/workflows/validate-tasks.yml");
+    if (existsSync(own) && !read(own).includes("kernel/scripts/validate-tasks.mjs"))
+      fail(".github/workflows/validate-tasks.yml không gọi kernel/scripts/ — bị đè bằng bản adapter? CI của chính repo này sẽ MODULE_NOT_FOUND");
+  }
   if (!existsSync(join(T, ".claude/commands/init-project-rules.md"))) fail("thiếu lệnh /init-project-rules");
 
   // Kernel/skill không được hardcode tên tool MCP: khoá harness vào đúng một
