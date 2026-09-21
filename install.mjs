@@ -131,6 +131,13 @@ function wouldClobber(P) {
   return out;
 }
 
+// Version của kernel đang cài. Đọc từ package.json của NGUỒN, không hardcode —
+// hai chỗ khai số thì chúng sẽ lệch, và đó đúng là bug đã có (plugin.json 0.1.0
+// vs package.json 0.1.1).
+function kernelVersion() {
+  try { return JSON.parse(read(join(SRC, "package.json"))).version; } catch { return null; }
+}
+
 function installInto(P) {
   // Nguồn thiếu folder = bản phát hành hỏng (package.json `files:` quên khai,
   // hoặc tarball cắt sai). Không bắt sớm thì lỗi rơi ra dưới dạng stack trace
@@ -189,6 +196,14 @@ function installInto(P) {
   // CI: hook ở máy dev bypass được bằng --no-verify. Workflow thì không.
   mkdirSync(join(P, ".github/workflows"), { recursive: true });
   keep(join(SRC, "adapters/ci/validate-tasks.yml"), join(P, ".github/workflows/spec-harness.yml"));
+
+  // Dấu phiên bản. Installer ghi ĐÈ mọi lần, nên nếu không ghi lại số thì sau
+  // khi nâng kernel không ai biết project đang chạy bản nào: không debug được
+  // "gate này hồi trước đâu có chặn", không rollback được về đúng bản.
+  const ver = kernelVersion();
+  if (ver)
+    writeFileSync(join(P, "docs/.kernel-version"),
+      `${ver}\n# spec-harness kernel đã cài. Do install.mjs ghi, đừng sửa tay.\n# Nâng: chạy lại installer. So sánh: npm view spec-harness version\n`);
 
   const hookSkipped = installHook(P);
   const signpost = installSignpost(P, wasEmpty);
@@ -376,6 +391,21 @@ if (args[0] === "--self-test") {
       );
   }
   if (!existsSync(join(T, ".claude/commands/init-project-rules.md"))) fail("thiếu lệnh /init-project-rules");
+
+  // Hai chỗ khai version thì chúng SẼ lệch — đã lệch một lần (plugin.json 0.1.0
+  // vs package.json 0.1.1) và không có gì bắt được. `npm version` chỉ đụng
+  // package.json, nên vế còn lại phải được assert chứ không thể trông cậy vào
+  // trí nhớ lúc phát hành.
+  {
+    const pkg = JSON.parse(read(join(SRC, "package.json"))).version;
+    const plug = JSON.parse(read(join(SRC, ".claude-plugin/plugin.json"))).version;
+    if (pkg !== plug)
+      fail(`version lệch: package.json=${pkg} nhưng .claude-plugin/plugin.json=${plug} — \`npm version\` chỉ sửa cái đầu, sửa nốt cái sau`);
+    const stampPath = join(T, "docs/.kernel-version");
+    if (!existsSync(stampPath)) fail("bản cài ra không có docs/.kernel-version — nâng kernel xong không ai biết đang chạy bản nào");
+    if (read(stampPath).split("\n")[0].trim() !== pkg)
+      fail(`docs/.kernel-version ghi "${read(stampPath).split("\n")[0].trim()}", package.json khai "${pkg}"`);
+  }
 
   // Bản cài ra phải đi kèm evidence thật. "legacy" cho project MỚI nghĩa là Gate
   // 4/5 nhận văn bản dán tay ngay từ task đầu tiên — không có evidence cũ nào để

@@ -1473,6 +1473,17 @@ if (args.has("--preflight")) {
         "    Switch ProjectRules §7 to `node scripts/run-evidence.mjs -- <cmd>` and set evidenceMode=\"attested\".",
     );
 
+  // Which kernel is this? Without the stamp, "this gate used to let it through"
+  // is unanswerable and there is nothing to roll back to.
+  {
+    const stamp = join(REPO_ROOT, "docs/.kernel-version");
+    if (isSourceRepo) {
+      /* the source repo IS the kernel; nothing to stamp */
+    } else if (!existsSync(stamp))
+      warns.push("docs/.kernel-version missing — installed before stamping, or hand-copied. Re-run the installer so upgrades are traceable");
+    else if (!QUIET) console.log(`ℹ kernel ${readFileSync(stamp, "utf8").split("\n")[0].trim()}`);
+  }
+
   if (!existsSync(TASKS_DIR)) errs.push(`tasksDir "${CFG.tasksDir}" does not exist (resolved: ${TASKS_DIR})`);
   for (const r of REPOS)
     if (!existsSync(resolve(REPO_ROOT, r.path)))
