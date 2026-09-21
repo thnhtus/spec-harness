@@ -400,6 +400,73 @@ if (args[0] === "--self-test") {
   }
   if (!existsSync(join(T, ".claude/commands/init-project-rules.md"))) fail("thiếu lệnh /init-project-rules");
 
+  // Mọi check ở trên đọc config và template RỜI NHAU, nên chúng đều xanh khi hai
+  // bên nói về hai bộ file khác nhau. Đó là cách `06-FE-Implementation-Notes.md`
+  // sống sót trong adapter sau khi template đã đổi tên: config đòi một file
+  // không bao giờ tồn tại, và mọi task trên MỌI bản cài mới đều đỏ ngay từ task
+  // đầu tiên. Ba tầng CI không thấy vì không tầng nào chạy validator lên một
+  // task folder thật.
+  //
+  // Cách duy nhất bắt được là dựng đúng thứ user sẽ có: task copy từ
+  // `_templates/`, chấm bằng `harness.config.json` cài ra. Ta không đòi task
+  // này PASS — nó chưa có evidence nên phải đỏ. Ta đòi nó đỏ VÌ LÝ DO ĐÚNG:
+  // không được có lỗi "required file … missing", vì mọi file bắt buộc đều vừa
+  // được copy từ template ra.
+  {
+    const cfg = JSON.parse(read(join(T, "harness.config.json")));
+    const dir = join(T, "docs/tasks/sprint-1/SH-1-self-test");
+    cpSync(join(T, "docs/tasks/_templates"), dir, { recursive: true });
+    const task = JSON.parse(read(join(dir, "task.agent.json")));
+    Object.assign(task, {
+      taskId: "SH-1", taskName: "self test", repoName: cfg.repos[0].name,
+      sprintNumber: 1, developer: "self-test", branch: "feature/SH-1-self-test",
+      layer: cfg.layers[0], docsPath: "docs/tasks/sprint-1/SH-1-self-test/",
+      currentStage: "reviewing", status: "reviewing",
+      createdAt: "2026-01-01", updatedAt: "2026-01-01",
+    });
+    for (const r of Object.keys(task.agents)) task.agents[r] = { status: "done" };
+    writeFileSync(join(dir, "task.agent.json"), JSON.stringify(task, null, 2));
+
+    const r = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json"],
+      { cwd: T, encoding: "utf8" });
+    let report;
+    try { report = JSON.parse(r.stdout); }
+    catch { fail("validator không trả JSON đọc được trên task dựng từ template:", (r.stderr || r.stdout).trim().slice(0, 400)); }
+    // CHỈ task vừa dựng. Các check khác trong self-test cố tình để lại task hỏng
+    // (brokenTask) — gom cả chúng vào đây thì assert luôn đỏ vì lý do khác, và
+    // ca này không còn đo gì.
+    const mine = report.results.find((t) => t.folder.endsWith("SH-1-self-test"));
+    if (!mine) fail("validator không thấy task vừa dựng từ template — tasksDir của config trỏ sai chỗ?");
+    const errs = mine.errors;
+    // "required file … missing" = config và template đang nói về hai bộ file khác
+    // nhau. Không sửa được bằng cách điền task cho đúng hơn.
+    const ghost = errs.filter((e) => /required file .* missing/.test(e));
+    if (ghost.length)
+      fail(
+        `harness.config.json đòi file mà docs/tasks/_templates/ không ship:\n` +
+          ghost.map((e) => `  ${e}`).join("\n") +
+          `\n  Mọi task trên mọi bản cài mới sẽ đỏ vì file này. Sửa: đồng bộ tên file` +
+          `\n  giữa adapters/example/harness.config.json và kernel/docs/tasks/_templates/`,
+      );
+    // Vế đối: task rỗng KHÔNG có evidence mà validator im lặng thì check trên
+    // vô nghĩa — nó sẽ xanh cả khi validator không chấm gì cả.
+    //
+    // Từng vế phải được đòi RIÊNG. Gộp thành một regex `/evidence|attestation/`
+    // là đủ để Gate 4 tắt hẳn mà self-test vẫn xanh: lỗi attestation một mình
+    // đã thoả vế gộp. Mutation test bắt đúng ca đó.
+    for (const [what, re] of [
+      ["Gate 4 đòi command+result thật", /no real command\+result evidence/],
+      ["attestation (evidenceMode=attested)", /no attestation block/],
+      ["Gate 5 đòi adversary tự chạy", /adversary ran itself/],
+      ["Gate 2 đòi có AC", /no AC declared/],
+    ])
+      if (!errs.some((e) => re.test(e)))
+        fail(`task \`reviewing\` rỗng mà validator không báo: ${what} — gate đó rỗng ruột trên bản cài ra`);
+    // Xoá ĐÚNG folder vừa dựng: brokenTask() cũng nằm trong sprint-1, và các
+    // check phía sau cần nó để chứng minh hook chặn được commit hỏng.
+    rmSync(dir, { recursive: true, force: true });
+  }
+
   // Hai chỗ khai version thì chúng SẼ lệch — đã lệch một lần (plugin.json 0.1.0
   // vs package.json 0.1.1) và không có gì bắt được. `npm version` chỉ đụng
   // package.json, nên vế còn lại phải được assert chứ không thể trông cậy vào
