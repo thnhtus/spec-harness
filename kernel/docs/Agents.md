@@ -274,7 +274,9 @@ Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** l
 - `reworkAfterReview` — số lần task quay lại sửa code sau `reviewing`.
 - `note` — một dòng: ước lượng đã bỏ sót gì.
 
-Không điền thì harness không học được gì. Đây là điểm duy nhất con người phải nhập tay, và là điểm đắt nhất nếu bỏ qua.
+Không điền thì harness không học được gì. Đây là điểm duy nhất con người phải nhập tay, và là điểm đắt nhất nếu bỏ qua — nên `status = done` mà thiếu `closedAt` là **error**, không phải warning. (Warning thì pre-commit chạy `--no-warn` không bao giờ chặn, và vòng lặp học chết trong khi mọi gate vẫn xanh.) Task tạo **trước** `acTrace.since` vẫn chỉ là warning — nó có trước harness.
+
+`--calibrate` in **độ phủ** ngay dòng đầu (`outcome coverage: 12/20`). Dưới 80% thì finding bên dưới đang dựa trên mẫu thủng — đừng sửa ngưỡng bằng nó.
 
 `telemetry` (coordinator ghi mỗi lần dispatch: stage · tier · model · mốc thời gian) là **nửa còn lại** của câu hỏi ROI. `outcome` nói task có ổn không; `telemetry` nói nó tốn gì. Thiếu nó thì §5.3 ("tier mạnh đáng tiền") là niềm tin không ai kiểm chứng được. Không ghi token/usage — đó là dữ liệu vendor; tên model + wall-clock đã đủ.
 

@@ -825,6 +825,28 @@ if (args.has("--self-check")) {
     // clean, low-retry history must NOT invent a finding
     assert.deepEqual(calibrate([t({}), t({})]).findings, [], "clean history → no finding");
 
+    // outcome coverage: findings are computed over tasks that HAVE an outcome,
+    // so a holed sample must say so before anyone retunes a threshold from it.
+    const holed = calibrate([
+      ...Array.from({ length: 2 }, () => t({ status: "done" })),
+      ...Array.from({ length: 8 }, () => ({ taskComplexity: "normal", status: "done", attempts: {} })),
+    ]);
+    assert.equal(holed.coverage.shipped, 10, "denominator is every shipped task");
+    assert.equal(holed.coverage.withOutcome, 2, "numerator is tasks with an outcome");
+    assert.ok(holed.findings.some((f) => f.includes("coverage")), "20% coverage must warn about the sample");
+    assert.deepEqual(
+      calibrate(Array.from({ length: 5 }, () => t({ status: "done" }))).findings,
+      [],
+      "full coverage must not warn",
+    );
+
+    // outcome.closedAt: warning for tasks older than the harness, error for
+    // tasks started under it — pre-commit runs --no-warn, so a warning here
+    // never blocked anything and the learning loop could die green.
+    assert.equal(outcomeIsBlocking({ createdAt: "2026-09-01" }, "2026-07-28"), true, "created after since → error");
+    assert.equal(outcomeIsBlocking({ createdAt: "2026-01-01" }, "2026-07-28"), false, "predates the harness → warning");
+    assert.equal(outcomeIsBlocking({}, "2026-07-28"), false, "no createdAt must not invent an error");
+
     // telemetry: strong tier burned on tasks that never bounced is cost without
     // benefit — the half of the ROI question `outcome` alone cannot answer.
     const strong = calibrate(
@@ -923,9 +945,22 @@ if (args.has("--self-check")) {
 // are what happened. This compares them. It prints evidence, never edits the
 // thresholds: a rule the harness silently rewrote is a rule nobody reviewed.
 // ---------------------------------------------------------------------------
+// A task shipped under the harness must leave ground truth behind; one that
+// predates it cannot be expected to. Same since-cutoff as the AC trace.
+function outcomeIsBlocking(data, since = AC_TRACE_SINCE) {
+  return (data.createdAt ?? "") >= since;
+}
+
 function calibrate(tasks) {
   const closed = tasks.filter((t) => t.outcome?.closedAt);
-  if (!closed.length) return { tasks: 0, note: "no task has outcome.closedAt yet — nothing to learn from" };
+  // Coverage: shipped tasks are the denominator, tasks with an outcome are the
+  // numerator. Findings below are computed only over the numerator, so a low
+  // ratio means they describe a biased slice — and someone is about to rewrite
+  // the §5.1.1 thresholds using it.
+  const shipped = tasks.filter((t) => t.status === "done").length;
+  const coverage = { shipped, withOutcome: closed.length };
+  if (!closed.length)
+    return { tasks: 0, coverage, note: "no task has outcome.closedAt yet — nothing to learn from" };
 
   const byLabel = {};
   for (const t of closed) {
@@ -981,7 +1016,12 @@ function calibrate(tasks) {
       );
   }
 
-  return { tasks: closed.length, byLabel, retriesByStage, findings };
+  if (shipped && closed.length / shipped < 0.8)
+    findings.unshift(
+      `outcome coverage ${closed.length}/${shipped} shipped tasks (<80%) — the findings below rest on a holed sample; fill outcome before retuning any threshold`,
+    );
+
+  return { tasks: closed.length, coverage, byLabel, retriesByStage, findings };
 }
 
 // ---------------------------------------------------------------------------
@@ -1248,10 +1288,14 @@ for (const { sprint, task, path } of folders) {
   }
 
   // A closed task with no outcome teaches nothing: --calibrate has no ground
-  // truth to compare the estimate against. Warning, not error — the work is
-  // already shipped, blocking a commit now helps no one.
+  // truth to compare the estimate against. This used to be a warning, so
+  // pre-commit (--no-warn) never blocked on it — and the learning loop could die
+  // silently while every gate stayed green. Same since-cutoff as the AC trace:
+  // tasks that predate the harness stay warnings, tasks started under it do not.
   if (data.status === "done" && !data.outcome?.closedAt)
-    warnings.push("status=done but outcome.closedAt missing — --calibrate cannot learn from this task (Agents.md §5.6)");
+    (outcomeIsBlocking(data) ? errors : warnings).push(
+      "status=done but outcome.closedAt missing — --calibrate cannot learn from this task (Agents.md §5.6)",
+    );
 
   // 5b. Handoff: every role marked done must have left one.
   for (const [role, info] of Object.entries(ag))
@@ -1353,6 +1397,7 @@ if (CALIBRATE) {
   if (AS_JSON) console.log(JSON.stringify(c, null, 2));
   else {
     console.log(`\n── calibration · ${c.tasks} closed task(s) ──`);
+    console.log(`   outcome coverage: ${c.coverage.withOutcome}/${c.coverage.shipped} shipped task(s)`);
     if (c.note) console.log(`   ${c.note}`);
     for (const [label, b] of Object.entries(c.byLabel ?? {}))
       console.log(
