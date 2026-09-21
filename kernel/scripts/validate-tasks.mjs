@@ -1507,6 +1507,32 @@ if (args.has("--self-check")) {
       `REQUIRED_DENY entry ${JSON.stringify(r)} is not a whole rule — a fragment makes the match ambiguous and the check silently passes on rules that are not there`);
   assert.equal(new Set(REQUIRED_DENY).size, REQUIRED_DENY.length, "REQUIRED_DENY has a duplicate");
 
+  // ruleFloor: the cost half that does not need anyone to fill telemetry in.
+  {
+    const rd = (r) => `role/${r}.md`;
+    const sizes = { "Instructions.md": 1000, "agents/SharedRules.md": 2000, "role/a.md": 300, "role/b.md": 900, "role/c.md": 500 };
+    const rf = ruleFloor({
+      read: (f) => sizes[f] ?? 0, roleDoc: rd,
+      roles: ["a", "b", "c"], roleStage: { a: "impl", b: "impl", c: "review" },
+    });
+    // Per STAGE, not per role. `implementer` and `fixer` share `implementation`
+    // and only one of them runs; counting both inflates the floor by a whole
+    // role file, and every release-to-release comparison after that is wrong.
+    assert.equal(rf.stages, 2, "two roles on one stage is one dispatch, not two");
+    // Within a stage, the worst case: routing picks the role, and the floor must
+    // not shrink just because a cheaper role sits next to an expensive one.
+    assert.equal(rf.byStage.find((x) => x.stage === "impl").role, "b", "the larger role file sets the floor for its stage");
+    assert.equal(rf.perTask, (3000 + 900) + (3000 + 500), "per-task floor = base + worst role, summed over stages");
+    // A stage whose role files are ALL missing must vanish from the report, not
+    // appear with the base cost and a 0 KB role -- that reads like a cheap stage
+    // when in fact the measurement is broken. (One missing role out of several
+    // needs no special handling: the max already skips it.)
+    const gone = ruleFloor({ read: (f) => (f.startsWith("role/") ? 0 : sizes[f] ?? 0), roleDoc: rd,
+      roles: ["a", "b", "c"], roleStage: { a: "impl", b: "impl", c: "review" } });
+    assert.equal(gone.stages, 0, "stages with no readable role file must drop out, not report the base cost as if the stage were cheap");
+    assert.equal(gone.perTask, 0, "a floor of 0 is the honest answer when nothing could be read");
+  }
+
   // A vendor name in the kernel schema is a project detail that climbed one
   // level up -- same bug as `fe-*` roles and a hardcoded doc language, and it
   // is only ever noticed by the team that uses a different tracker. Config can
@@ -1593,6 +1619,113 @@ export function settingsReachable(repoRoot, cwd) {
 //   node scripts/validate-tasks.mjs --triage '{"scope":0,...}' [--branch-type bugfix]
 //   ... --force "why I am skipping the harness anyway"
 //
+// --cost: what the harness costs before any work happens
+// ---------------------------------------------------------------------------
+// The ROI question has two halves. `--calibrate` answers "was it worth it" from
+// `outcome`, but only after tasks close. This half is answerable NOW, because it
+// does not depend on anything a run produces: every subagent must read
+// Instructions + SharedRules + its role file before it can do anything, and
+// those are files on disk. Measure them.
+//
+// Deliberately NOT a token count. Tokenisation is vendor-specific and drifts
+// between model versions; a number that looks exact but is wrong by 30% is worse
+// than a ratio nobody mistakes for a bill. Bytes are exact, comparable across
+// releases, and that is what "did the kernel get heavier" actually needs.
+//
+// The number this produces is the FLOOR, not the total: it is paid once per
+// stage, per task, before the task's own artifacts are read. A kernel that grows
+// 16% shows up here, or it shows up on the monthly bill with no attributable
+// cause.
+export function ruleFloor({ read, roleDoc, roles, roleStage }) {
+  const base = ["Instructions.md", "agents/SharedRules.md"].map((f) => ({ f, bytes: read(f) }));
+  const baseBytes = base.reduce((n, x) => n + x.bytes, 0);
+  const perRole = roles
+    .map((r) => ({ role: r, stage: roleStage?.[r] ?? null, doc: roleDoc(r), bytes: read(roleDoc(r)) }))
+    .filter((x) => x.bytes > 0);
+  // One dispatch per STAGE, not per role: `implementer` and `fixer` both map to
+  // `implementation` and only one of them runs. Counting both inflates the floor
+  // by a whole role file and makes every later comparison wrong.
+  const stages = [...new Set(perRole.map((x) => x.stage).filter(Boolean))];
+  const byStage = stages.map((st) => {
+    const rs = perRole.filter((x) => x.stage === st);
+    // Worst case within a stage: routing picks one role, and the floor should
+    // not shrink because a cheaper role exists next to an expensive one.
+    const worst = rs.reduce((a, b) => (b.bytes > a.bytes ? b : a));
+    return { stage: st, role: worst.role, roleBytes: worst.bytes, total: baseBytes + worst.bytes };
+  });
+  return {
+    base,
+    baseBytes,
+    perRole,
+    byStage,
+    perTask: byStage.reduce((n, x) => n + x.total, 0),
+    stages: byStage.length,
+  };
+}
+
+if (args.has("--cost")) {
+  // Source repo keeps the kernel under kernel/docs/; an installed project has it
+  // at docs/. Same files, two layouts -- reading the wrong one silently reports
+  // a 0 KB floor, which looks like good news.
+  const docsDir = ["kernel/docs", "docs"]
+    .map((d) => join(REPO_ROOT, d))
+    .find((d) => existsSync(join(d, "Instructions.md")));
+  if (!docsDir) {
+    console.error("\u2716 --cost: cannot find Instructions.md under kernel/docs/ or docs/ \u2014 nothing to measure");
+    process.exit(2);
+  }
+  const bytes = (f) => { try { return statSync(join(docsDir, f)).size; } catch { return 0; } };
+  const readTask = (fo) => { try { return JSON.parse(readFileSync(join(fo.path, "task.agent.json"), "utf8")); } catch { return null; } };
+  const roleDoc = (r) =>
+    "agents/" + r.split("-").map((w) => w[0].toUpperCase() + w.slice(1)).join("").replace(/^Fsd/, "FSD") + ".md";
+  const fl = ruleFloor({ read: bytes, roleDoc, roles: CFG.roles ?? [], roleStage: CFG.roleStage ?? {} });
+
+  // Real dispatches, if anyone recorded them. This is the half that needs a
+  // human to have filled telemetry in -- report it as measured or as absent,
+  // never estimate it.
+  const tasks = findTaskFolders().map(readTask).filter(Boolean);
+  const tel = tasks.flatMap((t) => t.telemetry ?? []).filter((e) => typeof e.inputTokens === "number");
+  const withTel = tasks.filter((t) => (t.telemetry ?? []).some((e) => typeof e.inputTokens === "number")).length;
+
+  if (AS_JSON) {
+    console.log(JSON.stringify({
+      floor: { baseBytes: fl.baseBytes, perTaskBytes: fl.perTask, stages: fl.stages, byStage: fl.byStage },
+      measured: tel.length
+        ? { dispatches: tel.length, tasks: withTel, totalInputTokens: tel.reduce((n, e) => n + e.inputTokens, 0),
+            medianPerDispatch: tel.map((e) => e.inputTokens).sort((a, b) => a - b)[Math.floor(tel.length / 2)] }
+        : null,
+      tasksScanned: tasks.length,
+    }, null, 2));
+    process.exit(0);
+  }
+
+  const kb = (n) => `${(n / 1024).toFixed(1)} KB`;
+  console.log(`\n── rule floor (read before any work, every dispatch) ──`);
+  for (const b of fl.base) console.log(`  ${b.f.padEnd(24)} ${kb(b.bytes).padStart(9)}`);
+  console.log(`  ${"= every dispatch pays".padEnd(24)} ${kb(fl.baseBytes).padStart(9)}\n`);
+  for (const s of fl.byStage)
+    console.log(`  ${s.stage.padEnd(20)} + ${s.role.padEnd(18)} ${kb(s.total).padStart(9)}`);
+  console.log(`\n  ${fl.stages} stage(s) → ${kb(fl.perTask)} per task, before the task's own artifacts.`);
+  console.log(`  Bytes, not tokens: tokenisation is vendor-specific and drifts between`);
+  console.log(`  model versions. This number is for comparing releases, not for billing.`);
+
+  console.log(`\n── measured (telemetry[].inputTokens) ──`);
+  if (!tel.length)
+    console.log(`  none in ${tasks.length} task(s). The coordinator appends it at each dispatch\n` +
+                `  (/start-task step 6). Without it the floor above is the only cost signal,\n` +
+                `  and "the strong tier is worth it" (Agents.md §5.3) stays unfalsifiable.`);
+  else {
+    const tot = tel.reduce((n, e) => n + e.inputTokens, 0);
+    const sorted = tel.map((e) => e.inputTokens).sort((a, b) => a - b);
+    console.log(`  ${tel.length} dispatch(es) across ${withTel} task(s)`);
+    console.log(`  total ${tot.toLocaleString()} input tokens · median ${sorted[Math.floor(tel.length / 2)].toLocaleString()}/dispatch`);
+    if (withTel < (CFG.calibrateMinSample ?? 5))
+      console.log(`  ⚠ ${withTel} task(s) < ${CFG.calibrateMinSample ?? 5} — too few to conclude anything about cost`);
+  }
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
 // Skipping the harness is a legitimate call. Skipping it without a trace is not,
 // so --force appends the verdict, the vector and the reason to _triage.log.
 // ---------------------------------------------------------------------------

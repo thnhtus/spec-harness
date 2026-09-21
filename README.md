@@ -280,6 +280,24 @@ Nó **in bằng chứng, không tự sửa ngưỡng**. Ngưỡng quyết địn
 
 Điều kiện: điền `outcome` khi đóng task (validator cảnh báo nếu quên). Bỏ qua thì không có gì để học, và ngưỡng mãi là phỏng đoán ban đầu.
 
+**Nửa còn lại của câu hỏi ROI — chi phí:**
+
+```bash
+node scripts/validate-tasks.mjs --cost
+```
+
+```
+  Instructions.md             5.7 KB
+  agents/SharedRules.md      14.3 KB
+  = every dispatch pays      20.0 KB
+
+  bootstrap            + orchestrator         25.9 KB
+  …
+  6 stage(s) → 155.9 KB per task, before the task's own artifacts.
+```
+
+`--calibrate` trả lời "có đáng không" nhưng phải đợi task đóng. `--cost` trả lời được **ngay**, vì sàn đọc luật không phụ thuộc vào kết quả chạy: nó là file trên đĩa. Kernel phình 16% thì hiện ở đây, không thì chỉ hiện trên hoá đơn cuối tháng mà không quy được về nguyên nhân. Đo bằng **byte, không phải token** — tokenisation khác theo vendor và trôi theo phiên bản model.
+
 ## Vì sao có cái này
 
 Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là gate mà model **chọn** tuân thủ. Gate bằng exit code thì không có chỗ để chọn. Harness gốc mất một thời gian mới học được điều đó; phần đắt nhất ở đây là `validate-tasks.mjs` + chuỗi truy vết AC, không phải mấy file markdown.
@@ -308,7 +326,9 @@ Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny
 
 **Lease chỉ đúng trên filesystem cục bộ.** `scripts/lease.mjs` chặn hai phiên `/start-task` cùng một task bằng `mkdir` (loại trừ) + `mtime` (TTL 30'). Trên NFS/SMB cả hai vế đều gãy: `mkdir` không đảm bảo nguyên tử, và server đóng dấu `mtime` bằng đồng hồ **của nó** — hai máy lệch giờ sẽ đọc một lease còn sống thành hết hạn rồi cướp, và hai phiên ghi đè handoff của nhau. Để `docs/tasks/` trên ổ mạng thì lease này là đồ trang trí. Không vá được rẻ: sửa đúng nghĩa là đổi cơ chế (lock server / trao token có fsync), và ngay cả việc *phát hiện* đang chạy trên FS mạng cũng không có cách nào đủ tin để cảnh báo.
 
-**Overhead đọc luật.** Mỗi stage nạp `Instructions.md` + `SharedRules.md` + file role ≈ 5,2k token, 7 stage ≈ 36k token/task chỉ để đọc luật, chưa tính code và retry. Harness **không đo** con số này (`telemetry` có schema nhưng phải điền tay) — đừng báo ROI khi chưa đo.
+**Overhead đọc luật — đo bằng `node scripts/validate-tasks.mjs --cost`.** Mỗi dispatch phải đọc `Instructions.md` + `SharedRules.md` + file role trước khi làm gì; 6 stage ≈ **156 KB/task** sàn, trước cả artifact của chính task. Lệnh in bảng theo stage và so được giữa hai bản kernel. Cố tình đo bằng **byte, không phải token**: tokenisation khác nhau theo vendor và trôi theo phiên bản model, một con số trông chính xác mà lệch 30% còn tệ hơn một tỉ lệ không ai nhầm là hoá đơn.
+
+Nửa còn lại — token thật — cần coordinator ghi `telemetry[].inputTokens` ở mỗi dispatch (`/start-task` step 6). `--cost` in ra khi có, và nói thẳng là **không có** khi chưa ai điền. Chưa đo thì đừng báo ROI.
 
 **Tracker chỉ đọc.** Task xong không tự đổi trạng thái trên ClickUp/Jira; PM vẫn phải cập nhật tay.
 
