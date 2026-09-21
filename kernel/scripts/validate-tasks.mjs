@@ -252,6 +252,30 @@ function handoffBlockCount(memDir, role) {
   return (readFileSync(f, "utf8").match(/^### /gm) ?? []).length;
 }
 
+// Did the coordinator actually clear context between stages?
+//
+// start-task.md requires it and calls skipping it "a known failure of this
+// harness (context runs out, it hangs mid-way)" -- but the rule was prose, so
+// nothing caught it, and the symptom only shows at stage 5 after 40 minutes.
+//
+// The signal: each stage reads ITS OWN artifacts (03 reads 02, not 01), so
+// inputTokens should wobble around a level. Carried-over conversation history
+// accumulates instead -- every stage strictly larger than the last.
+//
+// Warning, not error: a genuinely hard task can grow too, and 08 pasting machine
+// output is legitimately big. Monotonic AND a large total gap is the shape that
+// is hard to explain any other way.
+function contextBleed(telemetry = [], { minRuns = 4, growth = 2.5 } = {}) {
+  const t = telemetry.filter((e) => typeof e?.inputTokens === "number");
+  // Two points are not a trend, and a CLI that reports no tokens must not be
+  // guessed at.
+  if (t.length < minRuns) return null;
+  for (let i = 1; i < t.length; i++) if (t[i].inputTokens <= t[i - 1].inputTokens) return null;
+  const first = t[0].inputTokens, last = t.at(-1).inputTokens;
+  if (!first || last < first * growth) return null;
+  return { first, last, runs: t.length, from: t[0].stage, to: t.at(-1).stage };
+}
+
 // Returns array of {file, lines} for handoff blocks exceeding the cap.
 function oversizedHandoffBlocks(memDir) {
   const offenders = [];
@@ -957,6 +981,20 @@ if (args.has("--self-check")) {
     assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
   }
 
+  // contextBleed: the /clear rule with a measurement behind it. False positives
+  // are the real risk here -- it is a warning on self-reported data, so the
+  // negative cases matter more than the positive one.
+  {
+    const tel = (...n) => n.map((inputTokens, i) => ({ stage: `s${i}`, tier: "mid", inputTokens }));
+    assert.ok(contextBleed(tel(6000, 11000, 19000, 31000)), "monotonic 5x growth over 4 dispatches");
+    assert.equal(contextBleed(tel(6000, 19000, 9000, 31000)), null, "wobble is normal even when the total is big");
+    assert.equal(contextBleed(tel(6000, 31000)), null, "2 points are not a trend");
+    assert.equal(contextBleed(tel(6000, 7000, 8000, 9000)), null, "monotonic but mild: stages do differ in size");
+    assert.equal(contextBleed([{ stage: "a", tier: "mid" }, { stage: "b", tier: "mid" }]), null, "no tokens reported → no guess");
+    assert.equal(contextBleed([]), null, "no telemetry at all");
+    assert.equal(contextBleed(tel(0, 0, 0, 9000)), null, "a zero first reading must not divide into a finding");
+  }
+
   // triage: which road a task takes. The failure this guards is symmetric --
   // overusing the escape hatch makes the harness scenery, underusing it charges
   // 7 stages for a copy change -- so both directions get a case.
@@ -1365,6 +1403,16 @@ for (const { sprint, task, path } of folders) {
   // reading when tuning prompts or splitting tasks.
   for (const [stage, n] of Object.entries(data.attempts ?? {}))
     if (n >= 3) warnings.push(`stage "${stage}" ran ${n}× — gate kept sending it back; worth a look`);
+
+  // 2d. Context bleed: the /clear-between-stages rule, with something behind it.
+  {
+    const bleed = contextBleed(data.telemetry);
+    if (bleed)
+      warnings.push(
+        `inputTokens grew monotonically across ${bleed.runs} dispatches (${bleed.from} ${bleed.first} → ${bleed.to} ${bleed.last}) — ` +
+          `looks like context was not cleared between stages; each stage should read only its own artifacts (start-task.md "you are the COORDINATOR")`,
+      );
+  }
 
   // Retry budget with teeth. `attempts` is self-reported by the coordinator —
   // the very actor that loops — so cross-check it against the append-only

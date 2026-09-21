@@ -255,6 +255,10 @@ Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** l
 
 Đây là chỗ duy nhất harness đo được rework một cách độc lập với lời khai. `retryBudget` khai ở `harness.config.json`.
 
+**Context bleed — luật `/clear` có thêm một phép đo.** Mỗi stage chỉ đọc artifact **của chính nó** (`03` đọc `02`, không đọc `01`), nên `telemetry[].inputTokens` phải **dao động quanh một mức**. Không clear ngữ cảnh thì lịch sử hội thoại cộng dồn — tăng đơn điệu, stage sau luôn lớn hơn stage trước. ≥4 dispatch tăng đơn điệu và cuối ≥ 2.5× đầu → **warning**.
+
+Warning chứ không error: task khó thật cũng có thể tăng, và `08` dán output máy thì to hợp lệ. Chuỗi dao động — dù tổng lớn — không bị báo. CLI không báo token thì im lặng, không đoán.
+
 **Dùng nó để sửa vector, đừng để nó nằm im.** Task nào cũng `implementation: 2` thì hoặc `scope` đang bị chấm thấp, hoặc Gate 3 chưa liệt kê đủ file. Đó là dữ liệu thật để hiệu chỉnh §5.1, thay cho việc đoán trọng số.
 
 ### 5.6. Đóng vòng: `outcome` + `--calibrate`
