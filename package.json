@@ -6,6 +6,10 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "files": ["install.mjs", "kernel/", "skills/", "agents/", "adapters/", "commands/", "hooks/"],
-  "scripts": { "test": "node install.mjs --self-test" },
+  "repository": { "type": "git", "url": "git+https://github.com/thnhtus/spec-harness.git" },
+  "scripts": {
+    "test": "node install.mjs --self-test",
+    "prepublishOnly": "node install.mjs --self-test"
+  },
   "license": "MIT"
 }

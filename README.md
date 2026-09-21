@@ -55,13 +55,10 @@ Một repo (FE hoặc BE), task docs nằm cùng chỗ với code. Đây là m�
 ```bash
 cd ~/code/my-app          # ← repo code của bạn, đứng sẵn ở đây
 
-# không cần clone (repo phải public)
-curl -fsSLo install.mjs https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.mjs
-node install.mjs . && rm install.mjs
+npx spec-harness .
 
-# hoặc từ bản clone
-git clone --depth 1 https://github.com/thnhtus/spec-harness /tmp/spec-harness
-node /tmp/spec-harness/install.mjs .
+# ghim version:  npx spec-harness@0.1.0 .
+# repo private:  git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs .
 ```
 
 Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 20+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
@@ -81,8 +78,7 @@ cd ~/code/my-workspace    # ← thư mục đang chứa fe/ và be/
 mkdir harness && cd harness
 git init                  # tuỳ chọn — xem "Có cần git init không?" bên dưới
 
-curl -fsSLo install.mjs https://raw.githubusercontent.com/thnhtus/spec-harness/master/install.mjs
-node install.mjs . && rm install.mjs
+npx spec-harness .
 ```
 
 ```
@@ -204,7 +200,7 @@ Ba thứ hay sai:
 
 ### Ghi chú cài đặt
 
-Cách `curl` tự tải tarball vào thư mục tạm rồi xoá — không để lại bản clone. (Tải file rồi chạy chứ không `| bash`: pipe vào `node -` làm mất `import.meta.url`, installer hết biết mình nằm đâu.) Ghim phiên bản bằng `SPEC_HARNESS_REF=v0.1.0`. Repo private thì chỉ dùng được cách clone (script báo rõ và dừng, không cài nửa vời).
+`npx` tải tarball từ npm vào cache rồi chạy `install.mjs` (khai báo ở `bin`) — không để lại bản clone trong project. Ghim phiên bản bằng `npx spec-harness@0.1.0`. Chạy `install.mjs` đơn lẻ (không qua npm) thì nó tự tải tarball từ GitHub, ref ghim bằng `SPEC_HARNESS_REF=v0.1.0`.
 
 Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, và `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè).
 
