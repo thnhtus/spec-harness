@@ -41,7 +41,12 @@ jobs:
           pkg="$(node -p 'require("./package.json").version')"
           [ "$tag" = "$pkg" ] || { echo "✖ tag $tag ≠ package.json $pkg"; exit 1; }
 
-      # prepublishOnly cũng chạy self-test, nhưng lúc đó tarball đã pack xong —
-      # chạy trước để hỏng thì fail sớm, và để log đọc ra là fail ở bước nào.
-      - run: node install.mjs --self-test
+      # TRÊN TARBALL, không phải trên cây repo. Chạy trên cây repo là đúng cái đã
+      # để lọt 0.1.4: `.claude-plugin/` thiếu trong `files`, cây repo có file nên
+      # self-test xanh, tarball không có nên người cài `npx spec-harness` ăn
+      # ENOENT. Chỉ bản sắp gửi đi mới đáng kiểm.
+      - name: self-test trên tarball sắp publish
+        run: |
+          npm pack --silent | tail -1 | xargs -I{} tar xzf {} -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/package" && node install.mjs --self-test
       - run: npm publish

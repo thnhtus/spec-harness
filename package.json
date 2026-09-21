@@ -1,6 +1,6 @@
 {
   "name": "spec-harness",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Spec-driven agent harness: 7 roles, 5 code-enforced gates (Gate 5 is an adversarial agent), AC traceability from spec to test evidence.",
   "bin": {
     "spec-harness": "install.mjs"
@@ -11,6 +11,7 @@
   },
   "files": [
     "install.mjs",
+    ".claude-plugin/",
     "kernel/",
     "skills/",
     "agents/",

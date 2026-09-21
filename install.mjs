@@ -543,6 +543,33 @@ if (args[0] === "--self-test") {
     rmSync(dir, { recursive: true, force: true });
   }
 
+  // Mọi thứ install.mjs đọc từ SRC phải nằm trong `files` của package.json.
+  // Cây repo luôn có đủ, nên self-test ở đây xanh trong khi tarball thiếu file
+  // và người cài qua npx ăn ENOENT — đúng cách 0.1.4 lọt ra ngoài với
+  // `.claude-plugin/` không được đóng gói.
+  //
+  // Đọc path từ chính source thay vì chép tay một danh sách: danh sách chép tay
+  // là chỗ thứ hai phải nhớ sửa, và nó sẽ không được sửa.
+  {
+    const src = read(join(SRC, "install.mjs"));
+    const pkg = JSON.parse(read(join(SRC, "package.json")));
+    const shipped = new Set(pkg.files.map((f) => f.replace(/\/$/, "")));
+    // package.json luôn có trong tarball dù không khai trong files (npm ép).
+    shipped.add("package.json");
+    const missing = new Set();
+    // `existsSync(join(SRC, ...))` = chỗ đã biết file có thể vắng và xử lý được
+    // (ví dụ harness.config.json của repo gốc, cố ý không đóng gói). Đọc thẳng
+    // không guard mới là chỗ tarball thiếu file thì nổ.
+    for (const m of src.matchAll(/(existsSync\(\s*)?join\(SRC,\s*"([^"]+)"/g)) {
+      if (m[1]) continue;
+      const top = m[2].split("/")[0];
+      if (!shipped.has(top)) missing.add(top);
+    }
+    if (missing.size)
+      fail(`install.mjs đọc ${[...missing].join(", ")} nhưng package.json "files" không đóng gói — ` +
+           `cây repo có nên self-test xanh, tarball thiếu nên npx hỏng`);
+  }
+
   // Hai chỗ khai version thì chúng SẼ lệch — đã lệch một lần (plugin.json 0.1.0
   // vs package.json 0.1.1) và không có gì bắt được. `npm version` chỉ đụng
   // package.json, nên vế còn lại phải được assert chứ không thể trông cậy vào
