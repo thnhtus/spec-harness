@@ -28,8 +28,10 @@ jobs:
         with:
           node-version: "20"
           registry-url: https://registry.npmjs.org
-      # Trusted publishing cần npm >= 11.5.1; Node 20 ship npm 10.
-      - run: npm install -g npm@latest
+      # Trusted publishing cần npm >= 11.5.1; Node 20 ship npm 10. Ghim major
+      # chứ không @latest: npm 12 đã bỏ Node 20, @latest sẽ tự vỡ bản không chạy
+      # được — workflow đang xanh tự đỏ vào một ngày không ai đụng vào repo.
+      - run: npm install -g npm@11
 
       # Tag và package.json lệch nhau thì tag trỏ vào một version khác cái vừa
       # publish — về sau `git checkout v0.1.1` ra đúng cây code của 0.1.2.
