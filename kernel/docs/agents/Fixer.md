@@ -1,7 +1,7 @@
-# FEFix
+# Fixer
 
-> **File:** `docs/agents/FEFix.md` — role `fe-fix`, stage `implementation` cho `branchType = bugfix`. **Gate sở hữu:** Gate 4.
-> Cùng hình dạng [`./FEImplementer.md`](./FEImplementer.md) nhưng định hướng **sửa lỗi**: reproduce-first, diff tối thiểu, bám root-cause. File này chỉ ghi phần **khác** so với FEImplementer — phần còn lại (input, nhánh, lệnh, output, forbidden) theo FEImplementer + [`./SharedRules.md`](./SharedRules.md).
+> **File:** `docs/agents/Fixer.md` — role `fixer`, stage `implementation` cho `branchType = bugfix`. **Gate sở hữu:** Gate 4.
+> Cùng hình dạng [`./Implementer.md`](./Implementer.md) nhưng định hướng **sửa lỗi**: reproduce-first, diff tối thiểu, bám root-cause. File này chỉ ghi phần **khác** so với Implementer — phần còn lại (input, nhánh, lệnh, output, forbidden) theo Implementer + [`./SharedRules.md`](./SharedRules.md).
 
 ---
 
@@ -23,19 +23,19 @@
   → Ghi 06 + 08, Gate 4
 ```
 
-- **Không tái hiện được** hoặc **root-cause thực tế khác plan** → STOP, `status = blocked`, ghi `.agent-memory/fe-fix.md`, báo to, re-route `technical-planner`.
+- **Không tái hiện được** hoặc **root-cause thực tế khác plan** → STOP, `status = blocked`, ghi `.agent-memory/fixer.md`, báo to, re-route `technical-planner`.
 - Bug chỉ thấy trên trình duyệt → bổ sung repro thủ công ngắn (before/after) trong `08`.
 
 ## 3. Kỷ luật bugfix
 
 - **Minimal-diff:** không refactor lân cận, không đổi tên prop, không restyle, không nâng version, không "dọn dẹp tiện tay".
 - **Không che triệu chứng:** không `@ts-ignore` giấu lỗi type, không nuốt lỗi axios, không ẩn state UI, không tắt/skip test sẵn có đang fail.
-- Bug do lệch contract FE↔API → không vá FE "chịu đựng" âm thầm: log quyết định vào `06` (API Integration Notes) + làm tươi `docs/api/` theo cách project quy định (ProjectRules §1).
+- Bug do lệch contract giữa hai layer → không vá bên gọi "chịu đựng" âm thầm: log quyết định vào `06` (API Integration Notes) + làm tươi `docs/api/` theo cách project quy định (ProjectRules §1).
 
-## 4. Output bổ sung (so với FEImplementer)
+## 4. Output bổ sung (so với Implementer)
 
-- `06-FE-Implementation-Notes.md` thêm mục: **Root Cause** · **Reproduction Test** (test mới + file) · **Regression Risk**.
-- `08-Test-Evidence.md` phần `## Frontend`: **Reproduction Before Fix** (log test fail trước khi sửa) · Kết quả từng lệnh của ProjectRules §7 · **Adjacent Flow Smoke Checks** (≥ 1 luồng lân cận, before/after khi UI thấy được) · bảng **AC coverage** như FEImplementer ([`./SharedRules.md` §9.1](./SharedRules.md)) — bug thường ít AC, nhưng AC nào có trong `02` cũng phải có dòng.
+- `06-Implementation-Notes.md` thêm mục: **Root Cause** · **Reproduction Test** (test mới + file) · **Regression Risk**.
+- `08-Test-Evidence.md` phần `## Kết quả lệnh`: **Reproduction Before Fix** (log test fail trước khi sửa) · Kết quả từng lệnh của ProjectRules §7 · **Adjacent Flow Smoke Checks** (≥ 1 luồng lân cận, before/after khi UI thấy được) · bảng **AC coverage** như Implementer ([`./SharedRules.md` §9.1](./SharedRules.md)) — bug thường ít AC, nhưng AC nào có trong `02` cũng phải có dòng.
 
 ## 5. Gate 4 — tiêu chí bugfix
 
@@ -50,7 +50,7 @@
 | 7 | Regression Risk có mitigation nếu ≥ medium |
 | 8 | Bảng **AC coverage** đủ mọi AC của `02`; root-cause thật khác AC → Amendment log ([`./SharedRules.md` §9](./SharedRules.md)) |
 
-FAIL → `status = blocked` / `needs_clarification`, ghi blocker vào `06`/`08` + `.agent-memory/fe-fix.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
+FAIL → `status = blocked` / `needs_clarification`, ghi blocker vào `06`/`08` + `.agent-memory/fixer.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
 PASS → `currentStage = adversarial_review`, `status = in_progress`, handoff → [`adversary`](./Adversary.md). **Không tự đặt `reviewing`** — Gate 5 mới là chỗ chuyển sang đó.
 
 ## 6. Ví dụ rút gọn

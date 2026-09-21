@@ -295,7 +295,7 @@ model của task.
 | 2 | fsd_write → Gate 1 | `fsd-writer` | `docs/agents/FSDWriter.md` | `docsPath` from step 1 |
 | 3 | fsd_review → Gate 2 | `fsd-reviewer` | `docs/agents/FSDReviewer.md` | `docsPath` |
 | 4 | technical_plan → Gate 3 | `technical-planner` | `docs/agents/TechnicalPlanner.md` | `docsPath` |
-| 5 | implementation → Gate 4 | `fe-implementer` (branchType feature/hotfix) or `fe-fix` (bugfix) | `docs/agents/FEImplementer.md` / `docs/agents/FEFix.md` | `docsPath`; remind: only files in the Gate-3 list; one-shot commands only |
+| 5 | implementation → Gate 4 | `implementer` (branchType feature/hotfix) or `fixer` (bugfix) | `docs/agents/Implementer.md` / `docs/agents/Fixer.md` | `docsPath`; remind: only files in the Gate-3 list; one-shot commands only |
 | 6 | adversarial_review → Gate 5 | `adversary` | `docs/agents/Adversary.md` | `docsPath`; remind: mặc định FAIL, **tự chạy lại** lệnh ProjectRules §7 chứ không tin `08`, không sửa `src/` |
 | 7 | reviewing | — (you) | — | see below |
 

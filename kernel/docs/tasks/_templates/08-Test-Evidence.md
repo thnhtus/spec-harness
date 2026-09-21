@@ -1,9 +1,9 @@
 # 08 — Test Evidence: {taskName}
 
-> Sinh bởi implementer (`fe-implementer` / `fe-fix`), stage `implementation`, **Gate 4**. Dán **output thật** của lệnh; không claim pass khi chưa chạy. Append-only, tiếng Việt.
+> Sinh bởi implementer (`implementer` / `fixer`), stage `implementation`, **Gate 4**. Dán **output thật** của lệnh; không claim pass khi chưa chạy. Append-only, tiếng Việt.
 > **Evidence mặc định = unit test giới hạn đúng test file của task** (nhanh, ít RAM); full-suite chỉ khi §7 yêu cầu. Danh sách lệnh one-shot hợp lệ: [`../../agents/ProjectRules.md` §7](../../agents/ProjectRules.md).
 
-## Frontend
+## Kết quả lệnh
 
 | Verification Type | Command / Action | Covers AC | Expected | Actual | Result | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -22,7 +22,7 @@ Mọi `AC-nn` của `02-FSD-Review.md` phải có **đúng một** dòng ở đ�
 | --- | --- | --- |
 | AC-nn | `src/test/…::<tên test>` | PASS |
 
-### Reproduction Before Fix *(chỉ `fe-fix`)*
+### Reproduction Before Fix *(chỉ `fixer`)*
 
 Output cho thấy test tái hiện **fail** trước khi sửa.
 

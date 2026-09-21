@@ -487,7 +487,7 @@ function fencedText(t) {
 const FAILURE_RE =
   /\b\d+\s+(failed|failing)\b|^\s*(FAIL|✗|✖|×)\s|\bexit (code )?[1-9]\d*\b|\bERR!/im;
 
-// Lối thoát cho test đỏ CÓ CHỦ ĐÍCH (fe-fix reproduce-first: viết test đỏ
+// Lối thoát cho test đỏ CÓ CHỦ ĐÍCH (fixer reproduce-first: viết test đỏ
 // trước, sửa sau). Không có nó thì agent học cách không dán output fail —
 // tệ hơn hẳn việc gate lỏng, vì lúc đó bằng chứng biến mất thay vì bị bắt.
 const KNOWN_FAILURE_RE = /<!--\s*known-failure:/i;
@@ -714,7 +714,7 @@ if (args.has("--self-check")) {
     false,
     "exit code khác 0 chặn Gate 4",
   );
-  // Lối thoát: test đỏ có chủ đích (fe-fix reproduce-first) vẫn khai được.
+  // Lối thoát: test đỏ có chủ đích (fixer reproduce-first) vẫn khai được.
   assert.equal(
     hasRealEvidenceIn(
       "<!-- known-failure: AC-03 reproduce -->\n```\n$ " + sample + "\nTests: 3 passed, 1 failed\n```",

@@ -72,7 +72,7 @@ Phát hiện AC **sai / bất khả thi** khi khảo sát `src/` → **không t�
 
 FAIL → `status = blocked` (blocker thuộc nghiệp vụ → `needs_clarification`, trả `fsd-reviewer`), ghi blocker vào `03-Technical-Plan.md` + `.agent-memory/technical-planner.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
 
-PASS → `status = in_progress`, `currentStage = implementation`, `agents.technical-planner.status = done`, handoff → `fe-implementer` (feature/hotfix) hoặc `fe-fix` (bugfix) theo [`../Agents.md`](../Agents.md) §4.
+PASS → `status = in_progress`, `currentStage = implementation`, `agents.technical-planner.status = done`, handoff → `implementer` (feature/hotfix) hoặc `fixer` (bugfix) theo [`../Agents.md`](../Agents.md) §4.
 
 ## 5. Handoff
 

@@ -263,8 +263,8 @@
         "fsd-writer",
         "fsd-reviewer",
         "technical-planner",
-        "fe-implementer",
-        "fe-fix",
+        "implementer",
+        "fixer",
         "adversary"
       ]
     },
@@ -356,7 +356,7 @@
   },
   "allOf": [
     {
-      "$comment": "Branch type must match implementer: feature/hotfix => fe-implementer active; bugfix => fe-fix active.",
+      "$comment": "Branch type must match implementer: feature/hotfix => implementer active; bugfix => fixer active.",
       "if": {
         "properties": {
           "branchType": {
@@ -368,7 +368,7 @@
         "properties": {
           "agents": {
             "properties": {
-              "fe-implementer": {
+              "implementer": {
                 "properties": {
                   "status": {
                     "const": "not_applicable"

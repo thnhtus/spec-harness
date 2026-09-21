@@ -56,8 +56,8 @@ Task doc nằm tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + template
 | `01-FSD.md` | fsd-writer | FSD IEEE cấp task (skill `document-to-ieee-srs`) |
 | `02-FSD-Review.md` | fsd-reviewer | AC, câu hỏi BA, risk |
 | `03-Technical-Plan.md` | technical-planner | File sẽ đổi, test plan, checklist, risk |
-| `06-FE-Implementation-Notes.md` | fe-implementer / fe-fix | Quyết định khi code, file đã sửa |
-| `08-Test-Evidence.md` | fe-implementer / fe-fix | Output thật của lệnh ProjectRules §7 |
+| `06-Implementation-Notes.md` | implementer / fixer | Quyết định khi code, file đã sửa |
+| `08-Test-Evidence.md` | implementer / fixer | Output thật của lệnh ProjectRules §7 |
 | `09-Adversarial-Review.md` | adversary | Kiểm đối kháng: tự chạy lại lệnh, soi diff + test, finding (Gate 5) |
 | `.agent-memory/{role}.md` | từng role | Handoff (§4) |
 

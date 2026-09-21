@@ -9,7 +9,7 @@ Copy hai file này vào project mới rồi **thay hết nội dung**:
 
 Giữ nguyên số mục **1/2/3/7** — kernel tham chiếu chéo tới chúng bằng số.
 
-Nội dung hiện tại là của một FE React/TS dùng ClickUp + GitLab + Figma, chỉ để cho thấy **độ chi tiết cần đạt**. §2 và §7 của bạn sẽ khác hoàn toàn, và phần lớn giá trị của chúng chỉ xuất hiện sau khi project gặp sự cố thật — đừng cố viết đủ ngay từ đầu, viết đúng cái đã biết rồi bồi dần.
+Nội dung hiện tại là của một workspace FE React/TS + BE, dùng ClickUp + GitLab + Figma, chỉ để cho thấy **độ chi tiết cần đạt**. §2 và §7 của bạn sẽ khác hoàn toàn, và phần lớn giá trị của chúng chỉ xuất hiện sau khi project gặp sự cố thật — đừng cố viết đủ ngay từ đầu, viết đúng cái đã biết rồi bồi dần.
 
 Sau khi sửa xong, bắt buộc:
 

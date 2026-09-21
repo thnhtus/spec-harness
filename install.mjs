@@ -387,6 +387,35 @@ if (args[0] === "--self-test") {
       });
   if (hard.length) fail("còn tên tool MCP hardcode:", hard.join("\n"));
 
+  // Kernel không được khoá vào một layer. Role tên `fe-*` (và doc/template đi
+  // kèm) là cách khoá đó len vào lần trước: validator vốn đã đọc roles/routing
+  // từ config, nhưng TÊN trong kernel docs nói ngược lại — team BE đọc xong
+  // tưởng phải tự viết harness khác. Layer là dữ liệu của `repos[].layer`,
+  // không phải chữ trong kernel.
+  const layerLock = [];
+  for (const d of ["docs", ".claude/agents"])
+    for (const f of walk(join(T, d)))
+      read(f).split("\n").forEach((l, i) => {
+        if (/\b(fe|be)-(implementer|fix|fixer)\b|FEImplementer|FEFix/.test(l))
+          layerLock.push(`    ${f}:${i + 1}: ${l.trim()}`);
+      });
+  if (layerLock.length)
+    fail("kernel khoá vào một layer (role tên theo layer) — dùng `implementer`/`fixer`:", layerLock.join("\n"));
+
+  // … và chứng minh bằng một config BACKEND thật, không chỉ bằng việc vắng chữ
+  // "fe". Một project BE thuần phải qua được --self-check mà không sửa kernel.
+  {
+    const cfgPath = join(T, "harness.config.json");
+    const orig = read(cfgPath);
+    const be = JSON.parse(orig);
+    be.layers = ["backend"];
+    be.repos = [{ name: "api", path: ".", layer: "backend" }];
+    writeFileSync(cfgPath, JSON.stringify(be, null, 2));
+    const r = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--self-check"], { cwd: T, encoding: "utf8" });
+    writeFileSync(cfgPath, orig);
+    if (r.status !== 0) fail("config backend thuần không qua được --self-check — kernel vẫn khoá layer", r.stderr || r.stdout);
+  }
+
   // kernel gọi skill nào thì skill đó phải được cài kèm
   for (const f of walk(join(SRC, "kernel/docs")))
     for (const [, sk] of read(f).matchAll(/skill `([a-z0-9-]+)`/g))

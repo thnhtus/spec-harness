@@ -18,7 +18,7 @@ docs/tasks/
         ├── 01-FSD.md                      # fsd-writer — Gate 1 (≤ 250 dòng)
         ├── 02-FSD-Review.md               # fsd-reviewer — Gate 2 (≤ 150 dòng)
         ├── 03-Technical-Plan.md           # technical-planner — Gate 3 (≤ 200 dòng)
-        ├── 06-FE-Implementation-Notes.md  # fe-implementer | fe-fix — Gate 4
+        ├── 06-Implementation-Notes.md  # implementer | fixer — Gate 4
         ├── 08-Test-Evidence.md            # evidence thật (lệnh ProjectRules §7 + kết quả)
         ├── 09-Adversarial-Review.md       # adversary — Gate 5 (tự chạy lại, không tin 08)
         ├── 01a-…/02a-…-Appendix.md        # (tuỳ chọn) phần tràn trần — stage sau KHÔNG tự đọc
@@ -36,7 +36,7 @@ Trần kích thước là điều kiện gate — định nghĩa tại [`../agen
 | `01-FSD.md` | fsd-writer | Gate 1 |
 | `02-FSD-Review.md` | fsd-reviewer | Gate 2 |
 | `03-Technical-Plan.md` | technical-planner | Gate 3 |
-| `06-…` + `08-…` | fe-implementer \| fe-fix | Gate 4 |
+| `06-…` + `08-…` | implementer \| fixer | Gate 4 |
 | `09-Adversarial-Review.md` | adversary | Gate 5 |
 | `.agent-memory/{role}.md` | từng role | — |
 
@@ -67,7 +67,7 @@ Chạy `node scripts/validate-tasks.mjs` (không cần dependency; đọc `harne
 - File artifact bắt buộc có mặt theo `currentStage` đã đạt (vd `01-FSD.md` phải có khi `currentStage ≥ fsd_review`).
 - Trần dòng [§8](../agents/SharedRules.md) (00≤80, 01≤250, 02≤150, 03≤200, 06≤250, block handoff ≤30). Doc đã có `## Cập Nhật — …` (task bị gate trả về) thì trần áp cho **block mới nhất**, không phải cả file — append-only mà cap cả file là cái bẫy đóng: vượt trần, và §5 cấm xoá bớt để chui xuống dưới.
 - `08`/`09` **không có trần cứng** (`lineWarn` 400 = cảnh báo). Chúng chứa output dán nguyên văn; trần ở đó chỉ ép cắt bằng chứng, mà `adversary` cần đúng output đó để đối chiếu. Vượt 400 dòng = tín hiệu tách task, không phải lỗi.
-- `branchType` ↔ implementer (feature/hotfix → `fe-implementer`; bugfix → `fe-fix`).
+- `branchType` ↔ implementer (feature/hotfix → `implementer`; bugfix → `fixer`).
 - Khi `status ∈ {reviewing, mr_created, done}`: `08-Test-Evidence.md` phải có bằng chứng thật — lệnh khớp `evidenceCommandPattern` **và** kết quả pass/exit nằm **trong block ```code fence```**. Chữ "passed" ở ô *Expected* của bảng không tính: đó là kế hoạch, không phải kết quả ([Gate 4](../Agents.md) §3).
 - `09-Adversarial-Review.md` phải có verdict (PASS/FAIL/UNCERTAIN), output adversary **tự chạy**, và bảng "Tầng tĩnh" với cột *Kết quả tự chạy* **không rỗng** — tồn tại file là chưa đủ. Fence giống hệt `08` từng byte → cảnh báo copy-paste.
 - **Retry budget**: số block handoff của một role ≥ `retryBudget` (mặc định 4) → error. Block handoff là append-only nên nó đo rework độc lập với `attempts` (do coordinator tự khai); lệch nhau → warning. Hết budget thì đặt `status = split` + `splitInto` (≥2 taskId) để hạ xuống warning — xem `Agents.md` §5.5.

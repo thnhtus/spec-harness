@@ -1,7 +1,7 @@
-# FEImplementer
+# Implementer
 
-> **File:** `docs/agents/FEImplementer.md` — role `fe-implementer`, stage `implementation` cho `branchType ∈ {feature, hotfix}` (bugfix → [`./FEFix.md`](./FEFix.md)). **Gate sở hữu:** Gate 4.
-> **Input chính:** `03-Technical-Plan.md`. **Output:** code + `06-FE-Implementation-Notes.md` + `08-Test-Evidence.md`.
+> **File:** `docs/agents/Implementer.md` — role `implementer`, stage `implementation` cho `branchType ∈ {feature, hotfix}` (bugfix → [`./Fixer.md`](./Fixer.md)). **Gate sở hữu:** Gate 4.
+> **Input chính:** `03-Technical-Plan.md`. **Output:** code + `06-Implementation-Notes.md` + `08-Test-Evidence.md`.
 > **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (guardrail source §2, nhánh §3, lệnh §7, kèm mọi chuẩn UI/khác project bắt buộc).
 
 ---
@@ -33,18 +33,18 @@ Theo [`./SharedRules.md` §3](./SharedRules.md): nếu có `branchActual` (nhán
 
 Bắt buộc trước handoff: toàn bộ lệnh kiểm tra của [`./ProjectRules.md` §7](./ProjectRules.md) (unit test phạm vi task · type-check · lint). Nâng lên full-suite chỉ khi diff chạm file dùng chung nhiều nơi, theo đúng điều kiện §7. **Không bao giờ** chạy lệnh watch-mode/server — §7 liệt kê danh sách cấm.
 
-Test fail chưa sửa được → `status = blocked`, ghi `08-Test-Evidence.md` + `.agent-memory/fe-implementer.md`, báo to, dừng. Không thêm test mới nếu task không yêu cầu rõ; test sẵn có **phải** pass.
+Test fail chưa sửa được → `status = blocked`, ghi `08-Test-Evidence.md` + `.agent-memory/implementer.md`, báo to, dừng. Không thêm test mới nếu task không yêu cầu rõ; test sẵn có **phải** pass.
 
 ## 5. Output (tiếng Việt, append-only)
 
-**`06-FE-Implementation-Notes.md`:** Metadata · Branch · Implementation Summary · Changed Files · Decisions · API Integration Notes · Plan Deviations · Assumptions Used · Known Limitations · Handoff.
+**`06-Implementation-Notes.md`:** Metadata · Branch · Implementation Summary · Changed Files · Decisions · API Integration Notes · Plan Deviations · Assumptions Used · Known Limitations · Handoff.
 
 Bảng Changed Files: `| File | Change Type | Reason | Related Requirement |`
 Bảng Decisions: `| Decision ID | Decision | Reason | Alternatives | Decided By | Date |`
 
 **`08-Test-Evidence.md`:** bảng `| Verification Type | Command / Action | Covers AC | Expected | Actual | Result | Notes |` — `Actual`/`Result` là kết quả **thật** quan sát được; không điền khi chưa chạy. Kèm bảng **AC coverage**: mỗi `AC-nn` của `02` một dòng, trỏ `test file :: tên it(...)` hoặc `manual` (chỉ khi AC đó có ở bảng AC-manual của `03`) — [`./SharedRules.md` §9.1](./SharedRules.md). Đặt `AC-nn` trong tên `it(...)` để grep ngược được từ code.
 
-Cập nhật `task.agent.json`: `agents.fe-implementer.status`, `currentStage`, `status`, `updatedAt`.
+Cập nhật `task.agent.json`: `agents.implementer.status`, `currentStage`, `status`, `updatedAt`.
 
 ## 6. Gate 4 — điều kiện qua
 
@@ -54,16 +54,16 @@ Cập nhật `task.agent.json`: `agents.fe-implementer.status`, `currentStage`, 
 - [ ] `06` có Changed Files + Decisions đầy đủ.
 - [ ] Diff **chỉ** nằm trong danh sách file Gate 3.
 - [ ] Nhánh đúng quy tắc §2; không chạm nhánh protected.
-- [ ] Blocker/risk mở đã ghi vào doc + `.agent-memory/fe-implementer.md`.
+- [ ] Blocker/risk mở đã ghi vào doc + `.agent-memory/implementer.md`.
 
 FAIL → `status = blocked`, ghi blocker, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
 PASS → `currentStage = adversarial_review`, `status = in_progress`, handoff → [`adversary`](./Adversary.md). **Không tự đặt `reviewing`** — Gate 5 mới là chỗ chuyển sang đó.
 
 ## 7. Handoff
 
-`.agent-memory/fe-implementer.md` (≤ 30 dòng): inputs, decisions, risks mở, file đã đổi, evidence, next (= reviewing), continue.
+`.agent-memory/implementer.md` (≤ 30 dòng): inputs, decisions, risks mở, file đã đổi, evidence, next (= reviewing), continue.
 
-Nếu task **đổi contract FE↔API**: làm tươi [`../api/`](../api/README.md) theo cách project quy định (ProjectRules §1) + tóm tắt vào mục API Integration Notes của `06` — không tạo file riêng.
+Nếu task **đổi contract giữa hai layer**: làm tươi [`../api/`](../api/README.md) theo cách project quy định (ProjectRules §1) + tóm tắt vào mục API Integration Notes của `06` — không tạo file riêng.
 
 ## 8. Forbidden
 

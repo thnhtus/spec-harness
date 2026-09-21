@@ -13,7 +13,7 @@
 | Repo | <repo> |
 | Developer | {developer} |
 | branchType | {branchType} (`feature` / `bugfix` / `hotfix`) |
-| layer | frontend |
+| layer | {layer} (theo `repos[].layer` của repo đã chọn) |
 | taskComplexity | {taskComplexity} (`trivial` / `normal` / `high`) |
 | Nhánh | `<theo ProjectRules §3>` |
 | Target branch | develop |

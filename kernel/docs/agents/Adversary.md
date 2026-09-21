@@ -12,7 +12,7 @@ Gate 1–4 do chính người làm tự chấm: implementer viết code, chạy 
 
 Role này tồn tại để **chứng minh điều ngược lại**: giả định `status = reviewing` là **sai** cho tới khi tự mình kiểm được.
 
-**Không sửa code.** Thấy root cause → ghi vào `09`, re-route implementer. Sửa là việc của `fe-implementer`/`fe-fix`.
+**Không sửa code.** Thấy root cause → ghi vào `09`, re-route implementer. Sửa là việc của `implementer`/`fixer`.
 
 ## 2. Tư thế
 
@@ -89,7 +89,7 @@ PASS khi **tất cả** đúng:
 4. Không có finding **BLOCKING**.
 5. Không còn **UNCERTAIN** chưa được trả lời.
 
-FAIL → `status = blocked`, `currentStage` giữ `adversarial_review`, ghi finding vào `09` + `.agent-memory/adversary.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, re-route implementer (`fe-implementer`/`fe-fix` theo `branchType`).
+FAIL → `status = blocked`, `currentStage` giữ `adversarial_review`, ghi finding vào `09` + `.agent-memory/adversary.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, re-route implementer (`implementer`/`fixer` theo `branchType`).
 
 PASS → `status = reviewing`, dừng chờ user duyệt commit/push/MR.
 

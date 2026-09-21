@@ -24,7 +24,7 @@ Tham số (tuỳ chọn trừ `task`):
 | `branchType` | `feature` \| `bugfix` \| `hotfix` | suy từ task type tracker; không có → chặn |
 | `target` | Nhánh đích | `develop` |
 
-`layer` **luôn** `frontend`.
+`layer` lấy từ entry `repos` đã chọn (`repos[].layer`) — kernel không giả định một layer nào. Giá trị phải nằm trong `harness.config.json → layers`, validator chặn nếu không.
 
 ---
 
@@ -71,13 +71,13 @@ Copy từ `docs/tasks/_templates/` (chỉ tạo mới, không clobber) sang `doc
 ├── 01-FSD.md                  # khung cho fsd-writer
 ├── 02-FSD-Review.md           # khung cho fsd-reviewer
 ├── 03-Technical-Plan.md       # khung cho technical-planner
-├── 06-FE-Implementation-Notes.md
+├── 06-Implementation-Notes.md
 ├── 08-Test-Evidence.md
 ├── 09-Adversarial-Review.md
 └── .agent-memory/orchestrator.md
 ```
 
-Schema `task.agent.json` + giá trị `status`: [`./SharedRules.md` §6](./SharedRules.md). Với `branchType=bugfix`: `fe-fix = pending`, `fe-implementer = not_applicable` (ngược lại cho feature/hotfix). Sau bootstrap: `currentStage = "fsd_write"`.
+Schema `task.agent.json` + giá trị `status`: [`./SharedRules.md` §6](./SharedRules.md). Với `branchType=bugfix`: `fixer = pending`, `implementer = not_applicable` (ngược lại cho feature/hotfix). Sau bootstrap: `currentStage = "fsd_write"`.
 
 `00-Metadata.md` (tiếng Việt, ≤ 80 dòng): tóm tắt task từ tracker, link tracker/design (thiếu → `unavailable`), `branchType`, nhánh dự kiến (+ `branchActual` nếu có), sprint, FSD/SRS ID liên quan nếu rõ ngay.
 

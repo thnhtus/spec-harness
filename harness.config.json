@@ -36,16 +36,16 @@
     "fsd-writer",
     "fsd-reviewer",
     "technical-planner",
-    "fe-implementer",
-    "fe-fix",
+    "implementer",
+    "fixer",
     "adversary"
   ],
   "routing": {
     "field": "branchType",
     "map": {
-      "feature": "fe-implementer",
-      "hotfix": "fe-implementer",
-      "bugfix": "fe-fix"
+      "feature": "implementer",
+      "hotfix": "implementer",
+      "bugfix": "fixer"
     }
   },
   "lineCaps": {
@@ -53,7 +53,7 @@
     "01-FSD.md": 250,
     "02-FSD-Review.md": 150,
     "03-Technical-Plan.md": 200,
-    "06-FE-Implementation-Notes.md": 250
+    "06-Implementation-Notes.md": 250
   },
   "handoffBlockCap": 30,
   "requiredAtStage": [
@@ -85,14 +85,14 @@
     {
       "stage": "adversarial_review",
       "files": [
-        "06-FE-Implementation-Notes.md",
+        "06-Implementation-Notes.md",
         "08-Test-Evidence.md"
       ]
     }
   ],
   "gate4Artifacts": {
     "evidence": "08-Test-Evidence.md",
-    "notes": "06-FE-Implementation-Notes.md",
+    "notes": "06-Implementation-Notes.md",
     "adversarial": "09-Adversarial-Review.md"
   },
   "acTrace": {
@@ -125,8 +125,8 @@
     "fsd-writer": "fsd_write",
     "fsd-reviewer": "fsd_review",
     "technical-planner": "technical_plan",
-    "fe-implementer": "implementation",
-    "fe-fix": "implementation",
+    "implementer": "implementation",
+    "fixer": "implementation",
     "adversary": "adversarial_review"
   },
   "lineWarn": {

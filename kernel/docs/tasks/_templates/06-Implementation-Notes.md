@@ -1,14 +1,14 @@
-# 06 — FE Implementation Notes: {taskName}
+# 06 — Implementation Notes: {taskName}
 
-> Sinh bởi `fe-implementer` (feature/hotfix) hoặc `fe-fix` (bugfix), stage `implementation`, **Gate 4**. Append-only, tiếng Việt.
+> Sinh bởi `implementer` (feature/hotfix) hoặc `fixer` (bugfix), stage `implementation`, **Gate 4**. Append-only, tiếng Việt.
 > **≤ 250 dòng** ([`../../agents/SharedRules.md` §8](../../agents/SharedRules.md)) — đây là văn xuôi (Decisions, Deviations, Known Limitations), cắt được. Output lệnh thì dán vào `08`, nơi không có trần.
 
 ## Metadata
 
 - Nhánh: `<theo ProjectRules §3>` (`branchActual` nếu dùng nhánh user quản lý)
-- Implementer: `fe-implementer` | `fe-fix`
+- Implementer: `implementer` | `fixer`
 
-## Root Cause *(chỉ `fe-fix`)*
+## Root Cause *(chỉ `fixer`)*
 
 …
 
@@ -26,7 +26,7 @@
 
 ## API Integration Notes
 
-Endpoint FE chạm tới + file `src/api/*.api.ts` / `src/queries/*.queries.ts`. Nếu đổi contract FE↔API → làm tươi `docs/api/` theo cách project quy định (ProjectRules §1) và tóm tắt contract FE phụ thuộc ngay tại mục này.
+Endpoint task chạm tới + file client/handler tương ứng (đường dẫn cụ thể theo ProjectRules §2). Nếu đổi contract giữa hai layer → làm tươi `docs/api/` theo cách project quy định (ProjectRules §1) và tóm tắt contract mà task phụ thuộc ngay tại mục này.
 
 ## Routing / State / UI Notes
 
@@ -38,7 +38,7 @@ Endpoint FE chạm tới + file `src/api/*.api.ts` / `src/queries/*.queries.ts`.
 
 …
 
-## Regression Risk *(chỉ `fe-fix`)*
+## Regression Risk *(chỉ `fixer`)*
 
 …
 

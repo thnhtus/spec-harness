@@ -29,7 +29,7 @@ Task chạm **nhiều layer** (vd sửa cả FE lẫn BE): tách thành hai task
 
 ## 1. Bảng role (7 role)
 
-Tên kebab-case; `layer` luôn `frontend`; mỗi role một file trong [`agents/`](./agents/SharedRules.md).
+Tên kebab-case; `layer` của task lấy từ `repos[].layer`; mỗi role một file trong [`agents/`](./agents/SharedRules.md).
 
 | Role | Stage | Output chính | Gate chặn khi | Chi tiết |
 | --- | --- | --- | --- | --- |
@@ -37,11 +37,11 @@ Tên kebab-case; `layer` luôn `frontend`; mỗi role một file trong [`agents/
 | `fsd-writer` | fsd_write | `01-FSD.md` (FSD IEEE cấp task — skill `document-to-ieee-srs`) | FSD chưa đủ / không truy vết được (**Gate 1**) | [`agents/FSDWriter.md`](./agents/FSDWriter.md) |
 | `fsd-reviewer` | fsd_review | `02-FSD-Review.md` (AC, câu hỏi BA, risk) | intent / AC chưa rõ (**Gate 2**) | [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) |
 | `technical-planner` | technical_plan | `03-Technical-Plan.md` (file sẽ đổi, test plan, checklist, risk) | thiếu plan / test (**Gate 3**) | [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) |
-| `fe-implementer` | implementation (feature/hotfix) | code + `06-FE-Implementation-Notes.md` + `08-Test-Evidence.md` | thiếu evidence / ngoài scope (**Gate 4**) | [`agents/FEImplementer.md`](./agents/FEImplementer.md) |
-| `fe-fix` | implementation (bugfix) | như trên, định hướng reproduce-first | như trên (**Gate 4**) | [`agents/FEFix.md`](./agents/FEFix.md) |
+| `implementer` | implementation (feature/hotfix) | code + `06-Implementation-Notes.md` + `08-Test-Evidence.md` | thiếu evidence / ngoài scope (**Gate 4**) | [`agents/Implementer.md`](./agents/Implementer.md) |
+| `fixer` | implementation (bugfix) | như trên, định hướng reproduce-first | như trên (**Gate 4**) | [`agents/Fixer.md`](./agents/Fixer.md) |
 | `adversary` | adversarial_review | `09-Adversarial-Review.md` (tự chạy lại lệnh, soi diff + test, finding) | có finding BLOCKING / evidence không tái lập (**Gate 5**) | [`agents/Adversary.md`](./agents/Adversary.md) |
 
-> Task ở layer `frontend` mà repo BE **không** nằm trong `repos`: contract FE↔API chỉ ghi ở **góc nhìn client** trong `03-Technical-Plan.md`. Có repo BE trong `repos` → đọc thẳng source BE (read-only) theo thang bậc [`agents/TechnicalPlanner.md` §3.2](./agents/TechnicalPlanner.md). Thiếu ⇒ `unavailable`, không bịa.
+> Task ở một layer mà repo của layer đối diện **không** nằm trong `repos`: contract chỉ ghi ở **góc nhìn bên gọi** trong `03-Technical-Plan.md`. Có repo đó trong `repos` → đọc thẳng source (read-only) theo thang bậc [`agents/TechnicalPlanner.md` §3.2](./agents/TechnicalPlanner.md). Thiếu ⇒ `unavailable`, không bịa.
 
 ---
 
@@ -54,8 +54,8 @@ flowchart TD
     WRITE -->|Gate 1| FSD[fsd-reviewer<br/>fsd_review]
     FSD -->|Gate 2| PLAN[technical-planner<br/>technical_plan]
     PLAN -->|Gate 3| PICK{branchType?}
-    PICK -->|feature / hotfix| IMPL[fe-implementer]
-    PICK -->|bugfix| FIX[fe-fix]
+    PICK -->|feature / hotfix| IMPL[implementer]
+    PICK -->|bugfix| FIX[fixer]
     IMPL -->|Gate 4| ADV[adversary<br/>adversarial_review]
     FIX -->|Gate 4| ADV
     ADV -->|Gate 5| REVIEW[status: reviewing]
@@ -84,7 +84,7 @@ Gate là điểm kiểm tra **chặn**. PASS mới handoff; FAIL → đặt stat
 | --- | --- | --- | --- |
 | **Gate 1** | fsd_write | `01-FSD.md` đủ khung IEEE (Introduction, Overall Description, External Interface, Functional Requirements); mỗi requirement dùng `shall` + truy vết được (`FR-`/`FSD-`/tracker/design); assumption tách riêng; **≤ 250 dòng** (trần tại [`agents/SharedRules.md` §8](./agents/SharedRules.md)) | `needs_clarification` |
 | **Gate 2** | fsd_review | AC + business intent rõ; câu hỏi BA `blocking` đã trả lời; ID `FR-`/`NFR-`/`FSD-` đã trích; **≤ 150 dòng** | `needs_clarification` |
-| **Gate 3** | technical_plan | `03-Technical-Plan.md` có: danh sách file FE sẽ đổi, test plan (lệnh one-shot cụ thể), checklist, risk; **mọi AC của `02` có ở cột Covers AC hoặc bảng AC-manual** ([SharedRules §9.1](./agents/SharedRules.md)); **≤ 200 dòng** | `blocked` |
+| **Gate 3** | technical_plan | `03-Technical-Plan.md` có: danh sách file sẽ đổi, test plan (lệnh one-shot cụ thể), checklist, risk; **mọi AC của `02` có ở cột Covers AC hoặc bảng AC-manual** ([SharedRules §9.1](./agents/SharedRules.md)); **≤ 200 dòng** | `blocked` |
 | **Gate 4** | implementation | Bộ lệnh kiểm tra bắt buộc của project PASS ([`agents/ProjectRules.md` §7](./agents/ProjectRules.md)) với evidence thật trong `08-Test-Evidence.md`; **bảng AC coverage đủ mọi AC**, AC bị làm lệch đã có Amendment log ([SharedRules §9](./agents/SharedRules.md)); thay đổi **trong scope** danh sách Gate 3 | `blocked` |
 
 | **Gate 5** | adversarial_review | `adversary` **tự chạy lại** toàn bộ lệnh ProjectRules §7 và khớp với `08`; mọi AC có test thật sự assert được nó; diff nằm trong scope Gate 3 (phần ngoài đã khai Plan Deviations); **không** finding BLOCKING; không còn UNCERTAIN | `blocked` → re-route implementer |
@@ -99,8 +99,8 @@ Danh sách lệnh hợp lệ (one-shot vs watch-mode): [`agents/SharedRules.md` 
 
 | branchType | Implementer |
 | --- | --- |
-| `feature`, `hotfix` | `fe-implementer` |
-| `bugfix` | `fe-fix` |
+| `feature`, `hotfix` | `implementer` |
+| `bugfix` | `fixer` |
 
 Quy tắc nhánh (tạo từ `develop` với `--ff-only`, ngoại lệ nhánh user quản lý + `branchActual`): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
 
@@ -254,7 +254,7 @@ Nguyên tắc: **tier rẻ cho việc đọc-và-chép, tier mạnh cho việc p
 | `fsd-writer` | cheap | mid | mid | chuyển mô tả thành requirement có cấu trúc |
 | `fsd-reviewer` | mid | mid | strong | **AC sai ở đây thì mọi stage sau đều sai** |
 | `technical-planner` | mid | mid | strong | chọn sai chỗ sửa → implementer làm lại từ đầu |
-| `fe-implementer` / `fe-fix` | mid | mid | strong | viết code thật |
+| `implementer` / `fixer` | mid | mid | strong | viết code thật |
 | `adversary` | mid | mid | strong | phải tìm ra cái implementer bỏ sót — cùng tier thì cùng điểm mù |
 
 **Tại sao `adversary` không hạ xuống cheap:** role này tồn tại để nhìn ra thứ người làm không nhìn ra. Tier yếu hơn implementer thì nó chỉ gật đầu.
@@ -379,5 +379,5 @@ Ba cách sửa thường gặp:
 
 - Quy tắc vận hành chi tiết: [`agents/SharedRules.md`](./agents/SharedRules.md) · Global rule: [`Instructions.md`](./Instructions.md)
 - Bootstrap & resume: [`HarnessSetup.md`](./HarnessSetup.md) · Chỉ mục: [`README.md`](./README.md)
-- Role: [`agents/Orchestrator.md`](./agents/Orchestrator.md) · [`agents/FSDWriter.md`](./agents/FSDWriter.md) · [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) · [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) · [`agents/FEImplementer.md`](./agents/FEImplementer.md) · [`agents/FEFix.md`](./agents/FEFix.md) · [`agents/Adversary.md`](./agents/Adversary.md)
+- Role: [`agents/Orchestrator.md`](./agents/Orchestrator.md) · [`agents/FSDWriter.md`](./agents/FSDWriter.md) · [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) · [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) · [`agents/Implementer.md`](./agents/Implementer.md) · [`agents/Fixer.md`](./agents/Fixer.md) · [`agents/Adversary.md`](./agents/Adversary.md)
 - Task docs & template: [`tasks/README.md`](./tasks/README.md) · Artifact nguồn: [`srs/`](./srs/README.md) · [`fsd/`](./fsd/README.md) · [`api/`](./api/README.md)

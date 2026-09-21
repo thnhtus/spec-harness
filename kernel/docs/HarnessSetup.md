@@ -76,7 +76,7 @@ Quy tắc cốt lõi: **merge, không clobber** — chỉ thay vùng giữa mark
 | Claude Code | `.claude/agents/{role}.md` (7 file) | File ngắn trỏ về `docs/agents/{Role}.md`, marker HTML comment |
 | Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (7 file) | Tương đương, marker `# SPEC-HARNESS:START` |
 
-Bảy `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `fe-implementer`, `fe-fix`, **`adversary`**.
+Bảy `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `implementer`, `fixer`, **`adversary`**.
 
 > Sinh thiếu `adversary` là **mất Gate 5 trong im lặng** — harness vẫn chạy, vẫn báo PASS, chỉ không còn ai kiểm chứng evidence của implementer. Đếm đủ bảy file trước khi chạy task đầu tiên.
 
@@ -97,8 +97,8 @@ Ràng buộc khi sinh:
 | `fsd-writer` | [`agents/FSDWriter.md`](./agents/FSDWriter.md) |
 | `fsd-reviewer` | [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) |
 | `technical-planner` | [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) |
-| `fe-implementer` | [`agents/FEImplementer.md`](./agents/FEImplementer.md) |
-| `fe-fix` | [`agents/FEFix.md`](./agents/FEFix.md) |
+| `implementer` | [`agents/Implementer.md`](./agents/Implementer.md) |
+| `fixer` | [`agents/Fixer.md`](./agents/Fixer.md) |
 | `adversary` | [`agents/Adversary.md`](./agents/Adversary.md) |
 
 Artifact tham chiếu (đọc, không sửa): [`srs/README.md`](./srs/README.md) · [`fsd/README.md`](./fsd/README.md) · [`api/README.md`](./api/README.md).
