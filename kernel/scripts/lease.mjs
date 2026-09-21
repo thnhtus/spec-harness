@@ -13,6 +13,16 @@
 // Written in Node so it runs from PowerShell/cmd, not just bash: `mkdir -p`,
 // `find -mmin`, `hostname` and `$$` do not exist there — and step 0 of
 // /start-task runs BEFORE everything else, so breaking it breaks the command.
+//
+// KNOWN LIMIT — local filesystems only. Mutual exclusion rests on mkdir being
+// atomic, and liveness on mtime being comparable to the local clock. Over
+// NFS/SMB neither holds: mkdir is not reliably atomic, and the server stamps
+// mtime with ITS clock, so a skewed pair of machines reads a fresh lease as
+// expired and takes it. Two sessions then write the same handoff.
+// Not fixed, and deliberately not papered over: making this correct means a
+// different mechanism (lock server, or fsync'd token exchange), and there is no
+// cheap way to even DETECT a network FS reliably enough to warn on it. If
+// docs/tasks/ lives on a share, this lease is decoration.
 
 import { mkdirSync, writeFileSync, readFileSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";

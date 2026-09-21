@@ -304,6 +304,14 @@ Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny
 
 > **Trần của lớp này — đừng nhầm nó với sandbox.** Deny khớp theo **tool + tiền tố lệnh**. `Read(.env)` một mình từng là cái biển cấm treo nhầm cửa: nó chặn tool Read, nhưng agent còn Bash, và `cat .env` đi thẳng qua. Thêm bốn rule trên hạ **xác suất tai nạn**, không đóng được cửa: `python3 -c "print(open('.env').read())"` vẫn lọt, và không danh sách deny nào đuổi kịp số cách đọc một file. Lớp bảo vệ thật là **không để secret trong repo** — deny-list chỉ mua thêm thời gian.
 
+## Giới hạn đã biết
+
+**Lease chỉ đúng trên filesystem cục bộ.** `scripts/lease.mjs` chặn hai phiên `/start-task` cùng một task bằng `mkdir` (loại trừ) + `mtime` (TTL 30'). Trên NFS/SMB cả hai vế đều gãy: `mkdir` không đảm bảo nguyên tử, và server đóng dấu `mtime` bằng đồng hồ **của nó** — hai máy lệch giờ sẽ đọc một lease còn sống thành hết hạn rồi cướp, và hai phiên ghi đè handoff của nhau. Để `docs/tasks/` trên ổ mạng thì lease này là đồ trang trí. Không vá được rẻ: sửa đúng nghĩa là đổi cơ chế (lock server / trao token có fsync), và ngay cả việc *phát hiện* đang chạy trên FS mạng cũng không có cách nào đủ tin để cảnh báo.
+
+**Overhead đọc luật.** Mỗi stage nạp `Instructions.md` + `SharedRules.md` + file role ≈ 5,2k token, 7 stage ≈ 36k token/task chỉ để đọc luật, chưa tính code và retry. Harness **không đo** con số này (`telemetry` có schema nhưng phải điền tay) — đừng báo ROI khi chưa đo.
+
+**Tracker chỉ đọc.** Task xong không tự đổi trạng thái trên ClickUp/Jira; PM vẫn phải cập nhật tay.
+
 ## Ghi chú cài đặt
 
 <details>
