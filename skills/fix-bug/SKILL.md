@@ -12,6 +12,17 @@ không subagent. Một context, một file evidence.
 
 Feature/task chung (không phải bug) → dùng `quick-task` hoặc `/start-task`.
 
+**Bug "nhỏ" có định nghĩa, không phải cảm giác.** Sau bước 1 (đọc ticket), chấm
+vector 8 chiều (`docs/Agents.md` §5.1) rồi hỏi:
+
+```bash
+node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type bugfix
+```
+
+Verdict `harness` (exit 10) → **nói với user**, đừng im lặng chạy tiếp. Đúng
+lý do `riskFloor` tồn tại: bug race condition sửa một file nhưng lan cả service
+không phải bug nhỏ. User vẫn muốn bỏ qua → `--force "<lý do>"`.
+
 ## 1. Ticket
 
 Tool đọc task của tracker MCP (tự tìm trong tool của phiên — ProjectRules §1) với id (bỏ tiền tố `#`, `CU-`, phần URL). Đọc description +

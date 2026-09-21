@@ -12,6 +12,17 @@ không gate, không dispatch subagent. Bạn tự làm, trong context này.
 Dùng khi user nói rõ "không chạy harness" / "quick" / "skip docs flow".
 User **chưa** nói vậy mà đưa link ClickUp → dùng `/start-task`.
 
+**"Đủ nhỏ" có định nghĩa, không phải cảm giác.** Chấm vector 8 chiều
+(`docs/Agents.md` §5.1) rồi hỏi:
+
+```bash
+node scripts/validate-tasks.mjs --triage '<vector JSON>'
+```
+
+Verdict `harness` (exit 10) → **nói với user**, đừng im lặng chạy tiếp. Task một
+file nhưng `blastRadius ≥ 2` là ca điển hình trông như quick-task mà không phải.
+User vẫn muốn bỏ qua → `--force "<lý do>"` để có dấu vết.
+
 ## Flow
 
 ### 1. Đọc task (đừng đoán)

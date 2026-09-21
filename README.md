@@ -253,6 +253,15 @@ taskComplexity = max(base, riskFloor)
 
 `riskFloor` tách rủi ro khỏi kích thước: bug race condition sửa một file nhưng lan cả service vẫn là `high`; đổi copy ở 12 file vẫn chỉ `normal`. Nhãn đó quyết định ba thứ — Gate 1/2 chạy đầy hay ngắn, tier model mỗi stage, và có cần worktree không. **Không mức nào bỏ được stage hay gate.**
 
+Có một lối thoát — skill `quick-task` / `fix-bug` — và ranh giới của nó cũng là exit code, không phải cảm giác "task này nhỏ":
+
+```bash
+node scripts/validate-tasks.mjs --triage '<vector>' --branch-type bugfix
+# fix-bug → exit 0 · harness → exit 10
+```
+
+Dùng lại đúng vector và đúng `riskFloor` ở trên, không phát minh ngưỡng thứ hai: không `trivial`, hoặc bất kỳ chiều rủi ro nào ≥ 2 → ra harness. Ranh giới này hỏng được **cả hai chiều**: lạm dụng lối thoát thì harness thành cảnh trí, không dám dùng thì một task đổi copy vẫn ăn 7 stage. Bỏ qua harness vẫn được (`--force "<lý do>"`) — nhưng ghi vào `_triage.log`: bỏ qua là quyết định hợp lệ, bỏ qua không dấu vết thì không.
+
 `technical-planner` khảo sát code xong phải đối chiếu lại vector. Chỉ được **nâng** — hạ để chạy nhẹ đi là né gate.
 
 ## Vòng lặp học từ task thật

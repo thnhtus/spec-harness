@@ -74,6 +74,26 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
 4. **Tính `taskComplexity`** bằng công thức §5.1.1 (`max(base, riskFloor)`).
    Đừng tự phán nhãn — điền vector, để công thức ra nhãn. Validator kiểm lại.
 
+5. **Triage** — task này có cần harness không:
+
+   ```bash
+   node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type <feature|bugfix|hotfix>
+   ```
+
+   | Exit | Verdict | Làm gì |
+   | --- | --- | --- |
+   | `10` | `harness` | đi tiếp step 0b |
+   | `0` | `quick-task` / `fix-bug` | **hỏi user trước**: dùng skill đó, hay vẫn chạy đủ 7 stage? |
+
+   Nó dùng lại đúng vector + `riskFloor` ở trên, không phát minh ngưỡng thứ hai:
+   task không `trivial`, hoặc bất kỳ chiều rủi ro nào ≥ 2, là ra harness — dù diff
+   trông nhỏ cỡ nào.
+
+   User muốn chạy harness dù verdict là escape hatch → cứ chạy, không cần gì thêm.
+   Ngược lại (verdict `harness` mà user muốn bỏ qua) → `--force "<lý do>"`, nó ghi
+   verdict + vector + lý do vào `_triage.log`. Bỏ qua harness là quyết định hợp
+   lệ; bỏ qua mà không để lại dấu vết thì không.
+
 Kết quả bước 0 quyết định ba thứ ở bước 1–2 dưới đây.
 
 ## Step 0b — Lease: task này có ai đang chạy không?

@@ -24,7 +24,7 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --calibrate, --config <path>,
+ * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --triage, --calibrate, --config <path>,
  *        --staged (only task folders touched by the current git index),
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
@@ -284,6 +284,29 @@ function deriveComplexity(vector) {
     : blastRadius >= 2 || reversibility >= 2 ? "normal"
     : "trivial";
   return { effort, label: RANK[Math.max(RANK.indexOf(base), RANK.indexOf(riskFloor))] };
+}
+
+// Which road a task takes: the full harness, or the quick-task / fix-bug escape
+// hatch. That boundary used to be prose ("bug nhỏ", "khi user nói rõ"), so it
+// failed both ways -- overuse turns the harness into scenery, underuse charges
+// 7 stages for a copy change.
+//
+// It reuses the vector and the risk floors rather than inventing a second set of
+// thresholds: any risk dimension >= 2 already means `normal`, and a task that is
+// not trivial has no business skipping the gates however small the diff looks.
+function triage(vector, branchType) {
+  const { label, effort } = deriveComplexity(vector);
+  const { blastRadius = 0, reversibility = 0 } = vector;
+  if (label !== "trivial")
+    return { verdict: "harness", why: `taskComplexity=${label} (effort ${effort}, blast ${blastRadius}, rev ${reversibility})` };
+  // deriveComplexity already forces `normal` at >= 2, so reaching here means
+  // both are <= 1. Stated explicitly: this is the rule someone will come read.
+  if (blastRadius > 1 || reversibility > 1)
+    return { verdict: "harness", why: `risk too high (blast ${blastRadius}, rev ${reversibility})` };
+  return {
+    verdict: branchType === "bugfix" ? "fix-bug" : "quick-task",
+    why: `trivial (effort ${effort}, blast ${blastRadius}, rev ${reversibility})`,
+  };
 }
 
 // --- pure text predicates (self-checked below via --self-check) -------------
@@ -934,6 +957,20 @@ if (args.has("--self-check")) {
     assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
   }
 
+  // triage: which road a task takes. The failure this guards is symmetric --
+  // overusing the escape hatch makes the harness scenery, underusing it charges
+  // 7 stages for a copy change -- so both directions get a case.
+  {
+    const z = { scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 };
+    assert.equal(triage({ ...z }, "feature").verdict, "quick-task", "all zero → escape hatch");
+    assert.equal(triage({ ...z }, "bugfix").verdict, "fix-bug", "same size, bug branch → fix-bug");
+    assert.equal(triage({ ...z, scope: 2, testing: 1 }, "feature").verdict, "harness", "effort 3 is no longer trivial");
+    // The whole point of riskFloor: size and risk are different questions.
+    assert.equal(triage({ ...z, scope: 1, blastRadius: 3 }, "bugfix").verdict, "harness", "one-file fix, service-wide blast → harness");
+    assert.equal(triage({ ...z, reversibility: 2 }, "feature").verdict, "harness", "needs a redeploy to undo → harness");
+    assert.equal(triage({ ...z, blastRadius: 1, reversibility: 1 }, "feature").verdict, "quick-task", "low risk stays on the hatch");
+  }
+
   // preflight: the CLI walks UP from cwd for .claude/, never down. Layout B puts
   // settings.json in harness/ and invites you to open the parent -- below cwd,
   // invisible, deny-list silently gone. A "found it" that actually matched
@@ -990,6 +1027,50 @@ export function settingsReachable(repoRoot, cwd) {
   const rel = relative(resolve(repoRoot), resolve(cwd));
   const below = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
   return below ? "ok" : "not-loaded";
+}
+
+// ---------------------------------------------------------------------------
+// --triage: harness, or escape hatch? Exit code, not prose.
+//
+//   node scripts/validate-tasks.mjs --triage '{"scope":0,...}' [--branch-type bugfix]
+//   ... --force "why I am skipping the harness anyway"
+//
+// Skipping the harness is a legitimate call. Skipping it without a trace is not,
+// so --force appends the verdict, the vector and the reason to _triage.log.
+// ---------------------------------------------------------------------------
+if (args.has("--triage")) {
+  const at = argv.indexOf("--triage");
+  let vector;
+  try {
+    vector = JSON.parse(argv[at + 1] ?? "");
+  } catch {
+    console.error("✖ --triage needs the complexity vector as JSON (Agents.md §5.1.2)");
+    process.exit(2);
+  }
+  const flagVal = (name) => {
+    const i = argv.indexOf(name);
+    return i >= 0 ? argv[i + 1] : null;
+  };
+  const r = triage(vector, flagVal("--branch-type"));
+  const force = flagVal("--force");
+
+  if (args.has("--force") && !force) {
+    console.error("✖ --force needs a reason — skipping the harness is a decision, and a decision with no trace is not reviewable");
+    process.exit(2);
+  }
+  if (force) {
+    const { appendFileSync, mkdirSync } = await import("node:fs");
+    mkdirSync(TASKS_DIR, { recursive: true });
+    appendFileSync(
+      join(TASKS_DIR, "_triage.log"),
+      `${new Date().toISOString()}\t${r.verdict}\tforced\t${JSON.stringify(vector)}\t${force}\n`,
+    );
+  }
+
+  if (AS_JSON) console.log(JSON.stringify({ ...r, forced: force ?? null }));
+  else console.log(`${r.verdict}  —  ${r.why}${force ? `\n(forced: ${force} — logged to ${join(CFG.tasksDir ?? "docs/tasks", "_triage.log")})` : ""}`);
+  // 10, not 1: "run the harness" is a routing answer, not a validator failure.
+  process.exit(force || r.verdict !== "harness" ? 0 : 10);
 }
 
 if (args.has("--preflight")) {
