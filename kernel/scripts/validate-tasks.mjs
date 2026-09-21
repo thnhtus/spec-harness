@@ -49,11 +49,11 @@ const CALIBRATE = args.has("--calibrate");
 // bypass with --no-verify is decoration. CI stays whole-repo; that is the place
 // for the global view.
 const STAGED = args.has("--staged");
-// --task: validate ĐÚNG MỘT task folder. Gate 1–3 chỉ có răng nếu chạy được
-// NGAY SAU mỗi stage, mà bản quét-toàn-repo thì chậm và ồn (một task khác đang
-// `blocked` chờ BA sẽ làm gate của task này đỏ). Nhận cả đường dẫn đầy đủ
-// (`docs/tasks/sprint-1/ABC-1-x`) lẫn dạng rút gọn (`sprint-1/ABC-1-x`) —
-// coordinator có sẵn biến $TASK ở dạng đầu.
+// --task: validate EXACTLY ONE task folder. Gates 1-3 only have teeth if they
+// can run RIGHT AFTER each stage, and the whole-repo scan is slow and noisy
+// (another task sitting `blocked` on the BA would turn this task's gate red).
+// Accepts both the full path (`docs/tasks/sprint-1/ABC-1-x`) and the short form
+// (`sprint-1/ABC-1-x`) -- the coordinator already has $TASK in the former.
 const taskFlagAt = argv.indexOf("--task");
 const TASK_ARG = taskFlagAt !== -1 ? argv[taskFlagAt + 1] : null;
 
@@ -278,7 +278,7 @@ export function triageVectorFor(logPath, taskId) {
 // Both directions are worth a word, for opposite reasons. UP is expected --
 // §5.1.3 says a Glob/Grep pass sees less than bootstrap does -- but the lower
 // number is what decided whether this task needed the harness at all. DOWN is
-// the one §5.1.3 forbids outright ("chỉ nâng, không hạ"): lowering a dimension
+// the one §5.1.3 forbids outright ("only raise, never lower"): lowering a dimension
 // buys a lighter gate and a cheaper model tier, which is exactly the incentive
 // the rule exists to remove. Nothing used to check it.
 export function vectorDriftSince(triaged, stored) {
@@ -422,7 +422,7 @@ export function vectorEvidenceDefects(complexity) {
   if (tests === null)
     out.push("complexity.counts.existingTests missing — `testing` needs to know whether anything covers this code today (Agents.md §5.1)");
   else if (tests === 0 && (v.testing ?? 0) < 1)
-    out.push("counts.existingTests=0 but testing=0 — nothing covers this yet, so it cannot be 'test sẵn phủ được'");
+    out.push("counts.existingTests=0 but testing=0 — nothing covers this yet, so it cannot be 'covered by existing tests'");
 
   const q = complexity.questions;
   if (!Array.isArray(q))
@@ -443,7 +443,7 @@ export function vectorEvidenceDefects(complexity) {
 }
 
 // Which road a task takes: the full harness, or the quick-task / fix-bug escape
-// hatch. That boundary used to be prose ("bug nhỏ", "khi user nói rõ"), so it
+// hatch. That boundary used to be prose ("a small bug", "when the user is clear"), so it
 // failed both ways -- overuse turns the harness into scenery, underuse charges
 // 7 stages for a copy change.
 //
@@ -481,16 +481,18 @@ function fencedText(t) {
   return [...t.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
 }
 
-// RESULT_RE hỏi "có chữ passed không", không hỏi "test có xanh không" — mà
-// `Tests: 11 passed, 1 failed` thoả vế đầu. Đó đúng là thứ Gate 4 sinh ra để
-// chặn, nên phải có vế phủ định riêng. Anchor `^` cho FAIL/✗ vì chúng hay xuất
-// hiện giữa câu văn xuôi ("nếu FAIL thì…"); `\d+ failed` thì không cần.
+// RESULT_RE asks "is the word passed present", not "are the tests green" -- and
+// `Tests: 11 passed, 1 failed` satisfies the former. That is precisely what
+// Gate 4 exists to stop, so there has to be a separate negative check. FAIL/✗
+// are anchored with `^` because they show up mid-prose ("stop on FAIL…");
+// `\d+ failed` needs no anchor.
 const FAILURE_RE =
   /\b\d+\s+(failed|failing)\b|^\s*(FAIL|✗|✖|×)\s|\bexit (code )?[1-9]\d*\b|\bERR!/im;
 
-// Lối thoát cho test đỏ CÓ CHỦ ĐÍCH (fixer reproduce-first: viết test đỏ
-// trước, sửa sau). Không có nó thì agent học cách không dán output fail —
-// tệ hơn hẳn việc gate lỏng, vì lúc đó bằng chứng biến mất thay vì bị bắt.
+// The escape hatch for a DELIBERATELY red test (fixer reproduce-first: write
+// the failing test, then fix). Without it, agents learn not to paste failing
+// output -- far worse than a loose gate, because the evidence disappears
+// instead of being caught.
 const KNOWN_FAILURE_RE = /<!--\s*known-failure:/i;
 
 function hasRealEvidenceIn(t) {
@@ -500,24 +502,28 @@ function hasRealEvidenceIn(t) {
 }
 
 // ── attestation (scripts/run-evidence.mjs) ─────────────────────────────────
-// Mọi thứ ở trên chỉ đọc HÌNH DẠNG chữ, nên một agent chưa chạy lệnh nào vẫn qua
-// được bằng cách gõ ra `Tests: 12 passed`. Attestation đổi câu hỏi: không phải
-// "có giống output test không" mà "tiến trình nào đã chạy và exit bao nhiêu".
+// Everything above only reads the SHAPE of text, so an agent that ran no command
+// still passes by typing `Tests: 12 passed`. The attestation changes the
+// question: not "does this look like test output" but "which process ran this
+// and what did it exit with".
 //
-// `evidenceMode: "attested"` trong harness.config.json bật thành bắt buộc. Mặc
-// định `"legacy"` vì task đang chạy dở và repo đã có evidence viết tay không
-// được đỏ hết chỉ vì nâng kernel — bật khi bạn đã chuyển ProjectRules §7 sang
-// wrapper. Ở chế độ legacy, có attestation vẫn được kiểm; chỉ "thiếu" mới tha.
+// `evidenceMode: "attested"` in harness.config.json makes it mandatory. The
+// default is `"legacy"` because in-flight tasks and repos with hand-written
+// evidence must not all go red just from a kernel upgrade -- turn it on once
+// ProjectRules §7 uses the wrapper. In legacy mode a present attestation is
+// still checked; only a missing one is forgiven.
 const ATTEST_MARK = "--- spec-harness attestation ---";
-// Không có mặc định ngầm: "legacy" nhận evidence dán tay, tức là một agent chưa
-// chạy lệnh nào vẫn qua Gate 4 bằng cách gõ `Tests: 12 passed`. Đó là một lựa chọn
-// hợp lệ khi đang di trú, nhưng phải là lựa chọn được VIẾT RA — thừa kế nó từ một
-// giá trị ngầm là cách toàn bộ luận điểm của harness sụp trong im lặng.
-// --self-check đòi khai tường minh; chỗ này chỉ là fallback cho đường chạy khác.
+// No implicit default: "legacy" accepts pasted evidence, i.e. an agent that ran
+// no command still passes Gate 4 by typing `Tests: 12 passed`. That is a valid
+// choice while migrating, but it has to be a choice that was WRITTEN DOWN --
+// inheriting it from an implicit value is how the harness's whole argument
+// collapses silently. --self-check demands an explicit declaration; this is
+// only a fallback for other entry points.
 const EVIDENCE_MODE = CFG.evidenceMode ?? "legacy";
 
-// Phải giữ được CẢ output đứng trước attestation, không chỉ các field: outputHash
-// là lời khai "attestation này thuộc về output kia", và kiểm nó thì phải có "kia".
+// It has to keep the output preceding the attestation, not just the fields:
+// outputHash is the claim "this attestation belongs to that output", and
+// checking it requires having "that".
 const hashOutput = (s) => createHash("sha256").update(s, "utf8").digest("hex").slice(0, 16);
 
 function attestationsIn(text) {
@@ -529,9 +535,9 @@ function attestationsIn(text) {
     };
     const code = get("exitCode");
     if (code === null) continue;
-    // Thân block = từ sau dòng mở fence tới ngay trước marker. Không có fence mở
-    // (khối dán trần) thì body = null → không kiểm hash được, và điều đó tự nó
-    // đã bị durationMs/thiếu-field bắt.
+    // The body = from after the opening fence line to just before the marker.
+    // With no opening fence (a bare pasted block) body = null → the hash cannot
+    // be checked, and that case is already caught by durationMs/missing fields.
     const before = text.slice(0, m.index);
     const fenceAt = before.lastIndexOf("```");
     const body = fenceAt === -1
@@ -549,32 +555,33 @@ function attestationsIn(text) {
   return out;
 }
 
-// Trả về danh sách defect. Rỗng = attestation không nói gì sai.
+// Returns the list of defects. Empty = the attestation says nothing wrong.
 function attestationDefects(text, label, mode = EVIDENCE_MODE) {
   const found = attestationsIn(text);
   if (!found.length) {
     if (mode !== "attested") return [];
     return [
-      `${label}: evidenceMode="attested" nhưng không có khối attestation nào — chạy lệnh qua \`node scripts/run-evidence.mjs -- <lệnh>\` thay vì dán output bằng tay`,
+      `${label}: evidenceMode="attested" but there is no attestation block — run the command through \`node scripts/run-evidence.mjs -- <command>\` instead of pasting output by hand`,
     ];
   }
   const d = [];
   for (const a of found) {
-    // Đây là lý do wrapper tồn tại: output in ra "passed" mà exit khác 0.
+    // This is why the wrapper exists: output printing "passed" with a non-zero exit.
     if (a.exitCode !== 0 && !KNOWN_FAILURE_RE.test(text))
-      d.push(`${label}: attestation ghi exitCode ${a.exitCode} — lệnh THẤT BẠI, bất kể output nói gì`);
-    // durationMs 0 nghĩa là không có tiến trình nào thật sự chạy; NaN nghĩa là
-    // khối được gõ tay thiếu field. Cả hai đều là attestation không đáng tin.
+      d.push(`${label}: the attestation records exitCode ${a.exitCode} — the command FAILED, whatever the output says`);
+    // durationMs 0 means no process actually ran; NaN means the block was typed
+    // by hand and is missing a field. Both are untrustworthy attestations.
     if (!Number.isFinite(a.durationMs) || a.durationMs <= 0)
-      d.push(`${label}: attestation có durationMs không hợp lệ ("${a.durationMs}") — khối này không do run-evidence.mjs sinh ra`);
-    // outputHash buộc attestation vào output nằm cạnh nó. Thiếu field hoặc lệch
-    // hash = hai ca bịa rẻ nhất: chép khối từ task khác, hoặc chạy thật rồi sửa
-    // output cho đẹp. Cả hai đều qua được mọi kiểm tra theo field.
+      d.push(`${label}: the attestation has an invalid durationMs ("${a.durationMs}") — this block did not come from run-evidence.mjs`);
+    // outputHash binds the attestation to the output next to it. A missing field
+    // or a mismatched hash are the two cheapest fakes: copying a block from
+    // another task, or running it for real then prettifying the output. Both
+    // pass every per-field check.
     if (a.body !== null) {
       if (!a.outputHash)
-        d.push(`${label}: attestation thiếu outputHash — khối cũ hoặc gõ tay; chạy lại qua \`node scripts/run-evidence.mjs\``);
+        d.push(`${label}: the attestation has no outputHash — an old or hand-typed block; re-run it through \`node scripts/run-evidence.mjs\``);
       else if (hashOutput(a.body) !== a.outputHash)
-        d.push(`${label}: outputHash không khớp output trong fence — output đã bị sửa sau khi chạy, hoặc attestation chép từ nơi khác`);
+        d.push(`${label}: outputHash does not match the output in the fence — the output was edited after the run, or the attestation was copied from elsewhere`);
     }
   }
   return d;
@@ -609,23 +616,23 @@ function adversaryDefects(t, evidenceText = "") {
 
   const rows = staticLayerRows(t);
   if (!rows.length)
-    d.push('09 "Tầng tĩnh" table has no command row — Gate 5 is re-running ProjectRules §7, not reading 08 (§3.2)');
+    d.push('09 "Static layer" table has no command row — Gate 5 is re-running ProjectRules §7, not reading 08 (§3.2)');
   for (const r of rows)
     if (!r.observed)
-      d.push(`09 "Tầng tĩnh": \`${r.cmd}\` has no "Kết quả tự chạy" — that column IS the gate (§3.2)`);
+      d.push(`09 "Static layer": \`${r.cmd}\` has no "Result when you ran it" — that column IS the gate (§3.2)`);
 
   // A byte-identical fence is indistinguishable from copy-paste. Matching
   // results are the expected outcome, so this is not an error — but it is the
   // one thing worth making the adversary say out loud.
   if (evidenceText && fencedText(t).trim() && fencedText(t).trim() === fencedText(evidenceText).trim())
     d.push(
-      "09's pasted output is byte-identical to 08's — indistinguishable from copy-paste; paste YOUR run (timestamps/durations differ) or say in \"Giới hạn\" that you could not re-run",
+      "09's pasted output is byte-identical to 08's — indistinguishable from copy-paste; paste YOUR run (timestamps/durations differ) or state under \"Limits\" that you could not re-run",
     );
 
-  // Kiểm byte-identical ở trên là heuristic yếu: thêm một dòng là qua. Khi cả
-  // hai file có attestation thì so được thứ chặt hơn — adversary PHẢI chạy sau
-  // implementer. startedAt của 09 sớm hơn 08 nghĩa là khối đó chép từ nơi khác,
-  // hoặc chép từ chính 08 rồi sửa vài chữ.
+  // The byte-identical check above is a weak heuristic: one extra line defeats
+  // it. When both files carry attestations, something stricter is available --
+  // the adversary MUST run after the implementer. A 09 startedAt earlier than
+  // 08's means the block was copied from elsewhere, or from 08 and edited.
   const advA = attestationsIn(t);
   const evA = evidenceText ? attestationsIn(evidenceText) : [];
   if (advA.length && evA.length) {
@@ -656,8 +663,8 @@ function declaredACsIn(text) {
 }
 
 // An AC is "reached" only when its id appears in a TABLE ROW. Matching anywhere
-// in the text was asymmetric with declaredACsIn (which is strict): "AC-01 sẽ làm
-// sau" in prose, or an HTML comment, used to satisfy the trace.
+// in the text was asymmetric with declaredACsIn (which is strict): "AC-01 to be
+// done later" in prose, or an HTML comment, used to satisfy the trace.
 function acsMissingIn(text, acs) {
   const rows = text
     .split("\n")
@@ -701,9 +708,9 @@ export function denyGaps(settingsText) {
 // the CLI with ERR_INVALID_URL at startup, and `example.com` resolves fine while
 // answering nothing -- Gate 1 loses its source of AC and the whole trace chain
 // becomes invention.
-// `example.com` là placeholder ở BẤT KỲ đâu trong hostname, không chỉ đầu chuỗi:
-// bản cài ra có `gitlab.example.com`, và một regex neo đầu chuỗi sẽ cho nó qua —
-// đúng kiểu check tồn tại mà không bắt được gì.
+// `example.com` is a placeholder ANYWHERE in the hostname, not just at the
+// start: the shipped install has `gitlab.example.com`, and a start-anchored
+// regex lets it through -- the kind of check that exists but catches nothing.
 const PLACEHOLDER_HOST = /(?:^<|\bexample\.(?:com|org|net)$|^localhost$|^your-|changeme)/i;
 
 // Secrets do not belong in a committed file. OAuth tokens live in ~/.claude.json
@@ -728,12 +735,12 @@ export function mcpGaps(text) {
   return out;
 }
 
-// Cho phép kiểm một settings.json rời (install.mjs --self-test dùng): hai nơi
-// tự liệt kê lại danh sách deny thì chúng sẽ lệch, và lệch kiểu đó nghĩa là
-// ship ra một settings.json mà chính preflight của nó báo đỏ.
+// Allows checking a standalone settings.json (used by install.mjs --self-test):
+// two places each re-listing the deny rules will drift, and that drift means
+// shipping a settings.json that its own preflight calls red.
 if (args.has("--check-settings")) {
   const f = argv[argv.indexOf("--check-settings") + 1];
-  if (!f) { console.error("dùng: --check-settings <settings.json>"); process.exit(2); }
+  if (!f) { console.error("usage: --check-settings <settings.json>"); process.exit(2); }
   const gaps = denyGaps(readFileSync(f, "utf8"));
   gaps.forEach((g) => console.error(`✖ ${g}`));
   process.exit(gaps.length ? 1 : 0);
@@ -782,43 +789,44 @@ if (args.has("--self-check")) {
   );
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nTests: 4/4\n```"), true, "labelled ratio counts");
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nTests 4 passed (4)\n```"), true, "fenced command + passed");
-  assert.equal(hasRealEvidenceIn("mọi thứ đều pass"), false, "claim without a command");
+  assert.equal(hasRealEvidenceIn("everything passes"), false, "claim without a command");
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\n```"), false, "command without a result");
   assert.equal(
     hasRealEvidenceIn(`| Unit | \`${sample}\` | AC-01 | …/… passed | | |`),
     false,
     'a table row saying "passed" is a plan, not a result — the fence is the proof',
   );
-  // Gate 4 phải hỏi "test có xanh không", không phải "có chữ passed không".
-  // Output có cả passed lẫn failed từng LỌT — đúng ca gate tồn tại để chặn.
+  // Gate 4 must ask "are the tests green", not "is the word passed present".
+  // Output with both passed and failed used to SLIP THROUGH — the exact case
+  // the gate exists to stop.
   assert.equal(
     hasRealEvidenceIn("```\n$ " + sample + "\nTests: 11 passed, 1 failed\n```"),
     false,
-    "output có test fail KHÔNG được qua Gate 4 chỉ vì có chữ passed",
+    "output containing a failing test must NOT pass Gate 4 just for saying passed",
   );
   assert.equal(
     hasRealEvidenceIn("```\n$ " + sample + "\nFAIL src/a.spec.ts\n4 passed\n```"),
     false,
-    "dòng FAIL trong output chặn Gate 4",
+    "a FAIL line in the output blocks Gate 4",
   );
   assert.equal(
     hasRealEvidenceIn("```\n$ " + sample + "\n2 passed\nexit 1\n```"),
     false,
-    "exit code khác 0 chặn Gate 4",
+    "a non-zero exit code blocks Gate 4",
   );
-  // Lối thoát: test đỏ có chủ đích (fixer reproduce-first) vẫn khai được.
+  // The escape hatch: a deliberately red test (fixer reproduce-first) can still be declared.
   assert.equal(
     hasRealEvidenceIn(
       "<!-- known-failure: AC-03 reproduce -->\n```\n$ " + sample + "\nTests: 3 passed, 1 failed\n```",
     ),
     true,
-    "known-failure đã khai thì vẫn là evidence hợp lệ",
+    "a declared known-failure is still valid evidence",
   );
-  // "FAIL" trong văn xuôi (ngoài fence) không được chặn nhầm — fence mới là bằng chứng.
+  // "FAIL" in prose (outside a fence) must not block — the fence is the evidence.
   assert.equal(
-    hasRealEvidenceIn("Nếu FAIL thì dừng.\n```\n$ " + sample + "\nTests: 4 passed\n```"),
+    hasRealEvidenceIn("Stop on FAIL.\n```\n$ " + sample + "\nTests: 4 passed\n```"),
     true,
-    "chữ FAIL trong văn xuôi không phải kết quả chạy",
+    "the word FAIL in prose is not a run result",
   );
   // Regression: the shipped 08 template, with a command name typed into the
   // table but no output pasted, must NOT pass Gate 4. This is the exact hole
@@ -840,7 +848,7 @@ if (args.has("--self-check")) {
   // declaredACsIn: table rows only, placeholders excluded, deduped.
   assert.deepEqual(
     declaredACsIn(
-      ["| AC-ID | Tiêu chí |", "| AC-01 | x |", "| AC-01 | trùng |", "| AC-02 | y |", "nhắc AC-99 trong prose"].join("\n"),
+      ["| AC-ID | Criterion |", "| AC-01 | x |", "| AC-01 | duplicate |", "| AC-02 | y |", "mentions AC-99 in prose"].join("\n"),
     ),
     ["AC-01", "AC-02"],
     "AC ids from table rows",
@@ -852,13 +860,13 @@ if (args.has("--self-check")) {
   assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"]), ["AC-1"], "AC-1 ≠ AC-10");
   // Prose, comments and "not covered" notes are not coverage. declaredACsIn is
   // strict about table rows; the reached-side must be exactly as strict.
-  assert.deepEqual(acsMissingIn("Ghi chú: AC-01 sẽ làm sau", ["AC-01"]), ["AC-01"], "prose is not coverage");
+  assert.deepEqual(acsMissingIn("Note: AC-01 to be done later", ["AC-01"]), ["AC-01"], "prose is not coverage");
   assert.deepEqual(acsMissingIn("<!-- TODO AC-01 -->", ["AC-01"]), ["AC-01"], "a comment is not coverage");
 
   // adversaryDefects: verdict + own run + the side-by-side table whose third
   // column only an actual re-run can fill.
   const advOk = [
-    "**Kết quả: PASS**",
+    "**Verdict: PASS**",
     `| \`${sample}\` | 4 passed | 4 passed (2.1s) | ✔ |`,
     "```",
     `$ ${sample}`,
@@ -866,11 +874,11 @@ if (args.has("--self-check")) {
     "```",
   ].join("\n");
   assert.deepEqual(adversaryDefects(advOk), [], "verdict + own run + filled table");
-  assert.ok(adversaryDefects("**Kết quả: PASS**").length, "verdict without evidence is not a review");
+  assert.ok(adversaryDefects("**Verdict: PASS**").length, "verdict without evidence is not a review");
 
   // The copy attack: 09 whose fence is byte-identical to 08's.
   const ev08 = "```\n$ " + sample + "\nTests 4 passed (4)\n```";
-  const adv09 = `**Kết quả: PASS**\n| \`${sample}\` | 4 passed | 4 passed | ✔ |\n` + ev08;
+  const adv09 = `**Verdict: PASS**\n| \`${sample}\` | 4 passed | 4 passed | ✔ |\n` + ev08;
   assert.ok(
     adversaryDefects(adv09, ev08).some((d) => d.includes("byte-identical")),
     "a fence copied verbatim from 08 must be called out",
@@ -883,8 +891,8 @@ if (args.has("--self-check")) {
 
   // Third column empty = the adversary read 08 instead of re-running it.
   assert.ok(
-    adversaryDefects(`**Kết quả: PASS**\n| \`${sample}\` | 4 passed |  | ? |\n\`\`\`\n$ ${sample}\nexit 0\n\`\`\``)
-      .some((d) => d.includes("Kết quả tự chạy")),
+    adversaryDefects(`**Verdict: PASS**\n| \`${sample}\` | 4 passed |  | ? |\n\`\`\`\n$ ${sample}\nexit 0\n\`\`\``)
+      .some((d) => d.includes("Result when you ran it")),
     "empty self-run column is the gate failing",
   );
   {
@@ -1076,7 +1084,7 @@ if (args.has("--self-check")) {
     assert.deepEqual(handoffDefects(d, "x"), [], "complete handoff passes");
     writeFileSync(join(d, "y.md"), "### 2026-01-01 — y\n- **Next agent**: z\n");
     assert.equal(handoffDefects(d, "y").length, 1, "missing Continue automation is caught");
-    writeFileSync(join(d, "z.md"), "chỉ là văn xuôi, không có block\n");
+    writeFileSync(join(d, "z.md"), "just prose, no blocks\n");
     assert.equal(handoffDefects(d, "z").length, 3, "no block, no fields");
   }
 
@@ -1168,85 +1176,87 @@ if (args.has("--self-check")) {
   }
 
   // ── attestation ──────────────────────────────────────────────────────────
-  // Đây là ca wrapper sinh ra để bắt, và là ca mọi kiểm-bằng-regex đều thua:
-  // output in ra "passed" nhưng lệnh exit khác 0.
+  // This is the case the wrapper exists to catch, and the case every
+  // regex-based check loses: output printing "passed" with a non-zero exit.
   {
-    // Dựng block y như run-evidence.mjs dựng, gồm cả outputHash — nếu không thì
-    // mọi ca dưới đây chỉ test được vế "thiếu hash", không test được vế nào khác.
+    // Build the block exactly as run-evidence.mjs does, outputHash included —
+    // otherwise every case below only tests "hash missing" and nothing else.
     const att = (code, dur = 12, at = "2026-09-18T09:00:00Z", out = "Tests: 12 passed") => {
       const body = `$ ${sample}\n${out}`;
       return ["```", body, ATTEST_MARK, `exitCode: ${code}`, `durationMs: ${dur}`,
               "gitRev: a3f9c1e", `startedAt: ${at}`, `outputHash: ${hashOutput(body)}`, "```"].join("\n");
     };
 
-    assert.deepEqual(attestationDefects(att(0), "08"), [], "attestation exit 0 là sạch");
-    // outputHash: hai ca bịa rẻ nhất mà kiểm-theo-field cho qua hết.
+    assert.deepEqual(attestationDefects(att(0), "08"), [], "an exit-0 attestation is clean");
+    // outputHash: the two cheapest fakes that per-field checks let through.
     assert.ok(
       attestationDefects(att(0).replace("Tests: 12 passed", "Tests: 99 passed"), "08")
-        .some((d) => /outputHash không khớp/.test(d)),
-      "sửa output sau khi chạy mà giữ attestation phải bị bắt",
+        .some((d) => /outputHash does not match/.test(d)),
+      "editing the output after the run while keeping the attestation must be caught",
     );
     assert.ok(
-      attestationDefects(att(0).replace(/outputHash: .+/, ""), "08").some((d) => /thiếu outputHash/.test(d)),
-      "attestation không có outputHash là khối gõ tay hoặc bản cũ",
+      attestationDefects(att(0).replace(/outputHash: .+/, ""), "08").some((d) => /no outputHash/.test(d)),
+      "an attestation without outputHash is a hand-typed or outdated block",
     );
     assert.ok(
       attestationDefects(att(1), "08").some((d) => /exitCode 1/.test(d)),
-      "in ra passed mà exitCode 1 phải bị bắt — regex không bao giờ thấy được điều này",
+      "printing passed with exitCode 1 must be caught — a regex never sees this",
     );
-    // durationMs 0 = không tiến trình nào chạy; thiếu field = khối gõ tay.
+    // durationMs 0 = no process ran; a missing field = a hand-typed block.
     assert.ok(
       attestationDefects(att(0, 0), "08").some((d) => /durationMs/.test(d)),
-      "durationMs 0 nghĩa là không có lệnh nào thật sự chạy",
+      "durationMs 0 means no command actually ran",
     );
     assert.ok(
       attestationDefects(ATTEST_MARK + "\nexitCode: 0\n", "08").some((d) => /durationMs/.test(d)),
-      "attestation thiếu durationMs không đáng tin",
+      "an attestation missing durationMs is untrustworthy",
     );
-    // known-failure vẫn là lối thoát hợp lệ, y như với FAILURE_RE.
+    // known-failure is still a valid escape hatch, as with FAILURE_RE.
     assert.deepEqual(
       attestationDefects("<!-- known-failure: AC-03 -->\n" + att(1), "08"),
       [],
-      "test đỏ có chủ đích đã khai thì exitCode khác 0 vẫn hợp lệ",
+      "a declared deliberately-red test makes a non-zero exitCode legitimate",
     );
-    // Hai mode phải được kiểm TƯỜNG MINH, không đọc ké config đang bật: bài test
-    // "thiếu attestation có phải lỗi không" mà phụ thuộc evidenceMode của repo
-    // nguồn thì đổi một dòng config là mất luôn một nửa vế.
-    assert.deepEqual(attestationDefects("không có attestation", "08", "legacy"), [],
-      'legacy: repo đang di trú không được đỏ hết chỉ vì nâng kernel');
+    // Both modes must be tested EXPLICITLY, not by reading whatever config is
+    // active: a test of "is a missing attestation an error" that depends on the
+    // source repo's evidenceMode loses half its coverage to a one-line change.
+    assert.deepEqual(attestationDefects("no attestation here", "08", "legacy"), [],
+      'legacy: a migrating repo must not go all red from a kernel upgrade');
     assert.ok(
       attestationDefects("```\n$ " + sample + "\nTests: 12 passed\n```", "08", "attested")
         .some((d) => /attestation/.test(d)),
-      'attested: output gõ tay không có attestation phải bị chặn — đó là lý do mode này tồn tại',
+      'attested: hand-typed output with no attestation must be blocked — that is why this mode exists',
     );
 
-    // Gate 5 phải chạy SAU implementer. startedAt sớm hơn = khối chép từ nơi khác.
+    // Gate 5 must run AFTER the implementer. An earlier startedAt = a copied block.
     const evNew = att(0, 12, "2026-09-18T10:00:00Z");
     const advOld = att(0, 12, "2026-09-18T09:00:00Z");
     assert.ok(
       adversaryDefects(advOld + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
-      "attestation của 09 sớm hơn 08 = adversary không tự chạy",
+      "a 09 attestation older than 08's = the adversary did not run it",
     );
     const advNew = att(0, 12, "2026-09-18T11:00:00Z");
     assert.ok(
       !adversaryDefects(advNew + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
-      "chạy sau thì không bị bắt",
+      "running afterwards is not flagged",
     );
   }
 
-  // --task: khoá rút ra từ hai segment cuối, chấp nhận mọi dạng coordinator có.
-  assert.equal(taskKeyOf("docs/tasks/sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "đường dẫn đầy đủ");
-  assert.equal(taskKeyOf("sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "dạng rút gọn");
-  assert.equal(taskKeyOf("./docs/tasks/sprint-1/ABC-1-x/"), "sprint-1/ABC-1-x", "có ./ và / cuối");
-  assert.equal(taskKeyOf("docs\\tasks\\sprint-1\\ABC-1-x"), "sprint-1/ABC-1-x", "dấu \\ của Windows");
+  // --task: the key is the last two segments, accepting every form the
+  // coordinator might hold.
+  assert.equal(taskKeyOf("docs/tasks/sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "full path");
+  assert.equal(taskKeyOf("sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "short form");
+  assert.equal(taskKeyOf("./docs/tasks/sprint-1/ABC-1-x/"), "sprint-1/ABC-1-x", "leading ./ and trailing /");
+  assert.equal(taskKeyOf("docs\\tasks\\sprint-1\\ABC-1-x"), "sprint-1/ABC-1-x", "Windows \\ separators");
 
-  // --task trỏ folder không có thật phải THOÁT LỖI, không phải "0 task, 0 error".
-  // Gate xanh vì không tìm thấy gì để kiểm là gate tệ hơn không có gate.
+  // A --task pointing at a nonexistent folder must EXIT WITH AN ERROR, not
+  // "0 tasks, 0 errors". A gate green because it found nothing to check is
+  // worse than no gate.
   {
     const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--task", "sprint-9/khong-co-that", "--quiet"],
       { cwd: REPO_ROOT, encoding: "utf8" });
-    assert.equal(r.status, 2, "--task trỏ folder không tồn tại phải exit 2, không được cho qua");
-    assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
+    assert.equal(r.status, 2, "--task on a nonexistent folder must exit 2, never pass");
+    assert.ok(/no task folder matching/.test(r.stderr), "and it must say why");
   }
 
   // triage log: closing the one loophole --triage still had. The parser must be
@@ -1271,7 +1281,7 @@ if (args.has("--self-check")) {
 
     assert.deepEqual(vectorDriftSince({ scope: 0 }, { scope: 2, testing: 1 }).raised, ["scope 0→2", "testing 0→1"], "names each raised dimension");
     assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 2 }), { raised: [], lowered: [] }, "unchanged → silent");
-    // §5.1.3 is "chỉ nâng, không hạ" -- the forbidden direction must be the one
+    // §5.1.3 is "only raise, never lower" -- the forbidden direction must be the one
     // that is actually reported, or the rule has no teeth anywhere.
     assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 1 }).lowered, ["scope 2→1"], "lowered is the direction §5.1.3 forbids");
     assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 1 }).raised, [], "a lowered dimension is not also 'raised'");
@@ -1601,7 +1611,7 @@ if (args.has("--preflight")) {
   else if (reach === "not-loaded")
     errs.push(
       `.claude/settings.json lives in ${REPO_ROOT} but the CLI is running in ${process.cwd()} — the CLI only walks UP, so it is not loaded and the deny-list on git push / reset --hard is gone.\n` +
-        `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Trường hợp B").`,
+        `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Case B").`,
     );
   // Present and loaded still says nothing about armed.
   if (reach === "ok")
@@ -1659,7 +1669,7 @@ if (args.has("--preflight")) {
   // Optional layers: the README is explicit that both are optional, so these
   // stay warnings. They still cost you the gate that runs without being asked.
   const gitDir = findUpward(".git", REPO_ROOT);
-  if (!gitDir) warns.push("not a git repo — no pre-commit hook, no CI, no history for task docs (README \"Có cần git init\")");
+  if (!gitDir) warns.push("not a git repo — no pre-commit hook, no CI, no history for task docs (README \"Do I need git init\")");
   else {
     const hookPath = spawnSync("git", ["rev-parse", "--git-path", "hooks/pre-commit"], { cwd: REPO_ROOT, encoding: "utf8" });
     const hook = hookPath.status === 0 ? resolve(REPO_ROOT, hookPath.stdout.trim()) : null;
@@ -1815,7 +1825,7 @@ function stagedTaskFolders() {
 }
 
 // "docs/tasks/sprint-1/ABC-1-x", "sprint-1/ABC-1-x", "./docs/tasks/sprint-1/ABC-1-x/"
-// → "sprint-1/ABC-1-x". Hai segment cuối là khoá; mọi thứ trước đó là tasksDir.
+// → "sprint-1/ABC-1-x". The last two segments are the key; anything before is tasksDir.
 function taskKeyOf(arg) {
   const parts = arg.split(/[/\\]/).filter((x) => x && x !== ".");
   return parts.slice(-2).join("/");
@@ -1856,12 +1866,12 @@ if (schema.properties?.docsPath)
 const ONLY = TASK_ARG ? new Set([taskKeyOf(TASK_ARG)]) : STAGED ? stagedTaskFolders() : null;
 const folders = findTaskFolders();
 
-// Gõ sai đường dẫn --task thì không có folder nào khớp → "0 task, 0 error" →
-// gate XANH. Một cổng im lặng cho qua vì không tìm thấy gì để kiểm là cổng
-// tệ hơn không có cổng: nó báo an toàn. --staged khác hẳn, rỗng ở đó là hợp lệ
-// (commit không đụng task nào).
+// A typo'd --task path matches no folder → "0 tasks, 0 errors" → a GREEN gate.
+// A gate that silently passes because it found nothing to check is worse than
+// no gate: it reports safety. --staged is different; empty there is legitimate
+// (the commit touched no task).
 if (TASK_ARG && !folders.length) {
-  console.error(`✖ --task "${TASK_ARG}": không thấy task folder nào khớp "${taskKeyOf(TASK_ARG)}" trong ${rel(TASKS_DIR)}`);
+  console.error(`✖ --task "${TASK_ARG}": no task folder matching "${taskKeyOf(TASK_ARG)}" under ${rel(TASKS_DIR)}`);
   process.exit(2);
 }
 const results = []; // {folder, errors:[], warnings:[]}
@@ -1949,7 +1959,7 @@ for (const { sprint, task, path } of folders) {
         `vector scored higher at bootstrap than at triage (${drift.raised.join(", ")}) — the lower score is what decided whether this task needed the harness (§5.1.3)`,
       );
     // Lowering is the direction §5.1.3 forbids: it buys a lighter gate and a
-    // cheaper tier. "Chỉ nâng, không hạ" — want it lower, go needs_clarification.
+    // cheaper tier. "Only raise, never lower" — want it lower, go needs_clarification.
     if (drift.lowered.length)
       sink.push(
         `vector scored LOWER than at triage (${drift.lowered.join(", ")}) — §5.1.3 allows raising only; a lighter score buys a lighter gate and a cheaper tier. To lower it, go through needs_clarification`,
@@ -2174,8 +2184,8 @@ for (const { sprint, task, path } of folders) {
         const advText = readFileSync(adv, "utf8");
         for (const d of adversaryDefects(advText, evText))
           errors.push(`${GATE4_ARTIFACTS.adversarial}: ${d}`);
-        // Gate 5 chạy LẠI lệnh, nên nó cũng phải đóng dấu — nếu không, adversary
-        // vẫn bịa được output của chính nó và cả hai gate cùng mù.
+        // Gate 5 RE-RUNS the commands, so it must be attested too — otherwise the
+        // adversary can still invent its own output and both gates go blind.
         for (const d of attestationDefects(advText, GATE4_ARTIFACTS.adversarial)) errors.push(d);
       }
     }

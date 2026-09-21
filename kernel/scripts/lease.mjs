@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-// Lease cho một task folder: chặn hai phiên /start-task cùng chạy một task.
+// A lease on one task folder: stops two /start-task sessions running the same task.
 //
-//   node scripts/lease.mjs acquire <task-folder>    # exit 1 nếu phiên khác đang giữ
-//   node scripts/lease.mjs renew   <task-folder>    # gọi mỗi lần dispatch stage
+//   node scripts/lease.mjs acquire <task-folder>    # exit 1 if another session holds it
+//   node scripts/lease.mjs renew   <task-folder>    # called at every stage dispatch
 //   node scripts/lease.mjs release <task-folder>
 //   node scripts/lease.mjs --self-check
 //
-// Worktree cách ly file của repo CODE. Nó không cách ly docs/tasks/ — ở bố cục
-// C mọi task dùng chung một repo harness, nên hai phiên sẽ ghi đè handoff của
-// nhau mà không ai biết.
+// A worktree isolates the CODE repo's files. It does not isolate docs/tasks/ —
+// in layout C every task shares one harness repo, so two sessions will overwrite
+// each other's handoffs without anyone noticing.
 //
-// Viết bằng Node để chạy được từ PowerShell/cmd, không chỉ bash: `mkdir -p`,
-// `find -mmin`, `hostname`, `$$` đều không có ở đó — mà step 0 của /start-task
-// là thứ chạy TRƯỚC mọi thứ khác, hỏng nó là hỏng cả lệnh.
+// Written in Node so it runs from PowerShell/cmd, not just bash: `mkdir -p`,
+// `find -mmin`, `hostname` and `$$` do not exist there — and step 0 of
+// /start-task runs BEFORE everything else, so breaking it breaks the command.
 
 import { mkdirSync, writeFileSync, readFileSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { hostname, tmpdir } from "node:os";
 
-const TTL_MS = 30 * 60 * 1000; // lease cũ hơn 30' = phiên trước đã treo/Ctrl-C
+const TTL_MS = 30 * 60 * 1000; // a lease older than 30' = the previous session hung/Ctrl-C'd
 
 const paths = (taskDir) => {
   const dir = join(taskDir, ".agent-memory", ".lease.d");
@@ -27,13 +27,14 @@ const paths = (taskDir) => {
 
 const mtime = (p) => { try { return statSync(p).mtimeMs; } catch { return null; } };
 
-// Lease coi là chết khi — và chỉ khi — nó CŨ.
+// A lease is dead when — and only when — it is OLD.
 //
-// Giữa mkdir và ghi owner có một khe vài ms mà thư mục đã tồn tại còn owner thì
-// chưa. Đọc "owner không có" là "chết" thì mọi phiên rơi vào khe đó sẽ CƯỚP
-// lease của một phiên đang sống (đo thật trên bản bash: 20 phiên song song, 7
-// phiên cướp được). Nên thiếu owner mặc định là CÒN SỐNG; chỉ khi chính thư mục
-// cũng đã quá TTL mới là mồ côi thật (phiên kia chết đúng khe đó).
+// Between mkdir and writing owner there is a few-ms window where the directory
+// exists but owner does not. Reading "no owner" as "dead" means every session
+// landing in that window STEALS a live session's lease (measured on the bash
+// version: 20 parallel sessions, 7 successful steals). So a missing owner
+// defaults to ALIVE; only when the directory itself is past the TTL is it a
+// genuine orphan (the other session died exactly in that window).
 function dead({ dir, owner }, now = Date.now()) {
   const t = mtime(owner) ?? mtime(dir);
   return t !== null && now - t > TTL_MS;
@@ -42,18 +43,18 @@ function dead({ dir, owner }, now = Date.now()) {
 const stamp = ({ owner }) =>
   writeFileSync(owner, `pid=${process.pid} host=${hostname()} at=${new Date().toISOString()}`);
 
-// mkdir chứ không phải "kiểm rồi ghi": khe giữa kiểm và ghi đúng là cái race mà
-// lease sinh ra để chống. mkdir thất bại-nếu-đã-tồn-tại trong MỘT syscall.
+// mkdir rather than "check then write": the window between check and write is
+// exactly the race the lease exists to prevent. mkdir fails-if-exists in ONE syscall.
 function acquire(taskDir) {
   const p = paths(taskDir);
   mkdirSync(join(taskDir, ".agent-memory"), { recursive: true });
   try {
-    mkdirSync(p.dir); // { recursive: true } sẽ KHÔNG ném khi đã tồn tại — mất hết tác dụng
+    mkdirSync(p.dir); // { recursive: true } would NOT throw when it exists — defeating the point
   } catch (e) {
     if (e.code !== "EEXIST") throw e;
     if (!dead(p)) {
       try { console.error(readFileSync(p.owner, "utf8")); } catch {}
-      console.error("→ task đang chạy ở nơi khác. DỪNG.");
+      console.error("→ this task is already running elsewhere. STOP.");
       return 1;
     }
   }
@@ -63,22 +64,22 @@ function acquire(taskDir) {
 
 const release = (taskDir) => (rmSync(paths(taskDir).dir, { recursive: true, force: true }), 0);
 
-// TTL 30' được thiết kế để phát hiện PHIÊN ĐÃ CHẾT, nhưng stamp() chỉ chạy một
-// lần lúc acquire — nên nó áp cho cả vòng đời task. Một task `high` chạy 6 stage
-// với model `strong` vượt 30' là bình thường, và lúc đó lease ĐANG SỐNG bị coi
-// là mồ côi: phiên thứ hai acquire được, hai phiên cùng ghi .agent-memory —
-// đúng cái race mà lease sinh ra để chống.
+// The 30' TTL is designed to detect a DEAD SESSION, but stamp() runs only once
+// at acquire — so it ends up covering the whole task lifetime. A `high` task
+// running 6 stages on the `strong` model easily exceeds 30', and at that point a
+// LIVE lease is treated as an orphan: a second session acquires it, two sessions
+// write .agent-memory — exactly the race the lease exists to prevent.
 //
-// Coordinator gọi renew mỗi lần dispatch stage (cùng chỗ nó tăng attempts).
-// Không cần timer hay tiến trình nền: mỗi stage là một nhịp tim tự nhiên, và
-// stage dài nhất vẫn ngắn hơn TTL.
+// The coordinator calls renew at every stage dispatch (the same place it bumps
+// attempts). No timer or background process needed: each stage is a natural
+// heartbeat, and the longest stage is still shorter than the TTL.
 //
-// KHÔNG tạo lease từ hư không — renew mà tự mkdir thì nó thành acquire bỏ qua
-// kiểm tra, tức là hợp pháp hoá đúng cái cướp lease mà file này chống.
+// It must NOT create a lease from nothing — a renew that mkdirs is an acquire
+// that skipped the check, i.e. it legitimises the very steal this file prevents.
 function renew(taskDir) {
   const p = paths(taskDir);
   if (mtime(p.dir) === null) {
-    console.error("→ không giữ lease (chưa acquire, hoặc đã bị release). Không renew.");
+    console.error("→ not holding the lease (never acquired, or already released). Not renewing.");
     return 1;
   }
   stamp(p);
@@ -91,38 +92,38 @@ if (process.argv[2] === "--self-check") {
   const { mkdtempSync, utimesSync } = await import("node:fs");
   const t = mkdtempSync(join(tmpdir(), "lease-"));
 
-  assert.equal(acquire(t), 0, "lease trống phải lấy được");
-  assert.equal(acquire(t), 1, "lease đang sống phải bị từ chối");
+  assert.equal(acquire(t), 0, "a free lease must be acquirable");
+  assert.equal(acquire(t), 1, "a live lease must be refused");
 
-  // owner cũ → tiếp quản được
+  // stale owner → takeover allowed
   const p = paths(t);
   const old = new Date(Date.now() - TTL_MS - 60_000);
   utimesSync(p.owner, old, old);
-  assert.equal(acquire(t), 0, "lease quá TTL phải tiếp quản được");
+  assert.equal(acquire(t), 0, "a lease past its TTL must be takeable");
 
-  // Khe mkdir→stamp: thư mục mới, chưa có owner → phải coi là CÒN SỐNG.
+  // The mkdir→stamp window: fresh directory, no owner yet → must count as ALIVE.
   release(t);
   mkdirSync(p.dir, { recursive: true });
-  assert.equal(dead(p), false, "thiếu owner + thư mục mới = còn sống, không được cướp");
+  assert.equal(dead(p), false, "no owner + fresh directory = alive, must not be stolen");
   utimesSync(p.dir, old, old);
-  assert.equal(dead(p), true, "thiếu owner + thư mục quá TTL = mồ côi thật");
+  assert.equal(dead(p), true, "no owner + directory past TTL = a genuine orphan");
 
-  // renew: giữ lease sống qua mốc TTL, nếu không task dài tự mất chỗ.
+  // renew: keeps the lease alive past the TTL, otherwise long tasks lose their slot.
   release(t);
   acquire(t);
   utimesSync(p.owner, old, old);
-  assert.equal(dead(p), true, "tiền đề: lease đã quá TTL");
-  assert.equal(renew(t), 0, "đang giữ lease thì renew được");
-  assert.equal(dead(p), false, "renew phải làm lease sống lại");
-  assert.equal(acquire(t), 1, "renew xong, phiên khác vẫn phải bị từ chối");
+  assert.equal(dead(p), true, "precondition: the lease is past its TTL");
+  assert.equal(renew(t), 0, "holding the lease means renew succeeds");
+  assert.equal(dead(p), false, "renew must bring the lease back to life");
+  assert.equal(acquire(t), 1, "after renew, another session must still be refused");
 
   release(t);
-  assert.equal(renew(t), 1, "không giữ lease thì KHÔNG renew được");
-  assert.equal(mtime(p.dir), null, "renew không được tạo lease từ hư không");
+  assert.equal(renew(t), 1, "not holding the lease means renew must FAIL");
+  assert.equal(mtime(p.dir), null, "renew must not create a lease from nothing");
 
   acquire(t);
   release(t);
-  assert.equal(mtime(p.dir), null, "release phải xoá lease");
+  assert.equal(mtime(p.dir), null, "release must remove the lease");
   rmSync(t, { recursive: true, force: true });
   console.log("✅ lease self-check passed");
   process.exit(0);
@@ -131,7 +132,7 @@ if (process.argv[2] === "--self-check") {
 const [cmd, taskDir] = process.argv.slice(2);
 const CMDS = { acquire, renew, release };
 if (!taskDir || !CMDS[cmd]) {
-  console.error("dùng: node scripts/lease.mjs acquire|renew|release <task-folder>");
+  console.error("usage: node scripts/lease.mjs acquire|renew|release <task-folder>");
   process.exit(2);
 }
 process.exit(CMDS[cmd](taskDir));
