@@ -338,7 +338,16 @@ Chia việc theo cái mỗi bên biết chắc: coordinator ghi `startedAt`/`end
 
 `inputTokens` và `cacheReadTokens` để **riêng**, không cộng: cache read tính tiền khoảng 1/10 và trong phiên thật nhiều gấp ~80 lần input mới (đo được: 866k vs 66M). Gộp một số thì sai hai bậc độ lớn mà vẫn trông hợp lý.
 
-Chỉ chạy với Claude Code — CLI khác không có log đó thì script thoát 0, không ghi gì. Format `.jsonl` là nội bộ của CLI: mọi lỗi parse **báo to**, không bao giờ ghi 0, vì số 0 trông như task rẻ và sẽ có người tin.
+Format `.jsonl` là nội bộ của CLI, đổi lúc nào không báo — nên script phân biệt ba kiểu hỏng:
+
+| Tình huống | Hành vi |
+|---|---|
+| Không phải Claude Code | thoát 0, không ghi gì — workflow chưa từng có dữ liệu này thì không phải đang hỏng. Trỏ chỗ khác bằng `SPEC_HARNESS_SESSION_LOG`; **có env mà đường dẫn không tồn tại → exit 1** (bạn đã nói nó ở đâu, và nó không ở đó) |
+| Log có, parse ra rỗng | exit 1 |
+| Log có, `usage` có, nhưng **tên field đã đổi** | exit 1, in ra tên thật đang có. Đây là ca nguy hiểm nhất: mọi lookup trả 0, window vẫn khớp, và 0 được ghi xuống như chi phí thật |
+| Không khớp window | không ghi, và đếm riêng từng vế đã loại bao nhiêu (window / cwd / branch) kèm tên branch có trong log — "0 matched" trơ trọi bắt người đọc đoán giữa sai giờ, sai repo và sai branch |
+
+Chỉ mở file có `mtime` sau dispatch sớm nhất: session log là append-only nên file không đụng tới từ trước đó không thể chứa gì liên quan. Đo trên máy thật — **641 MB / 538 file → bỏ qua 533 file, 2.5s → 0.08s**.
 
 **Tracker write-back — tắt mặc định, bật bằng config.** `tracker.writeBack`: `off` (mặc định, chỉ báo cáo) · `comment` (đăng một comment lên ticket: đường dẫn task doc, branch, chỗ chứa evidence) · `status` (comment **và** chuyển ticket sang `tracker.statusOnReview`). Coordinator gọi qua MCP server `tracker`, **không** qua API vendor: ClickUp/Jira/Linear không chung mô hình status lẫn auth, một client viết ở đây là code không ai test được ngoài tracker của chính maintainer.
 
