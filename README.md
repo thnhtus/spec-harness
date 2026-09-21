@@ -2,14 +2,34 @@
 
 [![Socket Badge](https://socket.dev/api/badge/npm/package/spec-harness)](https://socket.dev/npm/package/spec-harness)
 
-Spec-driven agent harness, tách từ một harness đã chạy thật **240 task / 17 sprint** trên một codebase production.
+Harness spec-driven cho CLI agent: **7 role · 5 gate · truy vết AC từ spec tới test evidence**. Gate enforce bằng **exit code**, không phải bằng lời nhắc trong prompt.
 
-7 role · 5 gate · mọi AC truy vết được từ spec tới test evidence — và gate được enforce bằng **exit code**, không phải bằng lời nhắc trong prompt.
+Tách từ một harness đã chạy thật 240 task / 17 sprint trên codebase production.
 
-Hai thứ khiến nó khác một bộ prompt có tổ chức:
+## Cài
 
-- **Gate 5 là agent đối kháng.** Gate 1–4 do chính người làm tự chấm. Nên có thêm một role mặc định FAIL: tự chạy lại lệnh thay vì tin `08-Test-Evidence.md`, đọc `git diff` thật thay vì đọc mô tả diff, và hỏi "đổi hằng số thì test có đỏ không".
-- **Harness học từ task đã đóng.** Độ phức tạp ước lượng trước, rework đo trong lúc làm, kết quả ghi sau khi ship — `--calibrate` đối chiếu ba mốc đó và chỉ ra ngưỡng nào đang sai.
+```bash
+cd ~/code/my-app     # repo code của bạn
+npx spec-harness     # chép kernel + skills + .claude/
+```
+
+Rồi mở CLI agent tại đó và chạy hai lệnh:
+
+```
+/init-project-rules                              # điền config cho project của bạn
+```
+
+```bash
+node scripts/validate-tasks.mjs --preflight      # phải xanh trước task đầu tiên
+```
+
+Xong. `/start-task <ticket-id>` để chạy task đầu tiên.
+
+## Hai thứ khiến nó khác một bộ prompt có tổ chức
+
+**1. Gate 5 là agent đối kháng.** Gate 1–4 do chính người làm tự chấm. Nên có thêm một role mặc định FAIL: tự chạy lại lệnh thay vì tin `08-Test-Evidence.md`, đọc `git diff` thật thay vì đọc mô tả diff, và hỏi "đổi hằng số thì test có đỏ không".
+
+**2. Harness học từ task đã đóng.** Độ phức tạp ước lượng trước, rework đo trong lúc làm, kết quả ghi sau khi ship — `--calibrate` đối chiếu ba mốc đó và chỉ ra ngưỡng nào đang sai.
 
 ## Kernel vs adapter
 
@@ -44,60 +64,50 @@ Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh 
 
 Kernel cũng không gắn với một CLI: file role không khai `model:`, không hardcode tên tool MCP. Đổi Claude Code ↔ Codex ↔ Gemini thì sửa `models` trong config, không đụng kernel.
 
-## Cài vào project mới
+## Đặt harness ở đâu
 
-Chọn một trong hai trường hợp — khác nhau ở chỗ `harness.config.json` nằm đâu, kéo theo task docs nằm đâu.
+Hai trường hợp, khác nhau ở chỗ `harness.config.json` nằm đâu — kéo theo task docs nằm đâu.
 
-Installer cài vào **thư mục bạn đang đứng**; truyền đường dẫn nếu muốn cài chỗ khác (`npx spec-harness ./harness`). Thư mục đó phải tồn tại; git repo thì tốt hơn nhưng không bắt buộc (xem ghi chú cuối mục). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
+| | A — trong repo code | B — cạnh các repo code |
+| --- | --- | --- |
+| Khi nào | Một repo (FE hoặc BE) | Nhiều repo, hoặc muốn task docs tách khỏi code |
+| Task docs | `my-app/docs/tasks/`, commit chung với code | `harness/docs/tasks/`, commit riêng |
+| `repos` | `[{ path: "." }]` | `[{ path: "../fe" }, { path: "../be" }]` |
+| Mở CLI ở | repo root | **`harness/`**, không phải thư mục cha |
 
-### Trường hợp A — cài **vào trong** repo code
-
-Một repo (FE hoặc BE), task docs nằm cùng chỗ với code. Đây là mặc định.
+### A — trong repo code (mặc định)
 
 ```bash
-cd ~/code/my-app          # ← repo code của bạn, đứng sẵn ở đây
-
+cd ~/code/my-app
 npx spec-harness
-
-# ghim version:  npx spec-harness@0.1.0
-# không hỏi:     npx spec-harness --yes        ← CI, script
-# repo private:  git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs
 ```
 
-Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 20+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
+`.claude/` nằm sẵn ở repo root nên thư mục con (`packages/web/`) và worktree do `/start-task` tạo đều thấy được. **Đừng thêm `.claude/` vào `.gitignore`** — worktree sẽ rỗng và `/start-task` mất skills giữa chừng.
 
-Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
+### B — cạnh các repo code
 
-Mở CLI ngay tại repo root là xong — `.claude/` nằm sẵn ở đó. Thư mục con (`packages/web/`) và worktree do `/start-task` tạo đều thấy được, vì CLI quét ngược lên cha và `.claude/` được commit vào git. **Đừng thêm `.claude/` vào `.gitignore`** — worktree sẽ rỗng và `/start-task` mất skills giữa chừng. Lệnh `node scripts/validate-tasks.mjs` chạy từ repo root.
-
-Harness cài **đè lên** repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Thư mục đích không rỗng thì installer **liệt kê đúng những file sắp đè và hỏi `[y/N]` trước khi ghi byte nào** — trả lời khác `y` là thoát, không đụng gì. Không có TTY (CI, pipe) thì nó dừng hẳn thay vì tự đồng ý; thêm `--yes` để bỏ qua. Cài xong nó liệt kê lại lần nữa; bản cũ còn trong git (`git diff`, `git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
-
-### Trường hợp B — cài **cạnh** các repo code
-
-Nhiều repo (FE + BE), hoặc muốn task docs tách khỏi code. Harness đứng riêng ngang hàng — **tự tạo thư mục trước**, vì nó chưa tồn tại:
+Harness đứng ngang hàng, **tự tạo thư mục trước** vì nó chưa tồn tại:
 
 ```bash
-cd ~/code/my-workspace    # ← thư mục đang chứa fe/ và be/
+cd ~/code/my-workspace    # thư mục đang chứa fe/ và be/
 mkdir harness && cd harness
-git init                  # tuỳ chọn — xem "Có cần git init không?" bên dưới
-
+git init                  # khuyến nghị mạnh — xem ghi chú cài đặt
 npx spec-harness
 ```
 
 ```
 my-workspace/
-├── harness/     ← vừa tạo, cài vào đây; task docs, spec, evidence
+├── harness/     ← cài vào đây; task docs, spec, evidence
 ├── fe/          ← code, không bị đụng
 └── be/          ← code, không bị đụng
 ```
 
-Task docs ở `harness/docs/tasks/`, code ở `fe/` + `be/`. `repos` trỏ `../fe`, `../be`. Commit task doc và commit code là **hai repo, hai lần commit**.
-
-**Mở CLI trong `harness/`, không phải `my-workspace/`.** CLI chỉ đọc `.claude/` ở cwd và các thư mục *cha* — không quét xuống con. Mở ở `my-workspace/` thì `harness/.claude/` vô hình: mất skills, mất `/start-task`, và mất cả deny `git push` / `git reset --hard`. Từ trong `harness/` vẫn sửa được repo anh em bằng `/add-dir ../fe ../be`.
+**Mở CLI trong `harness/`.** CLI chỉ đọc `.claude/` ở cwd và các thư mục *cha* — không quét xuống con. Mở ở `my-workspace/` thì `harness/.claude/` vô hình: mất skills, mất `/start-task`, và mất cả deny `git push` / `git reset --hard`. Từ trong `harness/` vẫn sửa được repo anh em bằng `/add-dir ../fe ../be`.
 
 `--add-dir harness` từ thư mục cha **không** thay thế được: nó nạp skills và commands nhưng bỏ qua `settings.json`, nên guardrail biến mất trong im lặng — hỏng mà trông như chạy được. Installer đặt sẵn một `CLAUDE.md` cảnh báo ở thư mục cha để bắt lỗi nếu bạn lỡ mở nhầm (có `CLAUDE.md` rồi thì không đè).
 
-#### Vẫn muốn mở CLI ở `my-workspace/`?
+<details>
+<summary>Vẫn muốn mở CLI ở <code>my-workspace/</code>?</summary>
 
 Symlink **sáu** thứ lên cha — không chỉ `.claude`. Nạp và chạy là hai chuyện khác nhau: `.claude` lo phần nạp (skills, commands, `settings.json`), bốn cái còn lại lo phần chạy, vì `/start-task` gọi `node scripts/lease.mjs` và `docs/tasks/...` bằng **đường dẫn tương đối tính từ cwd**:
 
@@ -116,24 +126,35 @@ File thật vẫn nằm trong `harness/`: lease, task folder, evidence đều gh
 
 Windows: `ln -s` cần Developer Mode hoặc admin. Không bật được thì dùng `mklink /D` trong cmd (admin), hoặc mở CLI trong `harness/` như mặc định.
 
-### Sau khi cài — bắt buộc chạy `/init-project-rules`
+</details>
+
+<details>
+<summary>Bố cục thứ ba: trong repo FE, đọc BE anh em</summary>
+
+`repos` khai repo mà agent được sửa, `path` tính từ chỗ đặt `harness.config.json`:
+
+| Bố cục | `repos` | Task docs | Worktree |
+| --- | --- | --- | --- |
+| Harness trong repo code | `[{ path: "." }]` | cùng repo | worktree của chính repo đó |
+| Trong repo FE, đọc BE anh em | `[{ path: "." }, { path: "../be" }]` | repo chính | như trên; BE read-only |
+| Harness ngang hàng FE + BE | `[{ path: "../fe" }, { path: "../be" }]` | **repo harness** | worktree trong repo đang sửa; task doc ở lại |
+
+`repoName` của task chỉ một entry — đó là repo được sửa; repo khác trong `repos` là **read-only** (vd đọc DTO của BE để lấy contract); repo không khai thì không đụng. Sai tên → validator chặn. Chi tiết: `docs/Agents.md` §0.
+
+</details>
+
+## Sau khi cài: `/init-project-rules`
 
 Installer chỉ chép file. Nó **không** biết project bạn dùng stack gì, tracker nào, nhánh đặt tên ra sao — nên `harness.config.json` và `docs/agents/ProjectRules.md` cài ra là **khung rỗng**. Chạy task lúc này thì gate không có gì để kiểm.
 
-Mở CLI agent trong thư mục vừa cài rồi gõ:
-
-```
-/init-project-rules
-```
-
-Nó dò repo (`.mcp.json`, manifest package, `git branch`, CI workflow, `CLAUDE.md`, repo anh em), hỏi đúng phần không dò được, rồi điền:
+`/init-project-rules` dò repo (`.mcp.json`, manifest package, `git branch`, CI workflow, `CLAUDE.md`, repo anh em), hỏi đúng phần không dò được, rồi điền:
 
 | Điền vào | Gì |
 | --- | --- |
 | `docs/agents/ProjectRules.md` | §1 nguồn truth MCP · §2 guardrail source · §3 quy tắc nhánh · §7 lệnh kiểm tra |
 | `harness.config.json` | `repos`, `layers`, `models`, `evidenceCommandPattern` + `evidenceSampleCommand` |
 
-Rồi tự chạy `node scripts/validate-tasks.mjs --self-check` để xác nhận config không tự mâu thuẫn.
+Rồi tự chạy `--self-check` để xác nhận config không tự mâu thuẫn.
 
 **Còn hai việc tay nó không làm được:**
 
@@ -142,11 +163,11 @@ Rồi tự chạy `node scripts/validate-tasks.mjs --self-check` để xác nh�
 | `.mcp.json` | URL server và OAuth là thứ chỉ bạn có. Sửa URL rồi gõ `/mcp` để login. Project-scoped, commit được cho cả team |
 | `acTrace.since` trong `harness.config.json` | Đặt = ngày bạn bật harness. Task cũ hơn mốc này chỉ warning, không chặn — nếu không thì mọi task có sẵn đều đỏ |
 
-Xong hết thì `node scripts/validate-tasks.mjs --preflight` phải xanh **trước task đầu tiên**. Chưa xanh thì gate im lặng no-op và bạn chỉ phát hiện sau vài chục task.
+Xong hết thì `--preflight` phải xanh **trước task đầu tiên**. Chưa xanh thì gate im lặng no-op và bạn chỉ phát hiện sau vài chục task.
 
-`--preflight` = `--self-check` (config có tự mâu thuẫn không) **cộng** ba thứ self-check không nhìn thấy vì chúng nằm ngoài file config: `.claude/settings.json` có thực sự được nạp từ cwd hiện tại không (bẫy bố cục B ở trên — CLI chỉ quét **ngược lên**, nên mở ở thư mục cha là mất guardrail trong im lặng), `tasksDir` và `repos[].path` có resolve được không. Thiếu git / hook / CI chỉ là warning — README nói rõ cả ba đều tuỳ chọn. `/start-task` gọi nó ở step 0a.
+`--preflight` = `--self-check` **cộng** ba thứ self-check không nhìn thấy vì chúng nằm ngoài file config: `.claude/settings.json` có thực sự được nạp từ cwd hiện tại không (bẫy bố cục B ở trên), `tasksDir` và `repos[].path` có resolve được không. Thiếu git / hook / CI chỉ là warning — cả ba đều tuỳ chọn. `/start-task` gọi nó ở step 0a.
 
-### MCP server nên dùng
+## MCP server
 
 Kernel **không** hardcode tên tool MCP (`node install.mjs --self-test` fail nếu có) — nên đổi tracker hay design tool chỉ là sửa `.mcp.json` + ProjectRules §1, không đụng file role. Bốn vai trò dưới đây là những chỗ harness thật sự gọi tới; phần còn lại là tuỳ project.
 
@@ -159,9 +180,7 @@ Kernel **không** hardcode tên tool MCP (`node install.mjs --self-test` fail n�
 
 **Đừng thêm cho đủ.** Mỗi server nối vào là một khối tool nằm trong context **mọi lượt**, kể cả lượt không dùng tới nó — ngược với ngân sách token ở `SharedRules` §8. Filesystem/shell MCP thì thừa hẳn: CLI đã có `Read`/`Bash`.
 
-#### Cài
-
-Sửa `.mcp.json` ở repo root (installer đã sinh sẵn khung):
+Sửa `.mcp.json` ở repo root (installer đã sinh sẵn khung), rồi gõ `/mcp` trong phiên CLI để login OAuth, và `claude mcp list` để xác nhận trước task đầu tiên:
 
 ```jsonc
 {
@@ -174,7 +193,18 @@ Sửa `.mcp.json` ở repo root (installer đã sinh sẵn khung):
 }
 ```
 
-Server remote dùng `type` + `url`; server chạy local dùng `command` + `args` (**không** có `url`). URL tham khảo — vendor đổi endpoint theo thời gian, tra doc chính thức trước khi dán:
+Server remote dùng `type` + `url`; server chạy local dùng `command` + `args` (**không** có `url`).
+
+Ba thứ hay sai:
+
+- **Placeholder phải parse được.** `https://<git-host>/…` làm CLI chết bằng `ERR_INVALID_URL` **ngay lúc khởi động** — trước cả khi bạn kịp sửa, vì `<` `>` không hợp lệ trong hostname. Để `example.com` cho tới khi có giá trị thật.
+- **`.mcp.json` là project-scoped** — commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Token OAuth nằm ngoài repo (`~/.claude.json`), không lọt vào commit.
+- **Khai xong phải điền ProjectRules §1.** Bảng ở đó là chỗ duy nhất nói server nào giữ vai trò nào; `/init-project-rules` đọc `.mcp.json` để điền, nên sửa `.mcp.json` **trước** khi chạy lệnh đó.
+
+<details>
+<summary>URL tham khảo từng vendor</summary>
+
+Vendor đổi endpoint theo thời gian, tra doc chính thức trước khi dán.
 
 | Server | URL |
 | --- | --- |
@@ -185,61 +215,7 @@ Server remote dùng `type` + `url`; server chạy local dùng `command` + `args`
 | GitLab (self-hosted) | `https://<host>/api/v4/mcp` |
 | Figma | `https://mcp.figma.com/mcp` |
 
-Rồi trong phiên CLI:
-
-```
-/mcp                  # login OAuth từng server
-```
-
-```bash
-claude mcp list       # xác nhận server đã connect trước task đầu tiên
-```
-
-Ba thứ hay sai:
-
-- **Placeholder phải parse được.** `https://<git-host>/…` làm CLI chết bằng `ERR_INVALID_URL` **ngay lúc khởi động** — trước cả khi bạn kịp sửa, vì `<` `>` không hợp lệ trong hostname. Để `example.com` cho tới khi có giá trị thật.
-- **`.mcp.json` là project-scoped** — commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Token OAuth nằm ngoài repo (`~/.claude.json`), không lọt vào commit.
-- **Khai xong phải điền ProjectRules §1.** Bảng ở đó là chỗ duy nhất nói server nào giữ vai trò nào; `/init-project-rules` đọc `.mcp.json` để điền, nên sửa `.mcp.json` **trước** khi chạy lệnh đó.
-
-### Ghi chú cài đặt
-
-`npx` tải tarball từ npm vào cache rồi chạy `install.mjs` (khai báo ở `bin`) — không để lại bản clone trong project. Ghim phiên bản bằng `npx spec-harness@0.1.0`. Chạy `install.mjs` đơn lẻ (không qua npm) thì nó tự tải tarball từ GitHub, ref ghim bằng `SPEC_HARNESS_REF=v0.1.0`.
-
-Sinh `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, và `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè).
-
-**Phát hành phiên bản mới** (chỉ maintainer): `npm version patch && git push --follow-tags`. Workflow `.github/workflows/publish.yml` bắt tag `v*`, kiểm tag khớp `package.json`, chạy self-test rồi `npm publish`. Không có `NPM_TOKEN` — dùng Trusted Publishing (OIDC), token do npm đổi trực tiếp với GitHub nên không có secret nào để rò, và 2FA không hỏi OTP. Bật một lần ở npmjs.com → package → Settings → Trusted Publisher.
-
-**Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.mjs`, không phải chạy lại `/init-project-rules`.
-
-**Có cần `git init` không?** Không bắt buộc — harness cài được vào thư mục thường, validator vẫn chạy, `--self-check` vẫn xanh. Nhưng thiếu git thì mất ba thứ:
-
-| Mất | Vì sao đáng tiếc |
-| --- | --- |
-| Hook pre-commit | Gate không chạy lúc commit; phải nhớ gọi validator bằng tay |
-| CI | Workflow được cài nhưng không có repo để push → không bao giờ chạy |
-| Lịch sử task doc | Task doc là append-only theo thiết kế; không có git thì không tra ngược được ai sửa gì, lúc nào |
-
-Trường hợp A luôn có git sẵn (nó là repo code của bạn). Trường hợp B thì `git init` là khuyến nghị mạnh — task doc và evidence là thứ đáng có lịch sử, đó gần như là toàn bộ nội dung của repo đó. Không init thì installer vẫn cài và in một dòng ghi chú.
-
-**Gate chạy ở hai chỗ, pre-commit là tuỳ chọn.** CI (`.github/workflows/spec-harness.yml`) là chỗ `git commit --no-verify` không với tới. Hook pre-commit chỉ để biết sớm hơn: repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook); project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú.
-
-`.claude/commands/start-task.md` là adapter, không phải kernel: step 2 dựng worktree theo công thức nhánh của ProjectRules §3 — đọc lại nếu project bạn khác quy ước.
-
-### Ba bố cục repo
-
-`repos` khai repo mà agent được sửa, `path` tính từ chỗ đặt `harness.config.json`:
-
-| Bố cục | `repos` | Task docs | Worktree |
-| --- | --- | --- | --- |
-| Harness trong repo code | `[{ path: "." }]` | cùng repo | worktree của chính repo đó |
-| Trong repo FE, đọc BE anh em | `[{ path: "." }, { path: "../be" }]` | repo chính | như trên; BE read-only |
-| Harness ngang hàng FE + BE | `[{ path: "../fe" }, { path: "../be" }]` | **repo harness** | worktree trong repo đang sửa; task doc ở lại |
-
-`repoName` của task chỉ một entry — đó là repo được sửa; repo khác trong `repos` là **read-only** (vd đọc DTO của BE để lấy contract); repo không khai thì không đụng. Sai tên → validator chặn. Chi tiết: `docs/Agents.md` §0.
-
-`docs/srs/`, `docs/fsd/`, `docs/api/` cài ra là **rỗng** (chỉ có README làm mục lục). Project tự đổ nội dung, hoặc xoá nếu không dùng — kernel chỉ trỏ tới, không bắt buộc có file.
-
-`--self-check` kiểm tra chính config: stage/routing/artifact có nhất quán không, `evidenceSampleCommand` có thật sự khớp `evidenceCommandPattern` không, `acTrace.reachedIn[].fromStage` có tồn tại trong `stages` không. Sai một chỗ thì mọi gate sau đó im lặng no-op — nên nó fail sớm thay vì để bạn phát hiện sau 50 task.
+</details>
 
 ## Độ phức tạp quyết định độ nặng, không quyết định có gate hay không
 
@@ -296,7 +272,7 @@ Những thứ validator bắt mà con người hay bỏ sót:
 
 - **AC rơi giữa đường** — `AC-04` có trong review nhưng không ai đưa vào plan. Bắt **tại Gate 3**, không đợi tới lúc review: mỗi đích trong `acTrace.reachedIn` kiểm ngay khi stage của nó tới, nên implementer không code xong rồi mới biết plan thiếu AC.
 - **Evidence giả** — `08` viết "mọi thứ đều pass" nhưng không có lệnh nào được chạy. Phải có **cả** lệnh **và** kết quả, và kết quả phải nằm **trong code fence**: chữ "passed" ở ô *Expected* của bảng là kế hoạch, không phải bằng chứng.
-- **Không có AC nào** — task đi qua `fsd_review` mà `02` không khai AC nào thì cả chuỗi truy vết thành vô nghĩa. Bắt ngay, thay vì để một task rỗng đi thẳng tới `reviewing`.
+- **Không có AC nào** — task đi qua `fsd_review` mà `02` không khai AC nào thì cả chuỗi truy vết thành vô nghĩa.
 - **Gate 5 rỗng ruột** — `09` tồn tại là chưa đủ: phải có verdict và output **adversary tự chạy**, không phải bản chép từ `08`.
 - **Template chưa điền** — bản copy nguyên khuôn không được phép thoả mãn traceability (đó là lý do placeholder dùng `AC-nn`, và self-check có regression test cho đúng điều này).
 - **Handoff rỗng** — role báo `done` mà không để lại `Next agent`/`Continue automation`; coordinator route bằng đúng hai trường đó.
@@ -309,3 +285,45 @@ Validator dependency-free (Node 20+), chạy từ pre-commit, CI, hoặc tay. Ch
 Pre-commit chạy `--staged`: chỉ kiểm task folder mà commit đó chạm tới — nên nó **không** thấy task hỏng mà commit này không đụng vào (đo thật: hỏng task A, commit file B → đi qua; CI cùng cây báo 5 error). Đó là đánh đổi có chủ ý, và CI là lưới cuối. Một task đang `blocked` chờ BA là trạng thái hợp lệ — để nó chặn mọi commit không liên quan chỉ dạy cả team gõ `--no-verify`, và gate bị bypass theo phản xạ là gate đã chết. CI vẫn quét toàn repo.
 
 Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny sẵn `git push`, `git reset --hard`, `git stash`, `git clean`. Luật "đừng phá working tree" viết trong prompt là luật model **chọn** tuân thủ; deny ở tầng permission thì không có chỗ để chọn — cùng lý do đã chọn exit code thay vì lời nhắc.
+
+## Ghi chú cài đặt
+
+<details>
+<summary>Biến thể lệnh cài, ghi đè file, git init, phát hành</summary>
+
+```bash
+npx spec-harness@0.1.0                                      # ghim version
+npx spec-harness --yes                                      # không hỏi (CI, script)
+npx spec-harness ./harness                                  # cài vào thư mục khác (phải tồn tại sẵn)
+git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs   # repo private
+```
+
+Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 20+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
+
+`npx` tải tarball từ npm vào cache rồi chạy `install.mjs` (khai báo ở `bin`) — không để lại bản clone trong project. Chạy `install.mjs` đơn lẻ (không qua npm) thì nó tự tải tarball từ GitHub, ref ghim bằng `SPEC_HARNESS_REF=v0.1.0`.
+
+**Sinh ra:** `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, và `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè).
+
+**Ghi đè.** Harness cài đè lên repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Thư mục đích không rỗng thì installer **liệt kê đúng những file sắp đè và hỏi `[y/N]` trước khi ghi byte nào** — trả lời khác `y` là thoát, không đụng gì. Không có TTY (CI, pipe) thì nó dừng hẳn thay vì tự đồng ý; thêm `--yes` để bỏ qua. Bản cũ còn trong git (`git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
+
+**Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.mjs`, không phải chạy lại `/init-project-rules`.
+
+**Có cần `git init` không?** Không bắt buộc — harness cài được vào thư mục thường, validator vẫn chạy, `--self-check` vẫn xanh. Nhưng thiếu git thì mất ba thứ:
+
+| Mất | Vì sao đáng tiếc |
+| --- | --- |
+| Hook pre-commit | Gate không chạy lúc commit; phải nhớ gọi validator bằng tay |
+| CI | Workflow được cài nhưng không có repo để push → không bao giờ chạy |
+| Lịch sử task doc | Task doc là append-only theo thiết kế; không có git thì không tra ngược được ai sửa gì, lúc nào |
+
+Trường hợp A luôn có git sẵn. Trường hợp B thì `git init` là khuyến nghị mạnh — task doc và evidence gần như là toàn bộ nội dung của repo đó.
+
+**Gate chạy ở hai chỗ, pre-commit là tuỳ chọn.** CI (`.github/workflows/spec-harness.yml`) là chỗ `git commit --no-verify` không với tới. Hook pre-commit chỉ để biết sớm hơn: repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook); project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú.
+
+`.claude/commands/start-task.md` là adapter, không phải kernel: step 2 dựng worktree theo công thức nhánh của ProjectRules §3 — đọc lại nếu project bạn khác quy ước.
+
+`docs/srs/`, `docs/fsd/`, `docs/api/` cài ra là **rỗng** (chỉ có README làm mục lục). Project tự đổ nội dung, hoặc xoá nếu không dùng — kernel chỉ trỏ tới, không bắt buộc có file.
+
+**Phát hành phiên bản mới** (chỉ maintainer): `npm version patch && git push --follow-tags`. Workflow `.github/workflows/publish.yml` bắt tag `v*`, kiểm tag khớp `package.json`, chạy self-test rồi `npm publish`. Không có `NPM_TOKEN` — dùng Trusted Publishing (OIDC), token do npm đổi trực tiếp với GitHub nên không có secret nào để rò, và 2FA không hỏi OTP. Bật một lần ở npmjs.com → package → Settings → Trusted Publisher.
+
+</details>
