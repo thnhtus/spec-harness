@@ -255,6 +255,15 @@ Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** l
 
 Đây là chỗ duy nhất harness đo được rework một cách độc lập với lời khai. `retryBudget` khai ở `harness.config.json`.
 
+**Hết budget thì đi đâu: `status = split`.** "Tách task" phải có cách nói ra — không thì task kẹt cứng: doc là append-only nên không xoá bớt block được, hạ `attempts` là khai man (validator đối chiếu với số block), còn `done` thì Gate 4/5 đòi evidence chưa có. Mọi commit chạm vào đều đỏ, và gate mà lối đi duy nhất là `--no-verify` là gate sắp chết.
+
+| Điều kiện | Mức |
+| --- | --- |
+| `status = split` + `splitInto` ≥2 taskId | budget xuống **warning** — giữ lại làm lịch sử |
+| `status = split` thiếu `splitInto` (hoặc chỉ 1) | **error** — "tách" mà không tách là đổi tên cho việc bỏ cuộc |
+
+`split` không nằm trong `gate4Statuses` nên không bị đòi evidence — nó chưa từng ship. Đây là lối thoát **có tên và để lại dấu vết**, không phải cửa sau: `--calibrate` đếm task `split` như tín hiệu `scope` bị chấm thấp ở bootstrap.
+
 **Context bleed — luật `/clear` có thêm một phép đo.** Mỗi stage chỉ đọc artifact **của chính nó** (`03` đọc `02`, không đọc `01`), nên `telemetry[].inputTokens` phải **dao động quanh một mức**. Không clear ngữ cảnh thì lịch sử hội thoại cộng dồn — tăng đơn điệu, stage sau luôn lớn hơn stage trước. ≥4 dispatch tăng đơn điệu và cuối ≥ 2.5× đầu → **warning**.
 
 Warning chứ không error: task khó thật cũng có thể tăng, và `08` dán output máy thì to hợp lệ. Chuỗi dao động — dù tổng lớn — không bị báo. CLI không báo token thì im lặng, không đoán.

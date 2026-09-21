@@ -981,6 +981,28 @@ if (args.has("--self-check")) {
     assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
   }
 
+  // split: the named exit from an exhausted retry budget. Both halves matter --
+  // without children it must stay an error, or "split" is just a bypass.
+  {
+    const accepted = (d) => d.status === "split" && (d.splitInto ?? []).length >= 2;
+    assert.equal(accepted({ status: "split", splitInto: ["A-1", "A-2"] }), true, "split with 2 children is accepted");
+    assert.equal(accepted({ status: "split", splitInto: ["A-1"] }), false, "one child is not a split");
+    assert.equal(accepted({ status: "split" }), false, "split with no children is a rename for giving up");
+    assert.equal(accepted({ status: "blocked", splitInto: ["A-1", "A-2"] }), false, "splitInto alone does not grant the exemption");
+    // A split never shipped, so Gate 4/5 must not demand evidence from it.
+    assert.equal(GATE4_DONE.has("split"), false, "split is not a gate4 status — it never shipped");
+    assert.equal(
+      calibrate([{ status: "split" }, { status: "split" }]).splits,
+      2,
+      "splits are counted even though they have no outcome",
+    );
+    assert.ok(
+      calibrate([{ status: "split" }, { taskComplexity: "normal", status: "done", attempts: {}, outcome: { closedAt: "2026-01-01" } }])
+        .findings.some((f) => f.includes("split")),
+      "a split is a finding: the retry budget ran out before anyone cut the task up",
+    );
+  }
+
   // contextBleed: the /clear rule with a measurement behind it. False positives
   // are the real risk here -- it is a warning on self-reported data, so the
   // negative cases matter more than the positive one.
@@ -1185,8 +1207,11 @@ function calibrate(tasks) {
   // the §5.1.1 thresholds using it.
   const shipped = tasks.filter((t) => t.status === "done").length;
   const coverage = { shipped, withOutcome: closed.length };
+  // A split is the loudest possible statement that bootstrap under-scored the
+  // task: the gate bounced it until someone gave up and cut it in two.
+  const splits = tasks.filter((t) => t.status === "split").length;
   if (!closed.length)
-    return { tasks: 0, coverage, note: "no task has outcome.closedAt yet — nothing to learn from" };
+    return { tasks: 0, coverage, splits, note: "no task has outcome.closedAt yet — nothing to learn from" };
 
   const byLabel = {};
   for (const t of closed) {
@@ -1247,7 +1272,12 @@ function calibrate(tasks) {
       `outcome coverage ${closed.length}/${shipped} shipped tasks (<80%) — the findings below rest on a holed sample; fill outcome before retuning any threshold`,
     );
 
-  return { tasks: closed.length, coverage, byLabel, retriesByStage, findings };
+  if (splits)
+    findings.push(
+      `${splits} task(s) ended in status=split — each one exhausted the retry budget before being cut up; that is "scope" scored too low at bootstrap (§5.1.1)`,
+    );
+
+  return { tasks: closed.length, coverage, splits, byLabel, retriesByStage, findings };
 }
 
 // ---------------------------------------------------------------------------
@@ -1418,6 +1448,16 @@ for (const { sprint, task, path } of folders) {
   // the very actor that loops — so cross-check it against the append-only
   // handoff blocks, and make an exhausted budget an ERROR, not a note. A task
   // that needed five runs of one stage is a task that should have been split.
+  //
+  // "Should have been split" needs a way to actually say so. status=split is the
+  // named exit: the task is acknowledged as too big and has real children, so it
+  // stays as history instead of reddening every commit that touches it. Split
+  // with no children is a rename for giving up, so that stays an error.
+  const splitAccepted = data.status === "split" && (data.splitInto ?? []).length >= 2;
+  if (data.status === "split" && !splitAccepted)
+    errors.push(
+      `status=split requires splitInto with >=2 task IDs — a split with no children is just a rename for giving up (Agents.md §5.5)`,
+    );
   const RETRY_BUDGET = CFG.retryBudget ?? 4;
   for (const role of CFG.roles ?? []) {
     const runs = handoffBlockCount(join(path, ".agent-memory"), role);
@@ -1428,8 +1468,14 @@ for (const { sprint, task, path } of folders) {
         `attempts["${stage}"]=${claimed} but .agent-memory/${role}.md has ${runs} handoff block(s) — rework is under-reported (Agents.md §5.5)`,
       );
     if (runs >= RETRY_BUDGET)
-      errors.push(
-        `${role} ran ${runs}× (budget ${RETRY_BUDGET}) — the gate keeps bouncing it; split the task or fix the spec instead of retrying (Agents.md §5.5)`,
+      // status=split is that advice taken. Keeping it an error would leave the
+      // task wedged -- append-only docs mean the blocks cannot be removed, and a
+      // gate whose only exit is --no-verify is a gate on its way out.
+      (splitAccepted ? warnings : errors).push(
+        `${role} ran ${runs}× (budget ${RETRY_BUDGET}) — ` +
+          (splitAccepted
+            ? `kept as history: this task was split into ${data.splitInto.join(", ")}`
+            : `the gate keeps bouncing it; split the task or fix the spec instead of retrying (Agents.md §5.5)`),
       );
   }
 

@@ -90,8 +90,18 @@
         "needs_clarification",
         "reviewing",
         "mr_created",
-        "done"
+        "done",
+        "split"
       ]
+    },
+    "splitInto": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Task IDs this task was split into. Required when status=split: a task that exhausted the retry budget is a task that was too big, and \"split\" without children is just a rename for giving up."
     },
     "branch": {
       "type": "string",
