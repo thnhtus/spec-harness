@@ -109,8 +109,8 @@
     ],
     "since": "2026-07-28"
   },
-  "_evidenceMode": "\"attested\" = Gate 4/5 bắt buộc evidence sinh bởi scripts/run-evidence.mjs (đọc exitCode thật thay vì đọc chữ \"passed\"). \"legacy\" (mặc định) = evidence dán tay vẫn qua, để repo đang chạy dở không đỏ hết khi nâng kernel.",
-  "evidenceMode": "legacy",
+  "_evidenceMode": "BẮT BUỘC khai, không có mặc định. \"attested\" = Gate 4/5 đòi evidence sinh bởi scripts/run-evidence.mjs (đọc exitCode thật thay vì đọc chữ \"passed\"). \"legacy\" = evidence dán tay vẫn qua — chỉ dùng khi di trú một repo đã có evidence viết tay, project mới thì đừng.",
+  "evidenceMode": "attested",
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",
   "_evidenceNegativeSamples": "Lệnh KHÔNG được tính là evidence. Chiều ngược của evidenceSampleCommand: thiếu nó thì pattern `npm run .*` qua self-check xanh, và Gate 4 nhận `npm run dev` làm bằng chứng test.",

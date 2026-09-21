@@ -508,6 +508,11 @@ function hasRealEvidenceIn(t) {
 // được đỏ hết chỉ vì nâng kernel — bật khi bạn đã chuyển ProjectRules §7 sang
 // wrapper. Ở chế độ legacy, có attestation vẫn được kiểm; chỉ "thiếu" mới tha.
 const ATTEST_MARK = "--- spec-harness attestation ---";
+// Không có mặc định ngầm: "legacy" nhận evidence dán tay, tức là một agent chưa
+// chạy lệnh nào vẫn qua Gate 4 bằng cách gõ `Tests: 12 passed`. Đó là một lựa chọn
+// hợp lệ khi đang di trú, nhưng phải là lựa chọn được VIẾT RA — thừa kế nó từ một
+// giá trị ngầm là cách toàn bộ luận điểm của harness sụp trong im lặng.
+// --self-check đòi khai tường minh; chỗ này chỉ là fallback cho đường chạy khác.
 const EVIDENCE_MODE = CFG.evidenceMode ?? "legacy";
 
 function attestationsIn(text) {
@@ -530,10 +535,10 @@ function attestationsIn(text) {
 }
 
 // Trả về danh sách defect. Rỗng = attestation không nói gì sai.
-function attestationDefects(text, label) {
+function attestationDefects(text, label, mode = EVIDENCE_MODE) {
   const found = attestationsIn(text);
   if (!found.length) {
-    if (EVIDENCE_MODE !== "attested") return [];
+    if (mode !== "attested") return [];
     return [
       `${label}: evidenceMode="attested" nhưng không có khối attestation nào — chạy lệnh qua \`node scripts/run-evidence.mjs -- <lệnh>\` thay vì dán output bằng tay`,
     ];
@@ -879,6 +884,15 @@ if (args.has("--self-check")) {
     CFG.layers?.length,
     'config.layers is required (e.g. ["frontend"]) — without it any layer value passes',
   );
+  // evidenceMode has no safe default. "legacy" accepts hand-pasted evidence, so
+  // an agent that ran nothing still clears Gate 4 by typing `Tests: 12 passed`.
+  // Inheriting that from an unset field is how the product's whole claim fails
+  // silently — so the field is required, and choosing legacy has to be a choice
+  // someone typed.
+  assert.ok(
+    ["attested", "legacy"].includes(CFG.evidenceMode),
+    `config.evidenceMode must be "attested" or "legacy" (got ${JSON.stringify(CFG.evidenceMode)}) — there is no default: "legacy" lets Gate 4 accept evidence no process ever produced`,
+  );
   // repos: where the CODE lives, relative to the config root. One entry with
   // path "." means harness and code share a repo; several entries mean the
   // harness sits above them (workspace layout) and task docs are NOT inside
@@ -1079,9 +1093,16 @@ if (args.has("--self-check")) {
       [],
       "test đỏ có chủ đích đã khai thì exitCode khác 0 vẫn hợp lệ",
     );
-    // Mặc định legacy: repo đang chạy dở không được đỏ hết chỉ vì nâng kernel.
-    assert.deepEqual(attestationDefects("không có attestation", "08"), [],
-      'evidenceMode mặc định "legacy" thì thiếu attestation không phải lỗi');
+    // Hai mode phải được kiểm TƯỜNG MINH, không đọc ké config đang bật: bài test
+    // "thiếu attestation có phải lỗi không" mà phụ thuộc evidenceMode của repo
+    // nguồn thì đổi một dòng config là mất luôn một nửa vế.
+    assert.deepEqual(attestationDefects("không có attestation", "08", "legacy"), [],
+      'legacy: repo đang di trú không được đỏ hết chỉ vì nâng kernel');
+    assert.ok(
+      attestationDefects("```\n$ " + sample + "\nTests: 12 passed\n```", "08", "attested")
+        .some((d) => /attestation/.test(d)),
+      'attested: output gõ tay không có attestation phải bị chặn — đó là lý do mode này tồn tại',
+    );
 
     // Gate 5 phải chạy SAU implementer. startedAt sớm hơn = khối chép từ nơi khác.
     const evNew = att(0, 12, "2026-09-18T10:00:00Z");
@@ -1442,6 +1463,15 @@ if (args.has("--preflight")) {
     if (r.status !== 0)
       errs.push(`--self-check failed — every gate below it silently no-ops:\n    ${(r.stderr || r.stdout).trim().split("\n")[0]}`);
   }
+
+  // Legacy mode is legal, but it is the one setting that turns every evidence
+  // gate back into honour-system. Silence here is how a team runs 40 tasks
+  // believing Gate 4 checked something.
+  if (EVIDENCE_MODE !== "attested")
+    warns.push(
+      'evidenceMode="legacy" — Gate 4/5 accept hand-pasted evidence, so an agent that ran nothing passes by typing "Tests: 12 passed".\n' +
+        "    Switch ProjectRules §7 to `node scripts/run-evidence.mjs -- <cmd>` and set evidenceMode=\"attested\".",
+    );
 
   if (!existsSync(TASKS_DIR)) errs.push(`tasksDir "${CFG.tasksDir}" does not exist (resolved: ${TASKS_DIR})`);
   for (const r of REPOS)

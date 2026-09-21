@@ -377,6 +377,22 @@ if (args[0] === "--self-test") {
   }
   if (!existsSync(join(T, ".claude/commands/init-project-rules.md"))) fail("thiếu lệnh /init-project-rules");
 
+  // Bản cài ra phải đi kèm evidence thật. "legacy" cho project MỚI nghĩa là Gate
+  // 4/5 nhận văn bản dán tay ngay từ task đầu tiên — không có evidence cũ nào để
+  // bảo vệ, chỉ có một gate rỗng ruột mà không ai biết.
+  {
+    const cfgPath = join(T, "harness.config.json");
+    const cfg = JSON.parse(read(cfgPath));
+    if (cfg.evidenceMode !== "attested")
+      fail(`bản cài ra có evidenceMode="${cfg.evidenceMode}" — project mới phải là "attested", legacy chỉ dành cho di trú`);
+    // … và không được có mặc định ngầm: xoá field đi phải đỏ, không được âm
+    // thầm rơi về legacy.
+    delete cfg.evidenceMode;
+    writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    if (validator(T, "--self-check") === 0) fail("thiếu evidenceMode mà --self-check vẫn xanh — mặc định ngầm đã quay lại");
+    writeFileSync(cfgPath, JSON.stringify({ ...cfg, evidenceMode: "attested" }, null, 2));
+  }
+
   // Kernel/skill không được hardcode tên tool MCP: khoá harness vào đúng một
   // tracker, project dùng Jira/Linear là agent gọi hụt trong im lặng.
   const hard = [];

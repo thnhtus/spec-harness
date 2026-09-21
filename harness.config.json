@@ -109,7 +109,7 @@
     ],
     "since": "2026-07-28"
   },
-  "_evidenceMode": "\"attested\" = Gate 4/5 bắt buộc evidence sinh bởi scripts/run-evidence.mjs. \"legacy\" (mặc định) = evidence dán tay vẫn qua. Repo nguồn không chạy task thật nên giữ legacy; khai tường minh để cùng tập key với adapters/example/.",
+  "_evidenceMode": "BẮT BUỘC khai, không có mặc định (--self-check đỏ nếu thiếu). Repo nguồn không chạy task thật — tasksDir trỏ vào _templates — nên legacy; bản cài ra cho project (adapters/example/) là attested.",
   "evidenceMode": "legacy",
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",

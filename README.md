@@ -163,6 +163,8 @@ Rồi tự chạy `--self-check` để xác nhận config không tự mâu thu�
 | `.mcp.json` | URL server và OAuth là thứ chỉ bạn có. Sửa URL rồi gõ `/mcp` để login. Project-scoped, commit được cho cả team |
 | `acTrace.since` trong `harness.config.json` | Đặt = ngày bạn bật harness. Task cũ hơn mốc này chỉ warning, không chặn — nếu không thì mọi task có sẵn đều đỏ |
 
+Bản cài ra để `"evidenceMode": "attested"` — Gate 4/5 đòi evidence sinh bởi `scripts/run-evidence.mjs`, không nhận output dán tay. Hạ xuống `"legacy"` chỉ hợp lý khi di trú một repo đã có evidence viết tay; trường này **bắt buộc khai tường minh**, không có mặc định ngầm.
+
 Xong hết thì `--preflight` phải xanh **trước task đầu tiên**. Chưa xanh thì gate im lặng no-op và bạn chỉ phát hiện sau vài chục task.
 
 `--preflight` = `--self-check` **cộng** ba thứ self-check không nhìn thấy vì chúng nằm ngoài file config: `.claude/settings.json` có thực sự được nạp từ cwd hiện tại không (bẫy bố cục B ở trên), `tasksDir` và `repos[].path` có resolve được không. Thiếu git / hook / CI chỉ là warning — cả ba đều tuỳ chọn. `/start-task` gọi nó ở step 0a.

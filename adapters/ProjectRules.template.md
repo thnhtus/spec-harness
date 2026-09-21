@@ -95,7 +95,7 @@ Wrapper chạy lệnh thật rồi đóng dấu `exitCode`, `durationMs`, `gitRe
 
 Ca nó bắt được mà mọi kiểm-bằng-chữ đều thua: lệnh **in ra `Tests: 12 passed` nhưng exit 1**. Đọc chữ thì xanh; đọc exit code thì đỏ.
 
-Bật thành bắt buộc bằng `"evidenceMode": "attested"` trong `harness.config.json`. Mặc định `"legacy"` — evidence dán tay vẫn qua, để repo đang chạy dở không đỏ hết khi nâng kernel. Chuyển sang `attested` khi mọi lệnh ở bảng trên đã đi qua wrapper.
+Bản cài mới ra `"evidenceMode": "attested"` — **giữ nguyên**. Hạ xuống `"legacy"` thì evidence dán tay lại qua được, tức là Gate 4/5 chỉ còn kiểm hình dạng chữ; nó tồn tại cho repo đang chạy dở, không phải cho project mới. Trường này **bắt buộc khai tường minh**: `--self-check` đỏ nếu thiếu, vì thừa kế nó từ một giá trị ngầm là cách luận điểm của harness sụp trong im lặng.
 
 **Lệnh watch/server — CHỈ user chạy tay, agent KHÔNG bao giờ chạy** (không tự kết thúc → treo phiên): `<dev server, test watch, preview…>`
 
