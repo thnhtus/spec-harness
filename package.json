@@ -1,6 +1,6 @@
 {
   "name": "spec-harness",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Spec-driven agent harness: 7 roles, 5 code-enforced gates (Gate 5 is an adversarial agent), AC traceability from spec to test evidence.",
   "bin": {
     "spec-harness": "install.mjs"

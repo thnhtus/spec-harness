@@ -1,5 +1,5 @@
 {
   "name": "spec-harness",
   "description": "Spec-driven agent harness: 7 roles, 5 code-enforced gates (Gate 5 is an adversarial agent), AC traceability from spec to test evidence. Project-agnostic kernel + per-project adapter.",
-  "version": "0.1.2"
+  "version": "0.1.3"
 }
