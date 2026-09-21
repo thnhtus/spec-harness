@@ -24,14 +24,14 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --calibrate, --config <path>,
+ * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --calibrate, --config <path>,
  *        --staged (only task folders touched by the current git index),
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { join, dirname, relative, resolve, parse as parsePath, sep } from "node:path";
+import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -934,8 +934,115 @@ if (args.has("--self-check")) {
     assert.ok(/không thấy task folder/.test(r.stderr), "và phải nói rõ vì sao");
   }
 
+  // preflight: the CLI walks UP from cwd for .claude/, never down. Layout B puts
+  // settings.json in harness/ and invites you to open the parent -- below cwd,
+  // invisible, deny-list silently gone. A "found it" that actually matched
+  // ~/.claude/settings.json is the same failure wearing a green tick.
+  {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const root = mkdtempSync(join(tmpdir(), "sh-pf-"));
+    const h = join(root, "harness");
+    mkdirSync(join(h, ".claude"), { recursive: true });
+    mkdirSync(join(h, "sub"), { recursive: true });
+    assert.equal(settingsReachable(h, h), "missing", "no settings.json at all");
+    writeFileSync(join(h, ".claude", "settings.json"), "{}");
+    assert.equal(settingsReachable(h, h), "ok", "cwd = harness root");
+    assert.equal(settingsReachable(h, join(h, "sub")), "ok", "cwd below root: the CLI walks up and finds it");
+    assert.equal(settingsReachable(h, root), "not-loaded", "cwd ABOVE root: the CLI never walks down (layout B trap)");
+  }
+
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// --preflight: is this checkout actually wired up? Run once before the first
+// task, and from /start-task step 0.
+//
+// Two install faults only surfaced much later. Opening the CLI one directory
+// above the harness leaves .claude/settings.json invisible, so the deny-list on
+// `git push` / `git reset --hard` is gone -- broken but looking fine. And a
+// self-contradicting config makes every gate a silent no-op, which the README
+// admits you notice "after a few dozen tasks". Both are one cheap check away.
+// ---------------------------------------------------------------------------
+
+export function findUpward(name, start) {
+  let dir = resolve(start);
+  for (;;) {
+    const hit = join(dir, name);
+    if (existsSync(hit)) return hit;
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+// The CLI loads .claude/ by walking UP from cwd, never down. So the project
+// settings only load when the directory holding them is cwd or an ancestor of
+// it. Layout B puts them in harness/ and invites you to open the parent — then
+// they are below cwd, invisible, and the deny-list is silently gone.
+//
+// Not "does a settings.json exist somewhere up the tree": ~/.claude/settings.json
+// almost always does, and it is not the project's.
+export function settingsReachable(repoRoot, cwd) {
+  if (!existsSync(join(repoRoot, ".claude", "settings.json"))) return "missing";
+  const rel = relative(resolve(repoRoot), resolve(cwd));
+  const below = rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return below ? "ok" : "not-loaded";
+}
+
+if (args.has("--preflight")) {
+  const errs = [];
+  const warns = [];
+
+  // The guardrail layer. Without it the deny-list is gone and nothing says so.
+  // The spec-harness source repo is not an installed project: install.mjs at the
+  // root means .claude/ is a thing this repo SHIPS, not a thing it runs under.
+  const isSourceRepo = existsSync(join(REPO_ROOT, "install.mjs")) && existsSync(join(REPO_ROOT, "kernel"));
+  const reach = isSourceRepo ? "source-repo" : settingsReachable(REPO_ROOT, process.cwd());
+  if (reach === "source-repo") warns.push("spec-harness source repo — skipping the .claude/settings.json check");
+  else if (reach === "missing")
+    errs.push(`${join(REPO_ROOT, ".claude/settings.json")} does not exist — re-run install.mjs; the deny-list on git push / reset --hard is not installed`);
+  else if (reach === "not-loaded")
+    errs.push(
+      `.claude/settings.json lives in ${REPO_ROOT} but the CLI is running in ${process.cwd()} — the CLI only walks UP, so it is not loaded and the deny-list on git push / reset --hard is gone.\n` +
+        `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Trường hợp B").`,
+    );
+
+  // Config coherence: run the real thing, don't reimplement it.
+  {
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--self-check", "--config", CONFIG_PATH], {
+      encoding: "utf8",
+    });
+    if (r.status !== 0)
+      errs.push(`--self-check failed — every gate below it silently no-ops:\n    ${(r.stderr || r.stdout).trim().split("\n")[0]}`);
+  }
+
+  if (!existsSync(TASKS_DIR)) errs.push(`tasksDir "${CFG.tasksDir}" does not exist (resolved: ${TASKS_DIR})`);
+  for (const r of REPOS)
+    if (!existsSync(resolve(REPO_ROOT, r.path)))
+      errs.push(`repos[].path "${r.path}" does not resolve (tried ${resolve(REPO_ROOT, r.path)}) — agents cannot reach that repo`);
+
+  // Optional layers: the README is explicit that both are optional, so these
+  // stay warnings. They still cost you the gate that runs without being asked.
+  const gitDir = findUpward(".git", REPO_ROOT);
+  if (!gitDir) warns.push("not a git repo — no pre-commit hook, no CI, no history for task docs (README \"Có cần git init\")");
+  else {
+    const hookPath = spawnSync("git", ["rev-parse", "--git-path", "hooks/pre-commit"], { cwd: REPO_ROOT, encoding: "utf8" });
+    const hook = hookPath.status === 0 ? resolve(REPO_ROOT, hookPath.stdout.trim()) : null;
+    if (!hook || !existsSync(hook)) warns.push("no pre-commit hook — gates only run in CI, you find out later");
+  }
+  if (!existsSync(join(REPO_ROOT, ".github/workflows")))
+    warns.push("no .github/workflows — CI is the one gate `git commit --no-verify` cannot reach");
+
+  if (AS_JSON) console.log(JSON.stringify({ errors: errs, warnings: warns }, null, 2));
+  else {
+    for (const w of warns) console.log(`⚠ ${w}`);
+    for (const e of errs) console.error(`✖ ${e}`);
+    console.log(errs.length ? `\n✖ preflight: ${errs.length} error(s) — fix before the first task` : "✅ preflight passed");
+  }
+  process.exit(errs.length ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -88,8 +88,12 @@ Nên sau khi viết §7, cập nhật luôn `harness.config.json`:
 ## Bước 4 — verify (bắt buộc, đừng báo xong khi chưa chạy)
 
 ```bash
-node scripts/validate-tasks.mjs --self-check
+node scripts/validate-tasks.mjs --preflight
 ```
+
+`--preflight` bao gồm `--self-check`, cộng hai thứ self-check không thấy: CLI có
+đang mở đúng thư mục để nạp `.claude/settings.json` không, và `repos[].path` có
+resolve được không.
 
 Fail ở `evidenceSampleCommand` = pattern và lệnh lệch nhau → sửa, chạy lại.
 Fail ở `evidenceNegativeSamples` = pattern viết quá rộng → thu hẹp, đừng xoá sample.

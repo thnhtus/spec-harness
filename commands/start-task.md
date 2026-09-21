@@ -8,7 +8,7 @@ You are starting work on a tracker task: **$ARGUMENTS**
 Run the task through the **repo `docs/` harness** (7 roles, 5 gates, defined
 under `docs/`).
 
-**Thứ tự:** assessment (step 0) → task folder (step 1) → worktree nếu cần
+**Thứ tự:** preflight (step 0a) → assessment (step 0) → task folder (step 1) → worktree nếu cần
 (step 2) → dispatch từng stage. Đánh giá độ phức tạp đi **trước** vì nó quyết
 định worktree, model, và độ nặng Gate 1/2.
 
@@ -40,7 +40,21 @@ Your responsibilities only:
    contents into your own context — subagents read them; you route on
    handoffs only.
 
-## Step 0 — Assessment (LUÔN chạy đầu tiên, trước mọi quyết định khác)
+## Step 0a — Preflight (một lệnh, trước tất cả)
+
+```bash
+node scripts/validate-tasks.mjs --preflight || exit 1
+```
+
+Hai hỏng hóc chỉ lộ ra rất muộn nếu không hỏi: CLI mở sai thư mục (mất
+`settings.json` → mất deny `git push` / `reset --hard`, **trong im lặng**), và
+config tự mâu thuẫn (mọi gate no-op, phát hiện sau vài chục task). Cả hai đều
+rẻ hơn nhiều so với chạy một task dưới gate đã chết.
+
+Exit `1` → **dừng, sửa, đừng chạy tiếp**. Warning (không git / không hook / không
+CI) thì chạy được, báo user một dòng rồi đi tiếp.
+
+## Step 0 — Assessment (trước mọi quyết định khác)
 
 Chưa biết task nặng nhẹ ra sao thì chưa quyết được worktree, model, hay độ nặng
 luồng. Nên bước này đi trước — **trước cả worktree**.

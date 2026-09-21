@@ -11,6 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
-      # --self-check trước: config tự mâu thuẫn thì mọi check sau im lặng no-op.
-      - run: node scripts/validate-tasks.mjs --self-check
+      # --preflight trước: config tự mâu thuẫn (hoặc repos[].path sai) thì mọi
+      # check sau im lặng no-op. Bao gồm --self-check.
+      - run: node scripts/validate-tasks.mjs --preflight
       - run: node scripts/validate-tasks.mjs

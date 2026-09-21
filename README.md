@@ -143,7 +143,9 @@ Rồi tự chạy `node scripts/validate-tasks.mjs --self-check` để xác nh�
 | `.mcp.json` | URL server và OAuth là thứ chỉ bạn có. Sửa URL rồi gõ `/mcp` để login. Project-scoped, commit được cho cả team |
 | `acTrace.since` trong `harness.config.json` | Đặt = ngày bạn bật harness. Task cũ hơn mốc này chỉ warning, không chặn — nếu không thì mọi task có sẵn đều đỏ |
 
-Xong hết thì `node scripts/validate-tasks.mjs --self-check` phải xanh **trước task đầu tiên**. Chưa xanh thì gate im lặng no-op và bạn chỉ phát hiện sau vài chục task.
+Xong hết thì `node scripts/validate-tasks.mjs --preflight` phải xanh **trước task đầu tiên**. Chưa xanh thì gate im lặng no-op và bạn chỉ phát hiện sau vài chục task.
+
+`--preflight` = `--self-check` (config có tự mâu thuẫn không) **cộng** ba thứ self-check không nhìn thấy vì chúng nằm ngoài file config: `.claude/settings.json` có thực sự được nạp từ cwd hiện tại không (bẫy bố cục B ở trên — CLI chỉ quét **ngược lên**, nên mở ở thư mục cha là mất guardrail trong im lặng), `tasksDir` và `repos[].path` có resolve được không. Thiếu git / hook / CI chỉ là warning — README nói rõ cả ba đều tuỳ chọn. `/start-task` gọi nó ở step 0a.
 
 ### MCP server nên dùng
 
