@@ -1,16 +1,16 @@
-# Adversary — Mutation check (phụ lục §3.3.1)
+# Adversary — Mutation check (appendix to §3.3.1)
 
-> **Đọc khi và chỉ khi** nghi test giả: test xanh nhưng có thể không assert được AC ([`Adversary.md` §3.3](./Adversary.md)). Không nghi thì bỏ qua — đây là quy trình tuỳ chọn, tách ra để `adversary` không trả tiền đọc nó mỗi task.
+> **Read this if and only if** you suspect a fake test: green, but possibly not asserting the AC at all ([`Adversary.md` §3.3](./Adversary.md)). No suspicion, skip it — this procedure is optional, split out so `adversary` does not pay to read it on every task.
 
-§2 cấm role này sửa code, [`../Instructions.md` §1](../Instructions.md) cấm `git stash`/`restore`/`checkout --`. Nên phép thử "đổi hằng số xem test có đỏ không" **không** làm trên tree của implementer — làm ở một worktree detached, xong thì xoá:
+§2 forbids this role from editing code, and [`../Instructions.md` §1](../Instructions.md) forbids `git stash` / `restore` / `checkout --`. So the "change a constant and see if the test goes red" probe is **not** run on the implementer's tree — run it in a detached worktree and delete it afterwards:
 
 ```bash
 BASE=$(git rev-parse HEAD)
-git worktree add --detach /tmp/adv-$$ "$BASE"     # bản sao rời, tree của implementer không bị đụng
-# sửa hằng số trong /tmp/adv-$$, chạy đúng lệnh test của AC đó
-git worktree remove --force /tmp/adv-$$           # chỉ xoá worktree MÌNH vừa tạo
+git worktree add --detach /tmp/adv-$$ "$BASE"     # a separate copy; the implementer's tree is untouched
+# change the constant inside /tmp/adv-$$, run exactly the test command for that AC
+git worktree remove --force /tmp/adv-$$           # remove ONLY the worktree you just created
 ```
 
-Ba điều kiện để an toàn: worktree do chính role này tạo, `--detach` (không chiếm nhánh), và `remove` đúng đường dẫn vừa tạo. Không đụng worktree nào khác.
+Three conditions make this safe: the worktree was created by this role, it is `--detach` (claims no branch), and `remove` targets exactly the path just created. Touch no other worktree.
 
-> Code chưa commit thì `worktree add` không mang nó theo. Việc cần kiểm là **test có bắt được thay đổi hành vi không** — chạy được trên bản `HEAD` + copy tay đúng file đang xét là đủ. Không copy được (build state, env) → ghi vào "Giới hạn của lượt kiểm này", **đừng** khai là đã thử.
+> `worktree add` does not carry uncommitted code across. What you need to establish is whether **the test catches a behaviour change** — running on `HEAD` plus hand-copying the one file under examination is enough. If you cannot copy it (build state, env), record that under "Limits of this review" and do **not** claim you tried.

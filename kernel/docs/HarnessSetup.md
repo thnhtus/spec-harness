@@ -1,45 +1,45 @@
-# HarnessSetup — Bootstrap, MCP, sinh harness, resume
+# HarnessSetup — Bootstrap, MCP, generating harness files, resume
 
-> **Vai trò:** quy tắc bootstrap cho AI harness — đọc khi khởi động phiên mới, cấu hình MCP, sinh file harness per-tool, hoặc resume task dang dở.
-> **Phạm vi:** mọi bố cục repo khai ở `harness.config.json → repos` — harness nằm trong repo code, hoặc ngang hàng nhiều repo ([`Agents.md` §0](./Agents.md)).
-> **Ngôn ngữ:** văn xuôi theo `harness.config.json → docLanguage`; token kỹ thuật giữ nguyên gốc.
+> **Role:** bootstrap rules for the AI harness — read this when starting a new session, configuring MCP, generating per-tool harness files, or resuming an unfinished task.
+> **Scope:** every repo layout declared in `harness.config.json → repos` — harness inside the code repo, or alongside several repos ([`Agents.md` §0](./Agents.md)).
+> **Language:** write prose in `harness.config.json → docLanguage`; technical tokens stay as they are.
 
 ---
 
-## 1. Load order (thứ tự đọc khi khởi động)
+## 1. Load order (what to read at startup)
 
-**Main loop / orchestrator** đọc đủ chuỗi; **role subagent** chỉ đọc bước 2 + 4 + 5 (context riêng — xem [`Agents.md`](./Agents.md) §2):
+The **main loop / orchestrator** reads the whole chain; a **role subagent** reads only steps 2, 4 and 5 (it has its own context — see [`Agents.md`](./Agents.md) §2):
 
-| # | File | Ai đọc | Đọc để biết |
+| # | File | Who reads it | What it establishes |
 | --- | --- | --- | --- |
-| 1 | [`README.md`](./README.md) | main loop | chỉ mục + mô hình vận hành |
-| 2 | [`Instructions.md`](./Instructions.md) | mọi agent | luật toàn cục |
-| 3 | [`Agents.md`](./Agents.md) | main loop | lifecycle, 5 gate, chọn implementer, skip rule |
-| 4 | [`agents/SharedRules.md`](./agents/SharedRules.md) | mọi agent | handoff, task doc, `status`, ngân sách token (§4/§5/§6/§8/§9) |
-| 5 | `agents/{Role}.md` | role đang chạy | quy trình của đúng role (bảng §5 bên dưới) |
+| 1 | [`README.md`](./README.md) | main loop | index + operating model |
+| 2 | [`Instructions.md`](./Instructions.md) | every agent | global rules |
+| 3 | [`Agents.md`](./Agents.md) | main loop | lifecycle, the 5 gates, choosing an implementer, skip rules |
+| 4 | [`agents/SharedRules.md`](./agents/SharedRules.md) | every agent | handoff, task docs, `status`, token budget (§4/§5/§6/§8/§9) |
+| 5 | `agents/{Role}.md` | the running role | that role's procedure (table in §5 below) |
 
-> Đường dẫn là **chữ thường** `docs/agents/` (case-sensitive trên Linux/CI). File bước 1–4 thiếu hoặc mâu thuẫn repo → **dừng**, báo blocker; không tự suy diễn nội dung thay thế.
+> The path is **lowercase** `docs/agents/` (case-sensitive on Linux/CI). If a file from steps 1–4 is missing or contradicts the repo → **stop** and report a blocker; never infer replacement content.
 
 ---
 
 ## 2. Environment prerequisites
 
-Kiểm tra một lần khi onboard máy mới. Toolchain cụ thể của project: [`agents/ProjectRules.md` §7](./agents/ProjectRules.md).
+Check once when onboarding a new machine. The project's specific toolchain: [`agents/ProjectRules.md` §7](./agents/ProjectRules.md).
 
-| Thành phần | Yêu cầu | Kiểm tra |
+| Component | Requirement | Check |
 | --- | --- | --- |
-| Git + SSH tới git host | đã cấu hình | `git --version` & `ssh -T git@<host>` |
-| Node.js (chạy validator) | 20+ | `node -v` |
-| npm | đi kèm Node | `npm -v` |
-| Harness CLI | Claude Code hoặc Codex CLI | `claude --version` / `codex --version` |
+| Git + SSH to the git host | configured | `git --version` & `ssh -T git@<host>` |
+| Node.js (runs the validator) | 20+ | `node -v` |
+| npm | ships with Node | `npm -v` |
+| Harness CLI | Claude Code or Codex CLI | `claude --version` / `codex --version` |
 
-Cài dependency: `npm install`. Danh sách lệnh kiểm tra hợp lệ (one-shot vs watch-mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
+Install dependencies: `npm install`. The list of valid check commands (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
 ---
 
 ## 3. MCP setup
 
-`install.mjs` sinh sẵn `.mcp.json` ở repo root (mẫu: tracker + git host + design tool). Sửa nó cho đúng project — xoá server không dùng, điền host thật:
+`install.mjs` writes a starter `.mcp.json` at the repo root (template: tracker + git host + design tool). Edit it for your project — delete the servers you do not use, fill in the real hosts:
 
 ```json
 {
@@ -51,47 +51,47 @@ Cài dependency: `npm install`. Danh sách lệnh kiểm tra hợp lệ (one-sho
 }
 ```
 
-> **URL phải parse được, kể cả khi đang là placeholder.** `https://<git-host>/…` làm CLI chết bằng `ERR_INVALID_URL` ngay lúc khởi động — trước cả khi bạn kịp sửa, vì `<` `>` không hợp lệ trong hostname. Dùng một hostname thật như `example.com` cho tới khi điền giá trị đúng.
+> **The URL must parse, even while it is still a placeholder.** `https://<git-host>/…` kills the CLI with `ERR_INVALID_URL` at startup — before you get a chance to fix it, because `<` and `>` are not valid in a hostname. Use a real hostname such as `example.com` until you have the right value.
 
-Ba server trên là khung mặc định. Project có UI nên khai thêm một server **điều khiển browser** (BrowserOS neo, Playwright, chrome-devtools…): Gate 5 cần nó để drive app thật theo từng AC ([`agents/Adversary.md`](./agents/Adversary.md), skill `pre-qc-gate` §4a) — thiếu thì Gate 5 chỉ còn tầng test. Server chạy local khai bằng `command` + `args` thay cho `type` + `url`.
+Those three servers are the default skeleton. If the project has a UI, also declare a **browser-control** server (BrowserOS neo, Playwright, chrome-devtools…): Gate 5 needs it to drive the real app AC by AC ([`agents/Adversary.md`](./agents/Adversary.md), skill `pre-qc-gate` §4a) — without it Gate 5 is reduced to the test layer. A locally running server is declared with `command` + `args` instead of `type` + `url`.
 
-Đừng khai cho đủ: mỗi server nối vào là một khối tool nằm trong context **mọi lượt**, kể cả lượt không dùng — xem ngân sách ở [`agents/SharedRules.md` §8](./agents/SharedRules.md). Filesystem/shell MCP thì thừa hẳn, CLI đã có sẵn.
+Do not declare servers just to have them: every connected server is a block of tools sitting in context on **every turn**, including the turns that never use it — see the budget in [`agents/SharedRules.md` §8](./agents/SharedRules.md). A filesystem/shell MCP is outright redundant; the CLI already has those.
 
-`.mcp.json` là **project-scoped**: commit nó thì cả team dùng chung một khai báo, không ai phải `claude mcp add` tay. Sau khi sửa: gõ `/mcp` trong phiên để login OAuth từng server; kiểm bằng `claude mcp list`.
+`.mcp.json` is **project-scoped**: commit it and the whole team shares one declaration, with nobody running `claude mcp add` by hand. After editing it, type `/mcp` in the session to complete OAuth for each server, and verify with `claude mcp list`.
 
-Vai trò từng server + quy tắc "không bịa dữ liệu MCP": [`agents/ProjectRules.md` §1](./agents/ProjectRules.md). Kỷ luật payload (summary-first, metadata-first): [`agents/SharedRules.md` §8](./agents/SharedRules.md).
+What each server is for, plus the "never invent MCP data" rule: [`agents/ProjectRules.md` §1](./agents/ProjectRules.md). Payload discipline (summary-first, metadata-first): [`agents/SharedRules.md` §8](./agents/SharedRules.md).
 
-> Subagent **không** khai `tools:` — chúng thừa kế toàn bộ tool của phiên, nên đổi tracker (ClickUp → Jira/Linear) chỉ cần sửa `.mcp.json` + ProjectRules §1, không đụng file role.
+> Subagents do **not** declare `tools:` — they inherit every tool in the session, so switching tracker (ClickUp → Jira/Linear) only means editing `.mcp.json` and ProjectRules §1, never a role file.
 
-> **Không commit** token, cookie, `.claude.json` — xem [`Instructions.md` §4](./Instructions.md).
+> **Never commit** tokens, cookies, or `.claude.json` — see [`Instructions.md` §4](./Instructions.md).
 
 ---
 
-## 4. Sinh harness per-tool
+## 4. Generating per-tool harness files
 
-Quy tắc cốt lõi: **merge, không clobber** — chỉ thay vùng giữa marker `SPEC-HARNESS:START` … `SPEC-HARNESS:END`; nội dung user viết ngoài marker giữ nguyên.
+The core rule: **merge, never clobber** — replace only the region between the `SPEC-HARNESS:START` … `SPEC-HARNESS:END` markers; anything the user wrote outside the markers stays.
 
-| Công cụ | Đường dẫn | Nội dung |
+| Tool | Path | Contents |
 | --- | --- | --- |
-| Claude Code | `.claude/agents/{role}.md` (7 file) | File ngắn trỏ về `docs/agents/{Role}.md`, marker HTML comment |
-| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (7 file) | Tương đương, marker `# SPEC-HARNESS:START` |
+| Claude Code | `.claude/agents/{role}.md` (7 files) | short file pointing at `docs/agents/{Role}.md`, HTML-comment markers |
+| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (7 files) | equivalent, `# SPEC-HARNESS:START` markers |
 
-Bảy `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `implementer`, `fixer`, **`adversary`**.
+The seven `{role}`s: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `implementer`, `fixer`, **`adversary`**.
 
-> Sinh thiếu `adversary` là **mất Gate 5 trong im lặng** — harness vẫn chạy, vẫn báo PASS, chỉ không còn ai kiểm chứng evidence của implementer. Đếm đủ bảy file trước khi chạy task đầu tiên.
+> Failing to generate `adversary` **silently removes Gate 5** — the harness still runs and still reports PASS, there is simply nobody left checking the implementer's evidence. Count all seven files before the first task.
 
-Ràng buộc khi sinh:
+Constraints when generating:
 
-- **KHÔNG** sửa `.claude/settings.json` / `.claude/settings.local.json` khi *sinh file role*. Installer đặt `settings.json` **một lần** (deny-list lệnh phá working tree — [`Instructions.md` §1](./Instructions.md)) rồi không đè lại; nó là adapter của project, agent không tự sửa.
-- **KHÔNG** đụng skill riêng của project trong `.claude/skills/` (ngoài skill harness ship kèm).
-- Re-generate chỉ thay phần giữa marker; nội dung ngoài marker ghép lại nguyên vẹn.
-- File role là "con trỏ" — quy trình thật ở `docs/agents/{Role}.md`, tránh trùng lặp lệch pha.
+- Do **not** touch `.claude/settings.json` / `.claude/settings.local.json` while *generating role files*. The installer writes `settings.json` **once** (the deny-list for commands that destroy the working tree — [`Instructions.md` §1](./Instructions.md)) and never overwrites it again; it is the project's adapter, not something an agent edits.
+- Do **not** touch the project's own skills in `.claude/skills/` (other than the skills the harness ships).
+- Re-generating replaces only the region between the markers; content outside is reassembled untouched.
+- Role files are "pointers" — the real procedure lives in `docs/agents/{Role}.md`, which avoids two copies drifting apart.
 
 ---
 
-## 5. Tham chiếu role file
+## 5. Role file reference
 
-| Role | File quy trình |
+| Role | Procedure file |
 | --- | --- |
 | `orchestrator` | [`agents/Orchestrator.md`](./agents/Orchestrator.md) |
 | `fsd-writer` | [`agents/FSDWriter.md`](./agents/FSDWriter.md) |
@@ -101,38 +101,38 @@ Ràng buộc khi sinh:
 | `fixer` | [`agents/Fixer.md`](./agents/Fixer.md) |
 | `adversary` | [`agents/Adversary.md`](./agents/Adversary.md) |
 
-Artifact tham chiếu (đọc, không sửa): [`srs/README.md`](./srs/README.md) · [`fsd/README.md`](./fsd/README.md) · [`api/README.md`](./api/README.md).
+Reference artifacts (read, never edit): [`srs/README.md`](./srs/README.md) · [`fsd/README.md`](./fsd/README.md) · [`api/README.md`](./api/README.md).
 
 ---
 
-## 6. Safe initial commands (read-only, chạy đầu phiên)
+## 6. Safe initial commands (read-only, run at the start of a session)
 
 ```bash
-pwd                              # đúng repo root
-ls docs                          # thấy README/HarnessSetup/Instructions/Agents + agents/ srs/ fsd/ api/ tasks/
-git status --short --branch      # nhánh hiện tại + thay đổi chưa commit
-claude mcp list                  # server ở .mcp.json đã connect
+pwd                              # the right repo root
+ls docs                          # README/HarnessSetup/Instructions/Agents + agents/ srs/ fsd/ api/ tasks/
+git status --short --branch      # current branch + uncommitted changes
+claude mcp list                  # the servers in .mcp.json are connected
 ```
 
-Quy tắc nhánh làm việc (công thức tên, `--ff-only`, ngoại lệ nhánh user quản lý): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
+Working-branch rules (name formula, `--ff-only`, the user-managed-branch exception): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
 
 ---
 
-## 7. Resume task (tiếp tục task dang dở)
+## 7. Resuming an unfinished task
 
-Task docs tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout: [`tasks/README.md`](./tasks/README.md)). Resume:
+Task docs live in `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout: [`tasks/README.md`](./tasks/README.md)). To resume:
 
-1. **Đọc state:** `task.agent.json` → `currentStage`, `status`, `branch` (+ `branchActual` nếu có), `agents.{role}.status`.
-2. **Đọc handoff:** `.agent-memory/{role}.md` của role ứng với `currentStage` → inputs, decisions, risks, evidence, "next agent", cờ continue.
-3. **Đối chiếu gate** theo lifecycle trong [`Agents.md`](./Agents.md) §2.
-4. **Tiếp tục đúng chỗ:** `blocked` / `needs_clarification` → đọc blocker, chờ user/BA resolve; `in_progress` → dispatch lại đúng role subagent từ điểm dừng.
-5. **Append, không overwrite:** mọi cập nhật doc/`.agent-memory` thêm mục mới `## Cập Nhật — YYYY-MM-DD`.
-6. **Đồng bộ checkout:** làm việc đúng nhánh trong `task.agent.json` (`branchActual` nếu có, ngược lại `branch`).
+1. **Read the state:** `task.agent.json` → `currentStage`, `status`, `branch` (+ `branchActual` if present), `agents.{role}.status`.
+2. **Read the handoff:** `.agent-memory/{role}.md` for the role matching `currentStage` → inputs, decisions, risks, evidence, "next agent", continue flags.
+3. **Re-check the gate** against the lifecycle in [`Agents.md`](./Agents.md) §2.
+4. **Continue at the right point:** `blocked` / `needs_clarification` → read the blocker, wait for the user/BA to resolve it; `in_progress` → re-dispatch the right role subagent from where it stopped.
+5. **Append, never overwrite:** every doc / `.agent-memory` update adds a new `## Update — YYYY-MM-DD` section.
+6. **Sync the checkout:** work on the branch recorded in `task.agent.json` (`branchActual` if present, otherwise `branch`).
 
-> `task.agent.json` không có trường **token/usage** (dữ liệu vendor). Nó **có** `telemetry`: stage, tier, tên model, mốc thời gian — đủ để `--calibrate` đối chiếu chi phí với kết quả ([`Agents.md` §5.6](./Agents.md)), không lộ số token.
+> `task.agent.json` has no **token/usage** field (that is vendor data). It does have `telemetry`: stage, tier, model name, timestamps — enough for `--calibrate` to weigh cost against outcome ([`Agents.md` §5.6](./Agents.md)) without exposing token counts.
 
 ---
 
-## 8. Không commit secret
+## 8. Never commit secrets
 
-Xem [`Instructions.md` §4](./Instructions.md) — nguồn chuẩn duy nhất. Trước khi đề xuất commit: `git status --short`, xác nhận không có file nhạy cảm trong staging.
+See [`Instructions.md` §4](./Instructions.md) — the single source of truth. Before proposing a commit: `git status --short`, and confirm no sensitive file is staged.
