@@ -562,6 +562,61 @@ if (args[0] === "--self-test") {
   rmSync(dirname(A), { recursive: true, force: true });
   rmSync(dirname(B2), { recursive: true, force: true });
 
+  // ── đường CLI ────────────────────────────────────────────────────────────
+  // Mọi thứ ở trên gọi thẳng installInto(). Nhưng rào chắn chống ghi đè KHÔNG
+  // nằm trong installInto — nó nằm ở đoạn arg-parsing + hỏi [y/N] phía dưới,
+  // và đoạn đó chưa từng được chạy trong test. Đó là đoạn quyết định có xoá
+  // file của người ta hay không, nên nó phải được chạy thật: spawn chính
+  // installer như user gõ, không mô phỏng.
+  {
+    const self = fileURLToPath(import.meta.url);
+    const run = (cwd, args, opts = {}) =>
+      spawnSync(process.execPath, [self, ...args], { cwd, encoding: "utf8", ...opts });
+
+    // Không TTY + không --yes trên thư mục có file: phải DỪNG, không được tự
+    // đồng ý. Đây là ca readline trả EOF ngay — rào chắn biến mất trong im lặng.
+    const C = mkrepo("cli");
+    writeFileSync(join(C, "keep.txt"), "của user");
+    mkdirSync(join(C, "docs"), { recursive: true });
+    writeFileSync(join(C, "docs/README.md"), "docs của project tôi");
+    const noTty = run(C, [], { stdio: ["pipe", "pipe", "pipe"] });
+    if (noTty.status === 0) fail("không TTY mà vẫn cài — rào chắn xác nhận đã tự đồng ý");
+    if (!/TTY/.test(noTty.stderr)) fail("dừng vì không TTY nhưng không nói lý do", noTty.stderr);
+    if (existsSync(join(C, "scripts/validate-tasks.mjs"))) fail("đã từ chối mà vẫn ghi file");
+    if (read(join(C, "docs/README.md")) !== "docs của project tôi") fail("đã từ chối mà vẫn đè docs/README.md");
+
+    // Liệt kê file sắp đè TRƯỚC khi ghi byte nào: nếu không, "xác nhận" chỉ là
+    // một câu hỏi chung chung và người ta bấm y mà không biết mất gì.
+    if (!noTty.stdout.includes("docs/README.md")) fail("không liệt kê file sắp bị đè trước khi hỏi");
+
+    // --yes bỏ qua câu hỏi và cài thật.
+    const y = run(C, ["--yes"]);
+    if (y.status !== 0) fail("--yes phải cài được mà không cần TTY", y.stderr);
+    if (!existsSync(join(C, "scripts/validate-tasks.mjs"))) fail("--yes chạy xong mà không có validator");
+    if (!existsSync(join(C, "keep.txt"))) fail("cài đè làm mất file không liên quan của project");
+
+    // Đối số thư mục + thư mục không tồn tại + thừa đối số.
+    const P2 = mkrepo("argdir");
+    const viaArg = run(dirname(P2), [P2, "--yes"]);
+    if (viaArg.status !== 0) fail("cài bằng đối số thư mục phải chạy được", viaArg.stderr);
+    if (!existsSync(join(P2, "scripts/validate-tasks.mjs"))) fail("đối số thư mục bị bỏ qua — cài nhầm chỗ");
+
+    // "Không exit 0" là ngưỡng quá thấp: một stack trace ENOENT cũng thoả, mà
+    // với user thì crash và lời từ chối là hai chuyện khác hẳn. Đòi cả message.
+    const ghost = run(C, ["/khong-co-thu-muc-nay-dau-123", "--yes"]);
+    if (ghost.status === 0) fail("thư mục không tồn tại mà vẫn exit 0");
+    if (!/không có thư mục/.test(ghost.stderr)) fail("thư mục không tồn tại: chết bằng stack trace thay vì nói lý do", ghost.stderr);
+
+    // Đối số đầu phải TỒN TẠI, không thì test này pass vì lý do sai (die ở
+    // bước kiểm thư mục) và vế "thừa đối số" không bao giờ được chạy.
+    const extra = run(C, [P2, "b", "--yes"]);
+    if (extra.status === 0) fail("thừa đối số mà vẫn chạy");
+    if (!/dùng: node install\.mjs/.test(extra.stderr)) fail("thừa đối số: không in cách dùng", extra.stderr);
+
+    rmSync(dirname(C), { recursive: true, force: true });
+    rmSync(dirname(P2), { recursive: true, force: true });
+  }
+
   rmSync(dirname(T), { recursive: true, force: true });
   console.log("✅ install self-test passed");
   process.exit(0);
