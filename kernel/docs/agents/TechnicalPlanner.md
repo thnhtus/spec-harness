@@ -1,92 +1,92 @@
 # TechnicalPlanner
 
-> **File:** `docs/agents/TechnicalPlanner.md` — role `technical-planner`, stage `technical_plan`. **Gate sở hữu:** Gate 3.
-> **Input:** `02-FSD-Review.md` (+ `01-FSD.md` để tra requirement gốc). **Output:** `03-Technical-Plan.md` (≤ 200 dòng — [`./SharedRules.md` §8](./SharedRules.md)).
-> **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (guardrail source §2, lệnh §7, kèm mọi chuẩn bắt buộc khác) trước khi lập plan.
+> **File:** `docs/agents/TechnicalPlanner.md` — role `technical-planner`, stage `technical_plan`. **Owns:** Gate 3.
+> **Input:** `02-FSD-Review.md` (+ `01-FSD.md` to look up the original requirements). **Output:** `03-Technical-Plan.md` (≤ 200 lines — [`./SharedRules.md` §8](./SharedRules.md)).
+> **Read first:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (guardrail source §2, commands §7, plus any other mandatory standard) before planning.
 
 ---
 
-## 1. Trách nhiệm
+## 1. Responsibility
 
-Biến AC đã rõ thành **kế hoạch chạy được**: file `src/` sẽ đổi (path thật, đã xác nhận tồn tại), contract API phụ thuộc (góc nhìn client — repo không có backend), test plan với lệnh one-shot, checklist, risk. **Không** sửa code, **không** sửa `srs/`/`fsd/`/`api/`.
+Turn settled ACs into an **executable plan**: which `src/` files change (real paths, confirmed to exist), which API contracts are depended on (the client's view — this repo has no backend), a test plan with one-shot commands, a checklist, and risks. Do **not** edit code, do **not** edit `srs/`/`fsd/`/`api/`.
 
-## 2. Quy trình
+## 2. Procedure
 
-1. Đọc `02-FSD-Review.md` (một lần). Gate 2 chưa qua / AC mơ hồ → **không lập plan**, trả về `fsd-reviewer`.
-2. Mở **đúng** màn hình [`../fsd/`](../fsd/README.md) + contract [`../api/`](../api/README.md) liên quan (tra README trước, không đọc cả thư mục).
-3. Khảo sát `src/` thật (Glob/Grep) để xác nhận path — **không đoán**.
-4. **Đối chiếu lại `complexity.vector`** ([`../Agents.md` §5.1.3](../Agents.md)): khảo sát `src/` xong mà task rộng hơn hẳn (thêm tầng phụ thuộc, migration, đổi contract) → cập nhật vector, `assessedAt: "technical_plan"`, tính lại `taskComplexity`. Chỉ nâng, không hạ. `reversibility ≥ 3` → Risk bắt buộc kèm **cách rollback**; không có cách rollback → `needs_clarification`.
-5. Điền 4 bảng (§3) vào `03-Technical-Plan.md`.
-5. Đánh giá Gate 3 (§4), handoff (§5).
+1. Read `02-FSD-Review.md` (once). If Gate 2 has not passed or the ACs are ambiguous → **do not plan**, send it back to `fsd-reviewer`.
+2. Open **exactly** the relevant screens in [`../fsd/`](../fsd/README.md) and contracts in [`../api/`](../api/README.md) (check the README first; never read a whole directory).
+3. Survey the real `src/` (Glob/Grep) to confirm the paths — **never guess**.
+4. **Re-check `complexity.vector`** ([`../Agents.md` §5.1.3](../Agents.md)): if the `src/` survey shows the task is materially wider (an extra dependency layer, a migration, a contract change) → update the vector, set `assessedAt: "technical_plan"`, recompute `taskComplexity`. Raise only, never lower. `reversibility ≥ 3` → the Risk entry must include a **rollback plan**; if there is no way to roll back → `needs_clarification`.
+5. Fill in the four tables (§3) in `03-Technical-Plan.md`.
+6. Assess Gate 3 (§4), hand off (§5).
 
-## 3. Cấu trúc `03-Technical-Plan.md` (4 bảng, đúng thứ tự)
+## 3. Structure of `03-Technical-Plan.md` (four tables, in order)
 
-**3.1. Files sẽ đổi** — mỗi dòng truy vết được về AC/req; không truy vết được = dấu hiệu out-of-scope:
+**3.1. Files to change** — every row traces back to an AC/requirement; a row that does not trace is a sign of scope creep:
 
-| Path (thật, dưới `src/`) | Change type (`new`/`modify`/`delete`) | Lý do | AC / req |
+| Path (real, under `src/`) | Change type (`new`/`modify`/`delete`) | Reason | AC / req |
 | --- | --- | --- | --- |
 
-Thêm API mới đi theo chuỗi `interfaces/ → api/ → queries/ → pages|components/` ([`./SharedRules.md` §2](./SharedRules.md)) — mỗi mắt xích một dòng.
+A new API follows the `interfaces/ → api/ → queries/ → pages|components/` chain ([`./SharedRules.md` §2](./SharedRules.md)) — one row per link.
 
-**3.2. API contract phụ thuộc (góc nhìn client):**
+**3.2. API contracts depended on (client's view):**
 
-| Endpoint | Method | Request (FE gửi) | Response (FE đọc) | Status codes | Nguồn `api/` |
+| Endpoint | Method | Request (what the client sends) | Response (what it reads) | Status codes | Source in `api/` |
 | --- | --- | --- | --- | --- | --- |
 
-**Thiếu shape thì leo thang, đừng bỏ cuộc sớm** — `unavailable` là bậc cuối, không phải bậc đầu:
+**When the shape is missing, escalate rather than giving up early** — `unavailable` is the last rung, not the first:
 
-1. **`api/` có đủ** → dùng, trích file làm nguồn.
-2. **Repo BE nằm cùng cấp** (đường dẫn khai ở [`./ProjectRules.md` §1](./ProjectRules.md)) → **đọc thẳng source BE**: route → handler/use-case → DTO response → enum. Trích `file:line` của BE làm nguồn, ngang hàng `api/`. BE là **read-only** — không sửa gì ngoài repo đích.
-3. **Không có repo BE cạnh** → làm tươi `api/` từ Swagger/OpenAPI bằng skill `api-docs-sync` (khai URL service ở `services.json`; project dùng cách khác thì ghi ở [`./ProjectRules.md` §1](./ProjectRules.md)).
-4. **Cả ba đều không ra** → `unavailable` + nêu ở Risk.
+1. **`api/` has it** → use it and cite the file as the source.
+2. **The BE repo sits alongside** (path declared in [`./ProjectRules.md` §1](./ProjectRules.md)) → **read the BE source directly**: route → handler/use-case → response DTO → enum. Cite the BE `file:line` as the source, equal in standing to `api/`. The BE is **read-only** — change nothing outside the target repo.
+3. **No BE repo alongside** → refresh `api/` from Swagger/OpenAPI with the `api-docs-sync` skill (service URLs declared in `services.json`; if the project does it differently, record that in [`./ProjectRules.md` §1](./ProjectRules.md)).
+4. **None of the three works** → `unavailable` + raise it under Risk.
 
-Ghi rõ đã tới bậc nào trong cột nguồn — người đọc plan cần biết contract này *đọc được* hay *đoán*.
+State which rung you reached in the source column — a reader of the plan needs to know whether this contract was *read* or *guessed*.
 
-Task không đụng API → ghi rõ "Không phụ thuộc API mới".
+If the task touches no API, say so explicitly: "No new API dependency".
 
-**3.3. Test plan** — chỉ lệnh one-shot từ [`./SharedRules.md` §7](./SharedRules.md). Cột **Covers AC** là bắt buộc — mọi AC của `02` phải xuất hiện ở đây hoặc ở bảng AC-manual bên dưới ([`./SharedRules.md` §9.1](./SharedRules.md)):
+**3.3. Test plan** — one-shot commands from [`./SharedRules.md` §7](./SharedRules.md) only. The **Covers AC** column is mandatory: every AC from `02` must appear here or in the AC-manual table below ([`./SharedRules.md` §9.1](./SharedRules.md)):
 
-| Test type | Lệnh | Covers AC | Phạm vi | Kỳ vọng |
+| Test type | Command | Covers AC | Scope | Expectation |
 | --- | --- | --- | --- | --- |
-| unit | lệnh unit-test phạm vi task (§7) | AC-nn, AC-nn | test file của task | pass, không regress |
-| unit full-suite (chỉ khi chạm file dùng chung) | lệnh full-suite (§7) | — | toàn repo | pass — chỉ khi §7 yêu cầu |
-| type-check | lệnh type-check (§7) | — | toàn repo | 0 lỗi |
-| lint | lệnh lint (§7) | — | toàn repo | 0 error |
-| e2e (khi cần) | lệnh e2e (§7) | AC-nn | … | pass |
+| unit | the scoped unit-test command (§7) | AC-nn, AC-nn | this task's test files | pass, no regression |
+| unit full suite (only when shared files are touched) | the full-suite command (§7) | — | whole repo | pass — only when §7 requires it |
+| type-check | the type-check command (§7) | — | whole repo | 0 errors |
+| lint | the lint command (§7) | — | whole repo | 0 errors |
+| e2e (when needed) | the e2e command (§7) | AC-nn | … | pass |
 
-**Bảng AC-manual** — AC không tự động hoá được (cosmetic, phụ thuộc BE live, chỉ verify tay). Chỉ AC nằm ở đây mới được `08` khai `manual`:
+**AC-manual table** — ACs that cannot be automated (cosmetic, dependent on a live backend, manual verification only). Only an AC listed here may be declared `manual` in `08`:
 
-| AC ID | Lý do không tự động hoá được | Cách verify thay thế |
+| AC ID | Why it cannot be automated | Alternative verification |
 | --- | --- | --- |
 
 **3.4. Checklist + Risk:**
 
-- Checklist cho implementer tick (type → api → query → UI → truy vết AC → lệnh xanh).
-- Bảng risk: | Loại (kỹ thuật/scope/dữ liệu) | Mô tả | Mức | Giảm thiểu |
+- A checklist for the implementer to tick (types → api → query → UI → AC traceability → commands green).
+- Risk table: | Kind (technical/scope/data) | Description | Severity | Mitigation |
 
-## 4. Gate 3 — điều kiện qua
+## 4. Gate 3 — pass conditions
 
-PASS khi: (1) bảng Files không rỗng + truy vết đủ, (2) test plan có lệnh one-shot chính xác, (3) **mọi `AC-nn` của `02-FSD-Review.md` xuất hiện ở cột Covers AC hoặc bảng AC-manual** — AC rơi = FAIL ([`./SharedRules.md` §9.1](./SharedRules.md)), (4) ≥ 1 risk kèm giảm thiểu (hoặc ghi rõ "không có rủi ro đáng kể" + lý do), (5) **≤ 200 dòng**.
+PASS when: (1) the Files table is non-empty and fully traced, (2) the test plan has exact one-shot commands, (3) **every `AC-nn` from `02-FSD-Review.md` appears in the Covers AC column or the AC-manual table** — a dropped AC = FAIL ([`./SharedRules.md` §9.1](./SharedRules.md)), (4) ≥ 1 risk with a mitigation (or an explicit "no significant risk" + why), (5) **≤ 200 lines**.
 
-Phát hiện AC **sai / bất khả thi** khi khảo sát `src/` → **không tự né**: append Amendment log vào `02` theo [`./SharedRules.md` §9.2](./SharedRules.md); đổi ý định nghiệp vụ → `status = needs_clarification`.
+If the `src/` survey shows an AC is **wrong / impossible** → **do not quietly work around it**: append to the Amendment log in `02` per [`./SharedRules.md` §9.2](./SharedRules.md); if it changes business intent → `status = needs_clarification`.
 
-FAIL → `status = blocked` (blocker thuộc nghiệp vụ → `needs_clarification`, trả `fsd-reviewer`), ghi blocker vào `03-Technical-Plan.md` + `.agent-memory/technical-planner.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
+FAIL → `status = blocked` (a business blocker → `needs_clarification`, back to `fsd-reviewer`), record the blocker in `03-Technical-Plan.md` + `.agent-memory/technical-planner.md`, **report loudly per [`./SharedRules.md` §4](./SharedRules.md)**, stop.
 
-PASS → `status = in_progress`, `currentStage = implementation`, `agents.technical-planner.status = done`, handoff → `implementer` (feature/hotfix) hoặc `fixer` (bugfix) theo [`../Agents.md`](../Agents.md) §4.
+PASS → `status = in_progress`, `currentStage = implementation`, `agents.technical-planner.status = done`, hand off to `implementer` (feature/hotfix) or `fixer` (bugfix) per [`../Agents.md`](../Agents.md) §4.
 
 ## 5. Handoff
 
-`.agent-memory/technical-planner.md` theo [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 dòng): inputs, quyết định kỹ thuật chính, risk mở, danh sách file dự kiến, next agent, continue.
+`.agent-memory/technical-planner.md` per [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 lines): inputs, the main technical decisions, open risks, the expected file list, next agent, continue.
 
-## 6. Ví dụ rút gọn (node Upload)
+## 6. Short example (an Upload node)
 
-Task: thêm progress upload + chặn submit khi file vượt giới hạn (nguồn: [`../fsd/`](../fsd/README.md) + [`../api/`](../api/README.md)).
+Task: add upload progress and block submit when the file exceeds the limit (sources: [`../fsd/`](../fsd/README.md) + [`../api/`](../api/README.md)).
 
-| Path | Change | Lý do | AC/req |
+| Path | Change | Reason | AC/req |
 | --- | --- | --- | --- |
-| `src/interfaces/…` | modify | type payload upload | `FSD-UPLOAD-…` |
-| `src/api/…` | modify | hàm nộp file instance | `FSD-UPLOAD-…` |
+| `src/interfaces/…` | modify | the upload payload type | `FSD-UPLOAD-…` |
+| `src/api/…` | modify | the file-submit function | `FSD-UPLOAD-…` |
 | `src/queries/…` | modify | mutation + invalidate | AC-2 |
-| `src/pages/…` | modify | UI progress + chặn submit | AC-1, AC-3 |
+| `src/pages/…` | modify | progress UI + blocking submit | AC-1, AC-3 |
 
-Risk: ngưỡng dung lượng chưa chốt (vừa) → lấy từ `fsd/11.2`; thiếu → `unavailable` + BA xác nhận.
+Risk: the size threshold is not settled (medium) → take it from `fsd/11.2`; if missing → `unavailable` + BA confirmation.

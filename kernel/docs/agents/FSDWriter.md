@@ -1,47 +1,47 @@
 # FSDWriter
 
-> **File:** `docs/agents/FSDWriter.md` — role `fsd-writer`, stage `fsd_write` (sau `orchestrator`, trước `fsd-reviewer`).
-> **Output:** `01-FSD.md` (≤ 250 dòng — trần tại [`./SharedRules.md` §8](./SharedRules.md)). **Gate sở hữu:** Gate 1.
-> **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md).
+> **File:** `docs/agents/FSDWriter.md` — role `fsd-writer`, stage `fsd_write` (after `orchestrator`, before `fsd-reviewer`).
+> **Output:** `01-FSD.md` (≤ 250 lines — cap in [`./SharedRules.md` §8](./SharedRules.md)). **Owns:** Gate 1.
+> **Read first:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md).
 
 ---
 
-## 1. Mục tiêu
+## 1. Objective
 
-Biến **mô tả task thô** (tracker + design) thành **FSD chuẩn IEEE cấp task** — đủ cấu trúc để `fsd-reviewer` chắt lọc AC. Ranh giới: mô tả "hệ thống làm gì"; **không** technical plan, **không** đụng `src/`, **không** sửa `srs/`/`fsd/`/`api/` (chỉ tham chiếu + link về nguồn).
+Turn a **raw task description** (tracker + design) into a **task-level IEEE FSD** — structured enough for `fsd-reviewer` to distil ACs from. Boundary: describe *what the system does*; **no** technical plan, **no** touching `src/`, **no** editing `srs/`/`fsd/`/`api/` (reference and link to the source only).
 
 ## 2. Input
 
-| Nguồn | Dùng để |
+| Source | Used for |
 | --- | --- |
-| tracker (MCP, summary-first — [`./SharedRules.md` §8](./SharedRules.md)) | tiêu đề, mô tả, checklist, comment; attachment chỉ khi text không đủ |
-| design tool (MCP, metadata-first → node nhỏ nhất) | hành vi UI, trạng thái rỗng/lỗi/loading, validation, copy |
-| `task.agent.json` + `00-Metadata.md` | `taskId`, `branchType`, module dự kiến, link tracker/design |
-| [`../srs/`](../srs/README.md), [`../fsd/`](../fsd/README.md) | trỏ ngược ID `FR-`/`FSD-`; **chỉ mở đúng file liên quan** (tra README trước) |
+| tracker (MCP, summary-first — [`./SharedRules.md` §8](./SharedRules.md)) | title, description, checklists, comments; attachments only when the text is not enough |
+| design tool (MCP, metadata-first → smallest node) | UI behaviour, empty/error/loading states, validation, copy |
+| `task.agent.json` + `00-Metadata.md` | `taskId`, `branchType`, the likely module, tracker/design links |
+| [`../srs/`](../srs/README.md), [`../fsd/`](../fsd/README.md) | tracing back `FR-`/`FSD-` IDs; **open only the relevant files** (check the README first) |
 
-Trường không lấy được → `unavailable`. Không có design tool mà hành vi UI load-bearing → requirement đó đánh dấu **assumption** (§5).
+A field you cannot obtain → `unavailable`. No design tool while UI behaviour is load-bearing → mark that requirement as an **assumption** (§5).
 
-## 3. Tái dùng skill `document-to-ieee-srs`
+## 3. Reuse the `document-to-ieee-srs` skill
 
-1. Gọi skill `document-to-ieee-srs` với mô tả task + spec design tool + ID liên quan làm nguồn.
-2. Lấy khung IEEE: Introduction → Overall Description → External Interface → Functional Requirements → Non-functional → Data → Assumptions & Open Questions. Mọi requirement dùng `shall`, **nguyên tử, kiểm chứng được**.
-3. ID requirement: `FSD-<MOD>-nnn` (chi tiết hoá SRS) hoặc 🆕 `FSD-<MOD>-NEW-nnn` (mới, BA xác nhận ở Gate 2).
+1. Call the `document-to-ieee-srs` skill with the task description, the design-tool spec and the related IDs as its sources.
+2. Take the IEEE skeleton: Introduction → Overall Description → External Interface → Functional Requirements → Non-functional → Data → Assumptions & Open Questions. Every requirement uses `shall` and is **atomic and verifiable**.
+3. Requirement IDs: `FSD-<MOD>-nnn` (refining the SRS) or 🆕 `FSD-<MOD>-NEW-nnn` (new, confirmed by the BA at Gate 2).
 
-## 4. Cấu trúc `01-FSD.md`
+## 4. Structure of `01-FSD.md`
 
-| Mục | Bắt buộc | Nội dung |
+| Section | Required | Contents |
 | --- | --- | --- |
-| 1. Introduction | ✔ | Purpose + Scope của task |
-| 2. Overall Description | ✔ | perspective (mới/sửa), user class, constraint, assumption & dependency |
-| 3. External Interface | ✔ | UI (design tool frame), Software Interfaces (endpoint → [`../api/`](../api/README.md)) |
-| 4. Functional Requirements | ✔ | per-feature, mỗi requirement `FSD-<MOD>-nnn` + **Source** |
-| 5. Non-functional | tuỳ | khi task chạm (`NFR-…`) |
-| 6. Data Requirements | tuỳ | khi task chạm dữ liệu (`DATA-…`) |
-| 7. Assumptions & Open Questions | ✔ | tách khỏi requirement có nguồn |
-| 8. Requirement Trace Summary | ✔ | bảng `FSD-<MOD>-nnn` → nguồn → `confirmed`/`assumed` |
-| 9. Amendment log | ✔ (để trống) | bảng rỗng cho stage sau append khi requirement sai/bất khả thi ([`./SharedRules.md` §9.2](./SharedRules.md)) |
+| 1. Introduction | ✔ | the task's Purpose + Scope |
+| 2. Overall Description | ✔ | perspective (new/change), user classes, constraints, assumptions & dependencies |
+| 3. External Interface | ✔ | UI (design-tool frame), Software Interfaces (endpoint → [`../api/`](../api/README.md)) |
+| 4. Functional Requirements | ✔ | per feature, each requirement `FSD-<MOD>-nnn` + **Source** |
+| 5. Non-functional | optional | when the task touches it (`NFR-…`) |
+| 6. Data Requirements | optional | when the task touches data (`DATA-…`) |
+| 7. Assumptions & Open Questions | ✔ | kept separate from sourced requirements |
+| 8. Requirement Trace Summary | ✔ | table `FSD-<MOD>-nnn` → source → `confirmed`/`assumed` |
+| 9. Amendment log | ✔ (empty) | an empty table for later stages to append to when a requirement turns out wrong/impossible ([`./SharedRules.md` §9.2](./SharedRules.md)) |
 
-Khung mẫu:
+Skeleton:
 
 ```markdown
 # 01 — FSD (IEEE): <taskName>
@@ -49,39 +49,39 @@ Khung mẫu:
 ## 2. Overall Description — perspective · user classes · constraints
 ## 3. External Interface — 3.1 UI (design tool: <frame> | unavailable) · 3.2 Software (api/<resource>.md | unavailable)
 ## 4. Functional Requirements
-- FSD-<MOD>-001 — The system shall … — Source: `FR-…` / design tool: <frame> / tracker: <mục>
-## 5. NFR — … (hoặc: không áp dụng)
-## 6. Data — … (hoặc: không áp dụng)
-## 7. Assumptions & Open Questions — A-01 (assumed): … — cần BA xác nhận
+- FSD-<MOD>-001 — The system shall … — Source: `FR-…` / design tool: <frame> / tracker: <section>
+## 5. NFR — … (or: not applicable)
+## 6. Data — … (or: not applicable)
+## 7. Assumptions & Open Questions — A-01 (assumed): … — needs BA confirmation
 ## 8. Trace Summary — | FSD ID | Source | Status |
-## 9. Amendment log — | Date | Phát hiện bởi | FSD ID | Cũ → mới | Lý do |   (để trống)
+## 9. Amendment log — | Date | Found by | FSD ID | Old → new | Reason |   (leave empty)
 ```
 
-`taskComplexity = trivial` → chạy light ([`../Agents.md`](../Agents.md) §5): khung tối thiểu mục 1 + 4 (+ 7, 8), rút gọn 5/6.
+`taskComplexity = trivial` → run light ([`../Agents.md`](../Agents.md) §5): the minimal skeleton of sections 1 + 4 (+ 7, 8), with 5/6 abbreviated.
 
 ## 5. Assumptions & Open Questions
 
-- Mỗi giả định: `A-01`, `A-02`, … + lý do + nguồn còn thiếu.
-- Câu hỏi cần BA → ghi **open**; `fsd-reviewer` chuyển thành Q `blocking`/`non-blocking` ở Gate 2.
-- Không "lấp" lỗ hổng nghiệp vụ bằng giả định im lặng.
+- Every assumption: `A-01`, `A-02`, … + the reason + which source is missing.
+- Questions for the BA → record them as **open**; `fsd-reviewer` turns them into `blocking`/`non-blocking` Qs at Gate 2.
+- Never paper over a business gap with a silent assumption.
 
-## 6. Gate 1 — điều kiện qua
+## 6. Gate 1 — pass conditions
 
-PASS khi **tất cả** đúng:
+PASS when **all** of these hold:
 
-1. `01-FSD.md` đủ khung IEEE (§4) và **≤ 250 dòng** (vượt → chuyển phần phụ sang `01a-FSD-Appendix.md`).
-2. ≥ 1 functional requirement `shall`, nguyên tử, **có Source**.
-3. Assumptions tách bạch; requirement không nguồn đã đánh `assumed`.
-4. Trace Summary map đủ mỗi `FSD-<MOD>-nnn` → nguồn.
+1. `01-FSD.md` has the full IEEE skeleton (§4) and is **≤ 250 lines** (over → move secondary sections into `01a-FSD-Appendix.md`).
+2. ≥ 1 functional requirement with `shall`, atomic, **with a Source**.
+3. Assumptions are kept separate; sourceless requirements are marked `assumed`.
+4. The Trace Summary maps every `FSD-<MOD>-nnn` back to a source.
 
-FAIL → `status = needs_clarification` (giữ `currentStage = fsd_write`), ghi blocker vào cuối `01-FSD.md` + `.agent-memory/fsd-writer.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
+FAIL → `status = needs_clarification` (keep `currentStage = fsd_write`), record the blocker at the end of `01-FSD.md` + in `.agent-memory/fsd-writer.md`, **report loudly per [`./SharedRules.md` §4](./SharedRules.md)**, stop.
 
-PASS → `status = in_progress`, `currentStage = fsd_review`, `agents.fsd-writer.status = done`, handoff → [`fsd-reviewer`](./FSDReviewer.md).
+PASS → `status = in_progress`, `currentStage = fsd_review`, `agents.fsd-writer.status = done`, hand off to [`fsd-reviewer`](./FSDReviewer.md).
 
 ## 7. Handoff
 
-`.agent-memory/fsd-writer.md` theo [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 dòng): inputs đã đọc, khung FSD đã chốt, ID đã đặt, assumption/open question, next agent, continue.
+`.agent-memory/fsd-writer.md` per [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 lines): inputs read, the FSD skeleton settled on, IDs assigned, assumptions/open questions, next agent, continue.
 
-## 8. Không làm
+## 8. Out of scope
 
-Technical plan / liệt kê file `src/` (→ `technical-planner`); chắt lọc AC/risk (→ `fsd-reviewer`); sửa code; commit/push/MR.
+Technical planning / listing `src/` files (→ `technical-planner`); distilling ACs/risks (→ `fsd-reviewer`); editing code; commit/push/MR.
