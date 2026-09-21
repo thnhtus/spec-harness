@@ -50,9 +50,13 @@
 
 **effort = tổng (0–12):** {n}
 
+**Số đo đã chấm từ đó** (validator đối chiếu, thiếu là error): `counts.symbol` = `{symbol đã grep}` · `counts.filesTouched` = {n} · `counts.existingTests` = {n} · `questions[]` = {danh sách "không làm được nếu không biết X", rỗng chỉ khi đã đi tìm}
+
 | Chiều rủi ro | Thang | Chấm |
 | --- | --- | --- |
 | blastRadius | 0 một chỗ · 1 module · 2 feature · 3 service · 4 toàn hệ thống | |
 | reversibility | 0 sửa lại xong · 1 revert · 2 deploy lại · 3 sửa dữ liệu · 4 không lùi được | |
+
+> Hai chiều này không có số đo nào đối chiếu, mà chúng một mình kéo `trivial → high`. Đây là chỗ duy nhất còn dựa hoàn toàn vào phán đoán — đừng chấm cho qua.
 
 **→ `taskComplexity` = {trivial\|normal\|high}** · ghi vector vào `task.agent.json → complexity`

@@ -119,6 +119,7 @@
   },
   "_note": "Config of the spec-harness repo itself: tasksDir points at the shipped kernel templates so `--self-check` validates what we distribute. A real project copies adapters/example/harness.config.json instead.",
   "retryBudget": 4,
+  "splitEffort": 9,
   "roleStage": {
     "orchestrator": "bootstrap",
     "fsd-writer": "fsd_write",

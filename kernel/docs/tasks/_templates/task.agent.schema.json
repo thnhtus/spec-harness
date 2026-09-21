@@ -196,6 +196,11 @@
           "type": "object",
           "description": "Measured numbers the vector was scored from. The validator cross-checks them against the vector, so they are evidence, not decoration (Agents.md 5.1).",
           "properties": {
+            "symbol": {
+              "type": "string",
+              "minLength": 1,
+              "$comment": "The symbol filesTouched was grepped for. Picking the symbol picks the scope, so the choice is on the record."
+            },
             "filesTouched": {
               "type": "integer",
               "minimum": 0,

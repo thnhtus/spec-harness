@@ -119,6 +119,7 @@
     "urlPattern": "^https://app\\.clickup\\.com/t/.+"
   },
   "retryBudget": 4,
+  "splitEffort": 9,
   "roleStage": {
     "orchestrator": "bootstrap",
     "fsd-writer": "fsd_write",

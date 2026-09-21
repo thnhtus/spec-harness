@@ -80,6 +80,10 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
    rg -l '<symbol chính>' <src> -g '*test*'  # → counts.existingTests (0 ⇒ testing ≥ 1)
    ```
 
+   Ghi luôn `counts.symbol` = symbol đã grep (validator bắt buộc): chọn symbol
+   là chọn luôn `scope`, nên lựa chọn đó phải nằm trên giấy. Ra `0` file thì
+   ghi `complexity.note`: file mới hay grep trượt — hai chuyện khác hẳn.
+
    Chiều thứ ba không có lệnh: viết ra danh sách *"không làm được nếu không biết
    X"* → `questions[]`. Rỗng ⇒ `uncertainty 0`, có mục ⇒ `≥ 1`. **Chưa đi tìm
    thì chưa được kết luận rỗng** — đây là chiều bị chấm thấp nhiều nhất, và nó
@@ -100,8 +104,10 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
    node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type <feature|bugfix|hotfix> --task-id <taskId>
    ```
 
-   `--task-id` là bắt buộc trên thực tế: thiếu nó thì không ghi `_triage.log`,
-   và vector chấm ở đây không đối chiếu được với vector bootstrap ghi sau đó.
+   `--task-id` bắt buộc (exit `2` nếu thiếu): không có nó thì không ghi
+   `_triage.log`, và vector chấm ở đây không đối chiếu được với vector bootstrap.
+   Vector cũng phải đủ **8 chiều, integer, đúng range** — `{}` hay `{"scope":"2"}`
+   bị từ chối (exit `2`), không được coi là `trivial`.
 
    | Exit | Verdict | Làm gì |
    | --- | --- | --- |
@@ -117,10 +123,11 @@ luồng. Nên bước này đi trước — **trước cả worktree**.
    harness là quyết định hợp lệ; bỏ qua mà không để lại dấu vết thì không.
 
    **Chấm thật, đừng chấm để ra kết quả mong muốn.** Mọi lần triage đều vào
-   `_triage.log`, và validator đối chiếu với vector bootstrap: chấm nhẹ ở đây rồi
-   chấm nặng ở bootstrap → warning nêu đích danh chiều nào. Điều chỉnh lên sau
-   khảo sát là bình thường (§5.1.3) — warning chỉ nói rõ: con số thấp hơn là con
-   số đã quyết định task này có cần harness hay không.
+   `_triage.log`, và validator đối chiếu với vector đã lưu ở **cả hai hướng**:
+   chấm nhẹ ở đây rồi chấm nặng ở bootstrap → warning (điều chỉnh lên sau khảo
+   sát là bình thường, §5.1.3 — warning chỉ nói rõ con số thấp hơn là con số đã
+   quyết task này có cần harness); ngược lại, **hạ** một chiều xuống dưới mức
+   triage là **error** — đó là hướng §5.1.3 cấm.
 
 Kết quả bước 0 quyết định ba thứ ở bước 1–2 dưới đây.
 

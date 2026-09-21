@@ -131,9 +131,11 @@ Quy tắc nhánh (tạo từ `develop` với `--ff-only`, ngoại lệ nhánh us
 
 | Chiều | Chạy | Ràng buộc validator enforce |
 | --- | --- | --- |
-| `scope` | `rg -l '<symbol chính>' <src> \| wc -l` → `counts.filesTouched` | `1` ⇒ `scope 0` · `>5` ⇒ `scope 2` |
+| `scope` | `rg -l '<symbol chính>' <src> \| wc -l` → `counts.symbol` + `counts.filesTouched` | `1` ⇒ `scope 0` · `>5` ⇒ `scope 2` · `0` ⇒ phải có `note` |
 | `testing` | đếm test file đang phủ code đó → `counts.existingTests` | `0` ⇒ `testing ≥ 1` |
 | `uncertainty` | viết ra danh sách "không làm được nếu không biết X" → `questions[]` | rỗng ⇒ `uncertainty 0` · có mục ⇒ `uncertainty ≥ 1` |
+
+**`counts.symbol` bắt buộc** vì chọn symbol chính là chọn luôn kết quả: grep một helper hiếm ra 1 file (`scope 0`), grep một symbol phổ biến ra 20 file (`scope 2`) — cùng một task. Ghi symbol ra không xoá được lựa chọn đó, nó làm lựa chọn **nhìn thấy được** khi review. `filesTouched: 0` (không khớp gì) rơi ra ngoài mọi luật trên — file mới hoàn toàn hay grep trượt là hai chuyện khác hẳn mà con số không phân biệt được, nên `note` phải nói rõ là cái nào.
 
 Ba chiều còn lại (`dependency`, `dataImpact`, `integration`) không có phép đếm nào nói đúng được, nên vẫn là phán đoán — nhưng `note` nên nêu file/contract cụ thể đã thấy.
 
@@ -145,6 +147,8 @@ Ba chiều còn lại (`dependency`, `dataImpact`, `integration`) không có ph�
 | --- | --- | --- |
 | `blastRadius` | hỏng thì lan tới đâu | `0` một chỗ · `1` một module · `2` một feature · `3` một service · `4` toàn hệ thống |
 | `reversibility` | rollback khó tới đâu | `0` sửa lại là xong · `1` revert commit · `2` cần deploy lại · `3` phải sửa dữ liệu · `4` không lùi được (migration xoá cột, tiền đã chuyển) |
+
+> **Hai chiều này không đo được, và chúng mạnh nhất.** `riskFloor` một mình kéo `trivial → high`, nên chấm `blastRadius: 1` thay vì `3` lách được toàn bộ sự nghiêm ngặt ở ba chiều có `counts`. Không bịa phép đếm giả ở đây — không có phép đếm nào đúng. Chỗ bắt lại là §5.6: `escapedBugs > 0` từ task `trivial` chính là tín hiệu hai chiều này đang bị chấm thấp có hệ thống.
 
 ### 5.1.1. Công thức (deterministic — không phải LLM quyết)
 
@@ -168,7 +172,7 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
   "vector": { "scope": 2, "uncertainty": 1, "dependency": 2, "dataImpact": 2,
               "integration": 1, "testing": 2, "blastRadius": 2, "reversibility": 1 },
   "effort": 10,
-  "counts": { "filesTouched": 9, "existingTests": 0 },
+  "counts": { "symbol": "useEmployeeResolver", "filesTouched": 9, "existingTests": 0 },
   "questions": ["notification gửi cho role nào khi nhân viên bị gỡ khỏi phòng ban?"],
   "splitEvaluated": "tách thành ABC-12 (resolver) + ABC-13 (notification) — ship riêng được",
   "assessedAt": "bootstrap",
@@ -177,6 +181,8 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
 ```
 
 `counts` và `questions` **không phải chú thích** — validator đối chiếu chúng với vector và chặn nếu mâu thuẫn (`filesTouched: 1` mà `scope: 1`, `questions` rỗng mà `uncertainty: 2`, …). Thiếu chúng cũng là error với task tạo sau `acTrace.since`; task cũ hơn chỉ warning.
+
+**Thiếu hẳn `complexity` là error, không phải warning** (với task tạo sau `acTrace.since`). Trước đó nó là warning, mà pre-commit chạy `--no-warn` — nghĩa là **xoá hẳn block đi thì rẻ hơn điền sai**, và cả §5.1 thành opt-out. Mọi quyết định định tuyến phía sau (độ nặng gate, tier model, worktree) đều đứng trên vector này.
 
 `taskComplexity` (trường cũ) vẫn là nơi đọc nhanh; `complexity.vector` là **cơ sở** của nó. Validator tính lại công thức từ vector — lệch với `taskComplexity` là **error**. Đó là chỗ "deterministic" có răng: agent không ghi được vector thấp rồi tuyên bố `high`, hay ngược lại.
 
@@ -188,6 +194,13 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
 - Rộng hơn hẳn (phát hiện thêm tầng phụ thuộc, migration, contract đổi) → **cập nhật vector**, ghi `assessedAt: "technical_plan"` + lý do, tính lại `taskComplexity`.
 
 Chỉ được **nâng**. Hạ để chạy nhẹ đi là né gate — muốn hạ thì `needs_clarification`, hỏi user.
+
+**Luật này có răng.** Validator đối chiếu vector đang lưu với vector đã ghi ở `_triage.log`, **cả hai hướng**:
+
+| Hướng | Mức | Vì sao |
+| --- | --- | --- |
+| cao hơn lúc triage | warning | bình thường — khảo sát thấy nhiều hơn Glob/Grep. Chỉ nhắc: con số thấp hơn là con số đã quyết task này có cần harness không |
+| **thấp hơn** lúc triage | **error** | đây là hướng bị cấm: hạ một chiều là mua gate nhẹ hơn + tier rẻ hơn, không tốn gì |
 
 Vector tăng lên `high` sau khảo sát → stage sau dùng model theo cột `high` (§5.3), và nếu `blastRadius ≥ 3` thì planner nêu ở Risk để user biết trước khi implementer chạy.
 
@@ -205,7 +218,7 @@ Số stage gấp đôi nhưng tier rẻ hơn và rework ít hơn — tổng thư
 
 `status = split` (§5.5) đã có, nhưng nó là lối thoát khi **hết** `retryBudget` — lúc đó tiền đã đốt xong. Nên có thêm một chốt ở bootstrap:
 
-> `effort ≥ 9`, **hoặc** `scope = 2` kèm `uncertainty = 2` → phải điền `complexity.splitEvaluated`.
+> `effort ≥ splitEffort` (mặc định `9`, khai ở `harness.config.json`), **hoặc** `scope = 2` kèm `uncertainty = 2` → phải điền `complexity.splitEvaluated`.
 
 Hai giá trị hợp lệ: danh sách taskId con (đã tách), hoặc lý do không tách được ("một migration, một lần deploy — không ship riêng được"). Validator chặn nếu để trống. Nó không ép tách — nó ép **trả lời câu hỏi có tách không** vào đúng lúc câu trả lời còn rẻ.
 

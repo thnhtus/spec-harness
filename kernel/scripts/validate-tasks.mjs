@@ -272,14 +272,22 @@ export function triageVectorFor(logPath, taskId) {
   return found; // last entry wins: a re-triage supersedes the earlier answer
 }
 
-// Dimensions scored higher at bootstrap than they were at triage. Only the
-// upward direction matters: scoring low is how you dodge the harness, scoring
-// high costs you nothing to gain.
-export function vectorRaisedSince(triaged, bootstrap) {
-  if (!triaged || !bootstrap) return [];
-  return Object.keys(bootstrap)
-    .filter((k) => (bootstrap[k] ?? 0) > (triaged[k] ?? 0))
-    .map((k) => `${k} ${triaged[k] ?? 0}→${bootstrap[k]}`);
+// How the stored vector differs from the one triage was answered with.
+//
+// Both directions are worth a word, for opposite reasons. UP is expected --
+// §5.1.3 says a Glob/Grep pass sees less than bootstrap does -- but the lower
+// number is what decided whether this task needed the harness at all. DOWN is
+// the one §5.1.3 forbids outright ("chỉ nâng, không hạ"): lowering a dimension
+// buys a lighter gate and a cheaper model tier, which is exactly the incentive
+// the rule exists to remove. Nothing used to check it.
+export function vectorDriftSince(triaged, stored) {
+  if (!triaged || !stored) return { raised: [], lowered: [] };
+  const fmt = (k) => `${k} ${triaged[k] ?? 0}→${stored[k]}`;
+  const keys = Object.keys(stored);
+  return {
+    raised: keys.filter((k) => (stored[k] ?? 0) > (triaged[k] ?? 0)).map(fmt),
+    lowered: keys.filter((k) => (stored[k] ?? 0) < (triaged[k] ?? 0)).map(fmt),
+  };
 }
 
 // Did the coordinator actually clear context between stages?
@@ -328,6 +336,27 @@ function oversizedHandoffBlocks(memDir) {
 // in auth middleware is not "trivial" however small the diff is.
 const RANK = ["trivial", "normal", "high"];
 const EFFORT_KEYS = ["scope", "uncertainty", "dependency", "dataImpact", "integration", "testing"];
+const RISK_KEYS = ["blastRadius", "reversibility"];
+
+// --triage runs BEFORE task.agent.json exists, so it is the one entry point the
+// schema never sees -- and it is the gate that decides whether the harness runs
+// at all. Unchecked it accepted `{}` (→ quick-task), `"junk"` (→ quick-task),
+// `{"scope":"2"}` (string concat: "effort 0200000") and `null` (stack trace).
+// A routing decision taken from rubbish is worse than no routing decision.
+export function vectorInputErrors(v) {
+  if (v === null || typeof v !== "object" || Array.isArray(v))
+    return ["the vector must be a JSON object with all 8 dimensions (Agents.md §5.1.2)"];
+  const out = [];
+  for (const [keys, max] of [[EFFORT_KEYS, 2], [RISK_KEYS, 4]])
+    for (const k of keys) {
+      const n = v[k];
+      if (n === undefined) out.push(`${k} missing — score it, do not omit it (0–${max})`);
+      else if (!Number.isInteger(n) || n < 0 || n > max) out.push(`${k}=${JSON.stringify(n)} — must be an integer 0–${max}`);
+    }
+  const extra = Object.keys(v).filter((k) => !EFFORT_KEYS.includes(k) && !RISK_KEYS.includes(k));
+  if (extra.length) out.push(`unknown dimension(s): ${extra.join(", ")} — a typo here scores 0 silently`);
+  return out;
+}
 
 function deriveComplexity(vector) {
   const effort = EFFORT_KEYS.reduce((n, k) => n + (vector[k] ?? 0), 0);
@@ -360,7 +389,7 @@ function deriveComplexity(vector) {
 // `status: split` already exists but only as an exit from an exhausted budget,
 // by which point the money is gone. Two `normal` tasks run cheaper than one
 // `high` task that bounces twice.
-const SPLIT_EFFORT = 9;
+const SPLIT_EFFORT = CFG.splitEffort ?? 9;
 
 export function vectorEvidenceDefects(complexity) {
   const v = complexity?.vector;
@@ -369,9 +398,20 @@ export function vectorEvidenceDefects(complexity) {
   const c = complexity.counts ?? {};
   const num = (k) => (Number.isInteger(c[k]) ? c[k] : null);
 
+  // Which symbol was grepped is a free parameter that picks the answer: a rare
+  // helper returns 1 file (scope 0), a common one returns 20 (scope 2). Naming
+  // it does not remove the choice, it makes the choice reviewable.
+  if (!String(c.symbol ?? "").trim())
+    out.push("complexity.counts.symbol missing — name the symbol filesTouched was grepped for; picking the symbol picks the scope (Agents.md §5.1)");
+
   const files = num("filesTouched");
   if (files === null)
     out.push("complexity.counts.filesTouched missing — `scope` scored from the task description is the cheapest way to under-estimate a task (Agents.md §5.1)");
+  // 0 matched nothing, which means either a brand-new file or a grep that
+  // missed. Those score differently and the count cannot tell them apart, so
+  // it falls through every rule below — say which one it is.
+  else if (files === 0 && !String(complexity.note ?? "").trim())
+    out.push("counts.filesTouched=0 matched nothing — complexity.note must say whether this is a new file or the grep missed (Agents.md §5.1)");
   else if (files === 1 && v.scope !== 0)
     out.push(`counts.filesTouched=1 but scope=${v.scope} — one file is scope 0`);
   else if (files > 5 && v.scope !== 2)
@@ -1092,10 +1132,31 @@ if (args.has("--self-check")) {
     assert.deepEqual(triageVectorFor(log, "B-2"), { scope: 2 }, "finds the right task");
     assert.equal(triageVectorFor(log, "C-3"), null, "task not in the log → no finding");
 
-    assert.deepEqual(vectorRaisedSince({ scope: 0 }, { scope: 2, testing: 1 }), ["scope 0→2", "testing 0→1"], "names each raised dimension");
-    assert.deepEqual(vectorRaisedSince({ scope: 2 }, { scope: 2 }), [], "unchanged → silent");
-    assert.deepEqual(vectorRaisedSince({ scope: 2 }, { scope: 1 }), [], "lowered at bootstrap is not this check's business");
-    assert.deepEqual(vectorRaisedSince(null, { scope: 2 }), [], "never triaged → nothing to compare");
+    assert.deepEqual(vectorDriftSince({ scope: 0 }, { scope: 2, testing: 1 }).raised, ["scope 0→2", "testing 0→1"], "names each raised dimension");
+    assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 2 }), { raised: [], lowered: [] }, "unchanged → silent");
+    // §5.1.3 is "chỉ nâng, không hạ" -- the forbidden direction must be the one
+    // that is actually reported, or the rule has no teeth anywhere.
+    assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 1 }).lowered, ["scope 2→1"], "lowered is the direction §5.1.3 forbids");
+    assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 1 }).raised, [], "a lowered dimension is not also 'raised'");
+    assert.deepEqual(vectorDriftSince(null, { scope: 2 }), { raised: [], lowered: [] }, "never triaged → nothing to compare");
+  }
+
+  // --triage input: the one entry point the schema never sees, and the one that
+  // decides whether the harness runs at all. Every case below used to produce a
+  // confident verdict from rubbish.
+  {
+    const full = { scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 };
+    assert.deepEqual(vectorInputErrors(full), [], "a complete zero vector is valid input");
+    assert.ok(vectorInputErrors(null)[0].includes("8 dimensions"), "null is not a vector");
+    assert.ok(vectorInputErrors("junk")[0].includes("8 dimensions"), "a string is not a vector");
+    assert.ok(vectorInputErrors([])[0].includes("8 dimensions"), "an array is not a vector");
+    assert.equal(vectorInputErrors({}).length, 8, "an empty object is 8 missing dimensions, not a trivial task");
+    assert.ok(vectorInputErrors({ ...full, scope: "2" })[0].includes("integer"), "a string digit concatenates instead of summing");
+    assert.ok(vectorInputErrors({ ...full, blastRadius: -4 })[0].includes("integer"), "negative is rejected");
+    assert.ok(vectorInputErrors({ ...full, scope: 3 })[0].includes("0–2"), "effort dimensions cap at 2");
+    assert.ok(vectorInputErrors({ ...full, blastRadius: 4 }).length === 0, "risk dimensions go to 4");
+    assert.ok(vectorInputErrors({ ...full, blastRadius: 5 })[0].includes("0–4"), "risk dimensions cap at 4");
+    assert.ok(vectorInputErrors({ ...full, scop: 2 })[0].includes("unknown"), "a typo'd key would score 0 in silence");
   }
 
   // split: the named exit from an exhausted retry budget. Both halves matter --
@@ -1140,56 +1201,72 @@ if (args.has("--self-check")) {
   {
     const ok = {
       vector: { scope: 1, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 1, blastRadius: 0, reversibility: 0 },
-      counts: { filesTouched: 3, existingTests: 0 },
+      counts: { symbol: "useRoster", filesTouched: 3, existingTests: 0 },
       questions: [],
     };
     const d = (o) => vectorEvidenceDefects(o);
+    // Which symbol was grepped picks the scope, so it has to be on the record.
+    assert.ok(
+      d({ ...ok, counts: { filesTouched: 3, existingTests: 0 } })[0].includes("symbol"),
+      "an unnamed grep symbol lets the scorer choose the answer",
+    );
+    // 0 matches falls through every count rule; new file vs missed grep score
+    // differently and only a human can say which.
+    assert.ok(
+      d({ ...ok, counts: { ...ok.counts, filesTouched: 0 } }).some((x) => x.includes("matched nothing")),
+      "filesTouched=0 must be explained, not silently accepted",
+    );
+    assert.deepEqual(
+      d({ ...ok, counts: { ...ok.counts, filesTouched: 0 }, note: "new file: src/x.tsx" }),
+      [],
+      "a note explaining the zero clears it",
+    );
     assert.deepEqual(d(ok), [], "a fully evidenced vector is silent");
     assert.deepEqual(d(undefined), [], "no complexity block at all is handled elsewhere (§5.1 warning)");
     assert.deepEqual(d({ counts: ok.counts, questions: [] }), [], "counts without a vector: nothing to cross-check");
 
-    assert.ok(d({ ...ok, counts: { existingTests: 0 } })[0].includes("filesTouched"), "missing filesTouched is named");
-    assert.ok(d({ ...ok, counts: { filesTouched: 3 } })[0].includes("existingTests"), "missing existingTests is named");
-    assert.ok(d({ vector: ok.vector, counts: ok.counts })[0].includes("questions"), "missing questions is named");
+    assert.ok(d({ ...ok, counts: { symbol: "s", existingTests: 0 } }).some((x) => x.includes("filesTouched")), "missing filesTouched is named");
+    assert.ok(d({ ...ok, counts: { symbol: "s", filesTouched: 3 } }).some((x) => x.includes("existingTests")), "missing existingTests is named");
+    assert.ok(d({ vector: ok.vector, counts: ok.counts }).some((x) => x.includes("questions")), "missing questions is named");
 
     // counts must actually constrain the score, or they are decoration.
     assert.ok(
-      d({ ...ok, counts: { filesTouched: 1, existingTests: 0 } }).some((x) => x.includes("one file is scope 0")),
+      d({ ...ok, counts: { symbol: "s", filesTouched: 1, existingTests: 0 } }).some((x) => x.includes("one file is scope 0")),
       "1 file cannot be scope 1",
     );
     assert.ok(
-      d({ ...ok, counts: { filesTouched: 9, existingTests: 0 } }).some((x) => x.includes("more than 5 files")),
+      d({ ...ok, counts: { symbol: "s", filesTouched: 9, existingTests: 0 } }).some((x) => x.includes("more than 5 files")),
       "9 files cannot be scope 1",
     );
     assert.deepEqual(
-      d({ vector: { ...ok.vector, scope: 2 }, counts: { filesTouched: 9, existingTests: 0 }, questions: [] }),
+      d({ vector: { ...ok.vector, scope: 2 }, counts: { symbol: "s", filesTouched: 9, existingTests: 0 }, questions: [] }),
       [],
       "9 files with scope 2 is consistent",
     );
     assert.ok(
-      d({ vector: { ...ok.vector, testing: 0 }, counts: { filesTouched: 3, existingTests: 0 }, questions: [] })
+      d({ vector: { ...ok.vector, testing: 0 }, counts: { symbol: "s", filesTouched: 3, existingTests: 0 }, questions: [] })
         .some((x) => x.includes("existingTests=0")),
       "no test covers it ⇒ testing cannot be 0",
     );
     assert.deepEqual(
-      d({ vector: { ...ok.vector, testing: 0 }, counts: { filesTouched: 3, existingTests: 4 }, questions: [] }),
+      d({ vector: { ...ok.vector, testing: 0 }, counts: { symbol: "s", filesTouched: 3, existingTests: 4 }, questions: [] }),
       [],
       "existing tests cover it ⇒ testing 0 is fine",
     );
 
     // uncertainty is the expensive one, so it is checked in both directions.
     assert.ok(
-      d({ vector: { ...ok.vector, uncertainty: 2 }, counts: ok.counts, questions: [] })[0].includes("empty"),
+      d({ vector: { ...ok.vector, uncertainty: 2 }, counts: ok.counts, questions: [] }).some((x) => x.includes("empty")),
       "uncertainty>0 with no listed question",
     );
     assert.ok(
-      d({ ...ok, questions: ["which role sees the button?"] })[0].includes("uncertainty=0"),
+      d({ ...ok, questions: ["which role sees the button?"] }).some((x) => x.includes("uncertainty=0")),
       "a listed blocker contradicts uncertainty 0",
     );
 
     // split-before-spend: the point is to fire at bootstrap, not after retries.
     const big = { scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 1, testing: 1, blastRadius: 1, reversibility: 1 };
-    const bigOk = { vector: big, counts: { filesTouched: 9, existingTests: 0 }, questions: ["q"] };
+    const bigOk = { vector: big, counts: { symbol: "s", filesTouched: 9, existingTests: 0 }, questions: ["q"] };
     assert.ok(d(bigOk).some((x) => x.includes("splitEvaluated")), "effort 10 must record a split decision");
     assert.deepEqual(
       d({ ...bigOk, splitEvaluated: "cannot split: one migration, one deploy" }),
@@ -1200,7 +1277,7 @@ if (args.has("--self-check")) {
     assert.ok(
       d({
         vector: { scope: 2, uncertainty: 2, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 },
-        counts: { filesTouched: 9, existingTests: 0 },
+        counts: { symbol: "s", filesTouched: 9, existingTests: 0 },
         questions: ["q"],
       }).some((x) => x.includes("splitEvaluated")),
       "wide AND unclear at effort 4 still asks the question",
@@ -1302,6 +1379,11 @@ if (args.has("--triage")) {
     const i = argv.indexOf(name);
     return i >= 0 ? argv[i + 1] : null;
   };
+  const bad = vectorInputErrors(vector);
+  if (bad.length) {
+    console.error(`✖ --triage vector rejected (Agents.md §5.1.2):\n  ${bad.join("\n  ")}`);
+    process.exit(2);
+  }
   const r = triage(vector, flagVal("--branch-type"));
   const force = flagVal("--force");
 
@@ -1315,15 +1397,17 @@ if (args.has("--triage")) {
   // The vector is scored again at bootstrap, so a low score here becomes
   // checkable against the one that lands in task.agent.json.
   const taskId = flagVal("--task-id");
-  if (taskId) {
+  if (!taskId) {
+    console.error("✖ --triage needs --task-id: an unattributable verdict cannot be cross-checked against the bootstrap vector (Agents.md §5.1.3)");
+    process.exit(2);
+  }
+  {
     const { appendFileSync, mkdirSync } = await import("node:fs");
     mkdirSync(TASKS_DIR, { recursive: true });
     appendFileSync(
       join(TASKS_DIR, "_triage.log"),
       `${new Date().toISOString()}\t${taskId}\t${r.verdict}\t${force ? "forced" : "-"}\t${JSON.stringify(vector)}\t${force ?? ""}\n`,
     );
-  } else if (force) {
-    console.error("⚠ --force without --task-id: the decision is not attributable to a task");
   }
 
   if (AS_JSON) console.log(JSON.stringify({ ...r, forced: force ?? null }));
@@ -1629,21 +1713,33 @@ for (const { sprint, task, path } of folders) {
     // is common and legitimate -- §5.1.3 explicitly expects the vector to be
     // revised upward. What is worth surfacing is that the lower score is what
     // answered "does this need the harness at all".
-    const raised = vectorRaisedSince(
-      triageVectorFor(join(TASKS_DIR, "_triage.log"), data.taskId),
-      data.complexity.vector,
-    );
-    if (raised.length)
-      warnings.push(
-        `vector scored higher at bootstrap than at triage (${raised.join(", ")}) — the lower score is what decided whether this task needed the harness (§5.1.3)`,
-      );
-
     // Same since-cutoff as outcome/AC trace: tasks started under the harness owe
     // the evidence, tasks that predate it stay warnings.
     const sink = outcomeIsBlocking(data) ? errors : warnings;
+
+    const drift = vectorDriftSince(
+      triageVectorFor(join(TASKS_DIR, "_triage.log"), data.taskId),
+      data.complexity.vector,
+    );
+    if (drift.raised.length)
+      warnings.push(
+        `vector scored higher at bootstrap than at triage (${drift.raised.join(", ")}) — the lower score is what decided whether this task needed the harness (§5.1.3)`,
+      );
+    // Lowering is the direction §5.1.3 forbids: it buys a lighter gate and a
+    // cheaper tier. "Chỉ nâng, không hạ" — want it lower, go needs_clarification.
+    if (drift.lowered.length)
+      sink.push(
+        `vector scored LOWER than at triage (${drift.lowered.join(", ")}) — §5.1.3 allows raising only; a lighter score buys a lighter gate and a cheaper tier. To lower it, go through needs_clarification`,
+      );
+
     for (const d of vectorEvidenceDefects(data.complexity)) sink.push(d);
   } else if (STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("bootstrap")) {
-    warnings.push("complexity.vector missing — taskComplexity is an unchecked guess (Agents.md §5.1)");
+    // Omitting the block used to be cheaper than filling it in wrong: a missing
+    // vector was a warning, and pre-commit runs --no-warn. So the whole §5.1
+    // apparatus was opt-out by deletion. Same since-cutoff as everything else.
+    (outcomeIsBlocking(data) ? errors : warnings).push(
+      "complexity.vector missing — taskComplexity is an unchecked guess, and every downstream routing decision (gate weight, model tier, worktree) rests on it (Agents.md §5.1)",
+    );
   }
 
   // 2c. Rework: a stage that ran more than twice means the gate kept bouncing it.
