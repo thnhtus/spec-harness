@@ -313,8 +313,16 @@ if (args[0] === "--self-test") {
   let settings;
   try { settings = read(join(T, ".claude/settings.json")); JSON.parse(settings); }
   catch { fail("settings.json không phải JSON hợp lệ"); }
-  for (const pat of ["git push", "git reset --hard", "git stash"])
-    if (!settings.includes(`Bash(${pat}`)) fail(`settings.json thiếu deny cho '${pat}' — guardrail lại chỉ là prompt`);
+  // Dùng chính predicate của validator, không tự liệt kê lại danh sách ở đây:
+  // hai danh sách rời nhau thì thêm một rule vào preflight mà quên bên này là
+  // ship ra một settings.json mà chính preflight của nó sẽ báo đỏ.
+  {
+    const r = spawnSync(process.execPath,
+      ["scripts/validate-tasks.mjs", "--check-settings", ".claude/settings.json"],
+      { cwd: T, encoding: "utf8" });
+    if (r.status !== 0)
+      fail("settings.json cài ra không thoả deny-list mà preflight đòi:", (r.stderr || r.stdout).trim());
+  }
 
   if (!existsSync(join(T, ".github/workflows/spec-harness.yml")))
     fail("thiếu CI workflow — gate chỉ tồn tại ở máy dev");

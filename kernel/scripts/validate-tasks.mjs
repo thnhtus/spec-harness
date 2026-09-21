@@ -676,6 +676,63 @@ const acsMissingFrom = (f, acs) =>
 // ---------------------------------------------------------------------------
 // Self-check: node scripts/validate-tasks.mjs --self-check
 // ---------------------------------------------------------------------------
+// Reachable is not the same as armed. The file can be present, loaded, and
+// empty -- every deny rule gone, preflight still green. These are the rules the
+// harness relies on: Instructions.md forbids them in prose, and prose is what
+// a model chooses to follow.
+export const REQUIRED_DENY = ["git push", "git reset --hard", "git stash", "git clean"];
+
+export function denyGaps(settingsText) {
+  let parsed;
+  try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
+  const deny = parsed?.permissions?.deny ?? [];
+  return REQUIRED_DENY.filter((r) => !deny.some((d) => d.includes(r))).map(
+    (r) => `.claude/settings.json has no deny rule for \`${r}\` \u2014 the guardrail is back to being prose the model may ignore`,
+  );
+}
+
+// A placeholder URL is worse than a missing one: `https://<git-host>/...` kills
+// the CLI with ERR_INVALID_URL at startup, and `example.com` resolves fine while
+// answering nothing -- Gate 1 loses its source of AC and the whole trace chain
+// becomes invention.
+// `example.com` là placeholder ở BẤT KỲ đâu trong hostname, không chỉ đầu chuỗi:
+// bản cài ra có `gitlab.example.com`, và một regex neo đầu chuỗi sẽ cho nó qua —
+// đúng kiểu check tồn tại mà không bắt được gì.
+const PLACEHOLDER_HOST = /(?:^<|\bexample\.(?:com|org|net)$|^localhost$|^your-|changeme)/i;
+
+// Secrets do not belong in a committed file. OAuth tokens live in ~/.claude.json
+// by design, but .mcp.json is the file people hand-edit, and it is the natural
+// place to paste `Authorization: Bearer ...` when a server has no OAuth.
+const SECRETISH = /"(authorization|token|api[_-]?key|secret|password|bearer)"\s*:/i;
+
+export function mcpGaps(text) {
+  const out = { errors: [], warnings: [] };
+  let cfg;
+  try { cfg = JSON.parse(text); } catch { return { errors: [".mcp.json is not valid JSON \u2014 the CLI starts with no MCP servers at all"], warnings: [] }; }
+  if (SECRETISH.test(text))
+    out.errors.push(".mcp.json contains what looks like a credential field \u2014 it is committed; move it to an env var or the CLI's own auth store");
+  for (const [name, srv] of Object.entries(cfg.mcpServers ?? {})) {
+    if (!srv?.url) continue; // local server: command + args
+    let host;
+    try { host = new URL(srv.url).hostname; }
+    catch { out.errors.push(`.mcp.json server "${name}" has an unparseable url (${srv.url}) \u2014 the CLI dies with ERR_INVALID_URL at startup, before you can fix it`); continue; }
+    if (PLACEHOLDER_HOST.test(host))
+      out.errors.push(`.mcp.json server "${name}" still points at a placeholder (${host}) \u2014 Gate 1 has no source of AC, so the whole traceability chain is invented`);
+  }
+  return out;
+}
+
+// Cho phép kiểm một settings.json rời (install.mjs --self-test dùng): hai nơi
+// tự liệt kê lại danh sách deny thì chúng sẽ lệch, và lệch kiểu đó nghĩa là
+// ship ra một settings.json mà chính preflight của nó báo đỏ.
+if (args.has("--check-settings")) {
+  const f = argv[argv.indexOf("--check-settings") + 1];
+  if (!f) { console.error("dùng: --check-settings <settings.json>"); process.exit(2); }
+  const gaps = denyGaps(readFileSync(f, "utf8"));
+  gaps.forEach((g) => console.error(`✖ ${g}`));
+  process.exit(gaps.length ? 1 : 0);
+}
+
 if (args.has("--self-check")) {
   const { strict: assert } = await import("node:assert");
 
@@ -1376,6 +1433,39 @@ if (args.has("--self-check")) {
     assert.equal(settingsReachable(h, root), "not-loaded", "cwd ABOVE root: the CLI never walks down (layout B trap)");
   }
 
+  // denyGaps: present + loaded is not the same as armed. (That the settings.json
+  // we SHIP satisfies these rules is asserted in install.mjs --self-test, which
+  // is the only place with the source tree; here we test the predicate.)
+  assert.equal(denyGaps('{"permissions":{"deny":[]}}').length, REQUIRED_DENY.length,
+    "an empty deny list is every rule missing, not a pass");
+  assert.ok(denyGaps("not json").some((d) => /valid JSON/.test(d)),
+    "unparseable settings.json means the CLI ignores it — that is worse than missing, not better");
+  assert.ok(
+    denyGaps('{"permissions":{"deny":["Bash(git push:*)","Bash(git reset --hard:*)","Bash(git stash:*)"]}}')
+      .some((d) => /git clean/.test(d)),
+    "a partial deny list must name the rule that is missing, not just fail",
+  );
+
+  // mcpGaps: a placeholder URL kills the CLI at startup; a credential is committed.
+  assert.deepEqual(mcpGaps('{"mcpServers":{"tracker":{"type":"http","url":"https://mcp.clickup.com/mcp"}}}').errors, [],
+    "a real URL is fine");
+  assert.deepEqual(mcpGaps('{"mcpServers":{"browser":{"command":"npx","args":["-y","x"]}}}').errors, [],
+    "a local server has no url and must not be flagged");
+  assert.ok(mcpGaps('{"mcpServers":{"g":{"url":"https://<git-host>/api"}}}').errors.some((e) => /ERR_INVALID_URL/.test(e)),
+    "angle brackets are not a valid hostname — the CLI dies before you can fix it");
+  assert.ok(mcpGaps('{"mcpServers":{"t":{"url":"https://example.com/mcp"}}}').errors.some((e) => /placeholder/.test(e)),
+    "example.com parses fine and answers nothing — Gate 1 loses its source of AC");
+  // The shipped template uses `gitlab.example.com`; an anchored regex would wave
+  // it through, which is a check that exists without catching anything.
+  assert.ok(mcpGaps('{"mcpServers":{"g":{"url":"https://gitlab.example.com/api/v4/mcp"}}}').errors
+      .some((e) => /placeholder/.test(e)),
+    "a placeholder subdomain is still a placeholder");
+  assert.deepEqual(mcpGaps('{"mcpServers":{"t":{"url":"https://gitlab.acme-corp.com/api/v4/mcp"}}}').errors, [],
+    "a real self-hosted host must not be flagged");
+  assert.ok(mcpGaps('{"mcpServers":{"t":{"url":"https://x.com","headers":{"Authorization":"Bearer sk-1"}}}}').errors
+      .some((e) => /credential/.test(e)),
+    ".mcp.json is committed; a bearer token in it is a leak");
+
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
 }
@@ -1492,6 +1582,24 @@ if (args.has("--preflight")) {
       `.claude/settings.json lives in ${REPO_ROOT} but the CLI is running in ${process.cwd()} — the CLI only walks UP, so it is not loaded and the deny-list on git push / reset --hard is gone.\n` +
         `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Trường hợp B").`,
     );
+  // Present and loaded still says nothing about armed.
+  if (reach === "ok")
+    for (const gap of denyGaps(readFileSync(join(REPO_ROOT, ".claude/settings.json"), "utf8"))) errs.push(gap);
+
+  // .mcp.json: a placeholder URL kills the CLI at startup, and a credential in
+  // there is committed. Neither shows up until it is expensive.
+  {
+    const mcpPath = join(REPO_ROOT, ".mcp.json");
+    if (isSourceRepo) {
+      /* the source repo ships the template; it never runs against a tracker */
+    } else if (!existsSync(mcpPath))
+      warns.push(".mcp.json missing — no tracker MCP means Gate 1 has no source of AC (README \"MCP server\")");
+    else {
+      const g = mcpGaps(readFileSync(mcpPath, "utf8"));
+      errs.push(...g.errors);
+      warns.push(...g.warnings);
+    }
+  }
 
   // Config coherence: run the real thing, don't reimplement it.
   {
@@ -1535,9 +1643,24 @@ if (args.has("--preflight")) {
     const hookPath = spawnSync("git", ["rev-parse", "--git-path", "hooks/pre-commit"], { cwd: REPO_ROOT, encoding: "utf8" });
     const hook = hookPath.status === 0 ? resolve(REPO_ROOT, hookPath.stdout.trim()) : null;
     if (!hook || !existsSync(hook)) warns.push("no pre-commit hook — gates only run in CI, you find out later");
+
+    // CI is not optional, and calling it optional is how the gate ends up
+    // running nowhere. The hook is deliberately --staged, so it cannot see a
+    // broken task this commit does not touch, and `--no-verify` bypasses it
+    // entirely. CI is the backstop both of those rely on; with no CI the
+    // designed hole has nothing behind it.
+    const wfDir = join(REPO_ROOT, ".github/workflows");
+    const runsValidator =
+      existsSync(wfDir) &&
+      readdirSync(wfDir)
+        .filter((f) => /\.ya?ml$/.test(f))
+        .some((f) => readFileSync(join(wfDir, f), "utf8").includes("validate-tasks.mjs"));
+    if (!runsValidator)
+      errs.push(
+        "no CI workflow runs validate-tasks.mjs — the pre-commit hook is --staged (blind to tasks this commit does not touch) and `--no-verify` skips it, so CI is the only gate left.\n" +
+          "    Install it: cp adapters/ci/validate-tasks.yml .github/workflows/  (or re-run the installer)",
+      );
   }
-  if (!existsSync(join(REPO_ROOT, ".github/workflows")))
-    warns.push("no .github/workflows — CI is the one gate `git commit --no-verify` cannot reach");
 
   if (AS_JSON) console.log(JSON.stringify({ errors: errs, warnings: warns }, null, 2));
   else {
