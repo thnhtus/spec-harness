@@ -286,17 +286,72 @@ if (args[0] === "--self-test") {
   if (!existsSync(join(T, ".github/workflows/spec-harness.yml")))
     fail("thiếu CI workflow — gate chỉ tồn tại ở máy dev");
 
-  // Hai workflow, hai bố cục khác nhau: adapter gọi `scripts/` (project đã cài),
-  // workflow của chính repo này gọi `kernel/scripts/`. Chúng giống nhau đủ để
-  // một lần `cp adapters/ci/... .github/workflows/` trông như đồng bộ hoá và
-  // thực ra làm chết CI của repo nguồn (đã xảy ra thật). Chốt cả hai chiều.
+  // Kernel/adapter chia đôi mọi thứ, và hai nửa trông GIỐNG NHAU — nên `cp` từ
+  // bên này sang bên kia luôn trông như đồng bộ hoá. Một lần như vậy đã làm
+  // chết CI của repo này (adapter gọi `scripts/`, repo nguồn cần `kernel/scripts/`
+  // → MODULE_NOT_FOUND). Đó là MẮU lỗi, không phải ca đơn lẻ: thêm cặp mới là
+  // thêm một dòng ở đây, không phải viết lại một khối if.
+  for (const pair of [
+    {
+      name: "CI workflow",
+      adapter: "adapters/ci/validate-tasks.yml",
+      own: ".github/workflows/validate-tasks.yml",
+      adapterMustNot: "kernel/scripts/",
+      ownMustHave: "kernel/scripts/validate-tasks.mjs",
+      why: "adapter chạy ở project đã cài (validator ở scripts/), bản của repo nguồn chạy ở đây (kernel/scripts/)",
+    },
+    {
+      name: "harness.config.json",
+      adapter: "adapters/example/harness.config.json",
+      own: "harness.config.json",
+      adapterMustNot: '"kernel/docs/tasks"',
+      ownMustHave: '"kernel/docs/tasks"',
+      why: "tasksDir của repo nguồn trỏ vào kernel/ để --self-check kiểm đúng thứ được ship; project đã cài dùng docs/tasks",
+    },
+    {
+      name: "ProjectRules",
+      adapter: "adapters/ProjectRules.template.md",
+      own: "adapters/example/docs/agents/ProjectRules.md",
+      adapterMustHave: "CHƯA-ĐIỀN",
+      ownMustNot: "CHƯA-ĐIỀN",
+      why: "template là khung rỗng cho /init-project-rules điền; bản mẫu là ví dụ ĐÃ điền — đổi chỗ thì /init-project-rules không còn gì để điền",
+    },
+  ]) {
+    const a = join(SRC, pair.adapter);
+    const o = join(SRC, pair.own);
+    if (!existsSync(a)) fail(`${pair.name}: thiếu ${pair.adapter}`);
+    if (!existsSync(o)) continue; // bản cài đặt không có file "own" — không phải lỗi
+    const at = read(a), ot = read(o);
+    if (at === ot)
+      fail(`${pair.name}: ${pair.adapter} và ${pair.own} giống hệt nhau — ${pair.why}`);
+    const bad =
+      (pair.adapterMustNot && at.includes(pair.adapterMustNot) && [pair.adapter, `không được chứa ${pair.adapterMustNot}`]) ||
+      (pair.adapterMustHave && !at.includes(pair.adapterMustHave) && [pair.adapter, `phải chứa ${pair.adapterMustHave}`]) ||
+      (pair.ownMustHave && !ot.includes(pair.ownMustHave) && [pair.own, `phải chứa ${pair.ownMustHave}`]) ||
+      (pair.ownMustNot && ot.includes(pair.ownMustNot) && [pair.own, `không được chứa ${pair.ownMustNot}`]);
+    if (bad)
+      fail(
+        `${pair.name}: ${bad[0]} ${bad[1]} — bị chép đè từ nửa kia?\n` +
+          `  ${pair.why}\n` +
+          `  Sửa: khôi phục ${bad[0]} từ git (git checkout -- ${bad[0]}), đừng đồng bộ hai file này`,
+      );
+  }
+
+  // Cùng một mẫu, chiều khác: thêm field vào một bên mà quên bên kia thì
+  // --self-check vẫn xanh ở cả hai, và project tiếp theo cài ra một config
+  // thiếu gác chắn mà không ai biết.
   {
-    const adapter = read(join(SRC, "adapters/ci/validate-tasks.yml"));
-    if (adapter.includes("kernel/scripts/"))
-      fail("adapters/ci/validate-tasks.yml gọi kernel/scripts/ — project đã cài không có thư mục đó");
-    const own = join(SRC, ".github/workflows/validate-tasks.yml");
-    if (existsSync(own) && !read(own).includes("kernel/scripts/validate-tasks.mjs"))
-      fail(".github/workflows/validate-tasks.yml không gọi kernel/scripts/ — bị đè bằng bản adapter? CI của chính repo này sẽ MODULE_NOT_FOUND");
+    const keys = (p) => Object.keys(JSON.parse(read(join(SRC, p)))).filter((k) => !k.startsWith("_")).sort();
+    const ownK = keys("harness.config.json"), exK = keys("adapters/example/harness.config.json");
+    const missing = ownK.filter((k) => !exK.includes(k));
+    const extra = exK.filter((k) => !ownK.includes(k));
+    if (missing.length || extra.length)
+      fail(
+        `harness.config.json và adapters/example/ lệch tập key — thêm field một bên mà quên bên kia:\n` +
+          (missing.length ? `  chỉ có ở repo gốc: ${missing.join(", ")}\n` : "") +
+          (extra.length ? `  chỉ có ở example:  ${extra.join(", ")}\n` : "") +
+          `  Sửa: thêm field thiếu vào bên kia (giá trị có thể khác, key thì không)`,
+      );
   }
   if (!existsSync(join(T, ".claude/commands/init-project-rules.md"))) fail("thiếu lệnh /init-project-rules");
 
