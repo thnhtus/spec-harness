@@ -1,11 +1,11 @@
-# api/ — artifact tham chiếu của project (agent đọc, KHÔNG sửa)
+# api/ — project reference artifacts (agents read them, do NOT edit)
 
-Thư mục này **trống khi mới cài harness**. Project tự đổ nội dung vào, hoặc xoá
-thư mục nếu không dùng — kernel chỉ trỏ tới đây, không yêu cầu có file.
+This directory is **empty on a fresh install**. The project fills it in, or deletes
+the directory if unused — the kernel only points here, it never requires a file.
 
-Đặt mục lục ngay tại file này: agent bị cấm đọc cả thư mục (SharedRules §8), nó
-tra bảng dưới rồi mở **đúng một file**.
+Keep the index in this file: agents are forbidden from reading a whole directory
+(SharedRules §8); they look up the table below and open **exactly one file**.
 
-| ID / file | Nội dung |
+| ID / file | Contents |
 | --- | --- |
 |  |  |

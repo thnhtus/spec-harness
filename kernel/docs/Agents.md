@@ -1,47 +1,47 @@
-# Agents — Role registry, workflow, gate (nguồn chuẩn duy nhất cho lifecycle)
+# Agents — Role registry, workflow, gates (the single source of truth for the lifecycle)
 
-> **Phạm vi:** tài liệu canonical định nghĩa 7 role, lifecycle qua các stage có gate, cách chọn implementer theo `branchType`, và quy tắc skip. Quy tắc vận hành chi tiết (MCP, guardrail, nhánh, handoff, lệnh, ngân sách token): [`agents/SharedRules.md`](./agents/SharedRules.md) — không lặp lại ở đây.
-> **Repo:** khai ở `harness.config.json → repos`. Harness chạy được ở ba bố cục — xem §0.
+> **Scope:** the canonical document defining the 7 roles, the lifecycle through gated stages, how the implementer is chosen from `branchType`, and the skip rules. Detailed operating rules (MCP, guardrails, branches, handoff, commands, token budget): [`agents/SharedRules.md`](./agents/SharedRules.md) — not repeated here.
+> **Repos:** declared in `harness.config.json → repos`. The harness runs in three layouts — see §0.
 
 ---
 
-## 0. Bố cục repo
+## 0. Repo layouts
 
-Harness không giả định code nằm ở đâu. `harness.config.json → repos` khai từng repo mà agent được sửa, `path` tính từ thư mục chứa config:
+The harness makes no assumption about where the code lives. `harness.config.json → repos` declares each repo an agent may edit, with `path` relative to the directory holding the config:
 
-| Bố cục | `repos` | Task docs nằm | Worktree |
+| Layout | `repos` | Task docs live | Worktree |
 | --- | --- | --- | --- |
-| **A. Trong repo code** (một repo FE, hoặc một repo BE) | `[{ name, path: ".", layer }]` | **cùng repo** với code | `/start-task` tạo worktree của chính repo đó; task doc đi theo worktree |
-| **B. Trong một repo, đọc repo anh em** | `[{ path: "." }, { path: "../<repo>", … }]` | trong repo chính | như A; repo anh em **read-only**, không worktree, không sửa |
-| **C. Ngang hàng FE + BE** (harness là repo riêng) | `[{ path: "../fe" }, { path: "../be" }]` | **repo harness**, tách khỏi mọi repo code | worktree tạo **trong repo code** đang sửa (`repoName` của task); task doc ở lại repo harness, **không** vào worktree |
+| **A. Inside the code repo** (one FE repo, or one BE repo) | `[{ name, path: ".", layer }]` | in the **same repo** as the code | `/start-task` creates a worktree of that repo; task docs travel with it |
+| **B. Inside one repo, reading sibling repos** | `[{ path: "." }, { path: "../<repo>", … }]` | in the main repo | as in A; sibling repos are **read-only**, no worktree, no edits |
+| **C. Alongside FE + BE** (the harness is its own repo) | `[{ path: "../fe" }, { path: "../be" }]` | in the **harness repo**, separate from every code repo | the worktree is created **inside the code repo** being edited (the task's `repoName`); task docs stay in the harness repo and do **not** enter the worktree |
 
-**Quy tắc chung cho cả ba:**
+**Rules common to all three:**
 
-- `repoName` trong `task.agent.json` chỉ một entry của `repos` — đó là repo agent được sửa. Sai tên → validator chặn.
-- Repo khai trong `repos` mà **không** phải `repoName` của task: **read-only** (vd đọc DTO của BE — [`agents/TechnicalPlanner.md` §3.2](./agents/TechnicalPlanner.md)). Đọc được, không sửa.
-- Repo **không** khai trong `repos`: không đụng tới.
-- Subagent **không bao giờ** tự tạo/đổi worktree — nó đã ở đúng chỗ khi được dispatch ([`Instructions.md` §1](./Instructions.md)).
-- Bố cục C: commit task doc và commit code là **hai repo khác nhau**, hai lần commit. Gate pass → `reviewing` → user tự quyết commit ở đâu.
+- `repoName` in `task.agent.json` names exactly one `repos` entry — the repo the agent may edit. A wrong name is blocked by the validator.
+- A repo declared in `repos` that is **not** the task's `repoName` is **read-only** (e.g. reading BE DTOs — [`agents/TechnicalPlanner.md` §3.2](./agents/TechnicalPlanner.md)). Readable, not editable.
+- A repo **not** declared in `repos`: do not touch it at all.
+- A subagent **never** creates or switches worktrees — it is already in the right place when dispatched ([`Instructions.md` §1](./Instructions.md)).
+- Layout C: committing task docs and committing code are **two different repos**, two commits. Once the gates pass → `reviewing` → the user decides what to commit where.
 
-Task chạm **nhiều layer** (vd sửa cả FE lẫn BE): tách thành hai task, mỗi task một `repoName`. Một `task.agent.json` chỉ có một `repoName` — cố nhét hai repo vào một task thì AC traceability và scope Gate 3 mất nghĩa.
+A task touching **several layers** (e.g. changing both FE and BE): split it into two tasks, one `repoName` each. A `task.agent.json` holds exactly one `repoName` — forcing two repos into one task makes AC traceability and Gate 3 scope meaningless.
 
 ---
 
-## 1. Bảng role (7 role)
+## 1. Role table (7 roles)
 
-Tên kebab-case; `layer` của task lấy từ `repos[].layer`; mỗi role một file trong [`agents/`](./agents/SharedRules.md).
+Names are kebab-case; the task's `layer` comes from `repos[].layer`; each role has a file in [`agents/`](./agents/SharedRules.md).
 
-| Role | Stage | Output chính | Gate chặn khi | Chi tiết |
+| Role | Stage | Main output | Gate blocks when | Detail |
 | --- | --- | --- | --- | --- |
-| `orchestrator` | bootstrap | task folder, `task.agent.json`, `00-Metadata.md`, `.agent-memory/` | metadata thiếu không suy ra được | [`agents/Orchestrator.md`](./agents/Orchestrator.md) |
-| `fsd-writer` | fsd_write | `01-FSD.md` (FSD IEEE cấp task — skill `document-to-ieee-srs`) | FSD chưa đủ / không truy vết được (**Gate 1**) | [`agents/FSDWriter.md`](./agents/FSDWriter.md) |
-| `fsd-reviewer` | fsd_review | `02-FSD-Review.md` (AC, câu hỏi BA, risk) | intent / AC chưa rõ (**Gate 2**) | [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) |
-| `technical-planner` | technical_plan | `03-Technical-Plan.md` (file sẽ đổi, test plan, checklist, risk) | thiếu plan / test (**Gate 3**) | [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) |
-| `implementer` | implementation (feature/hotfix) | code + `06-Implementation-Notes.md` + `08-Test-Evidence.md` | thiếu evidence / ngoài scope (**Gate 4**) | [`agents/Implementer.md`](./agents/Implementer.md) |
-| `fixer` | implementation (bugfix) | như trên, định hướng reproduce-first | như trên (**Gate 4**) | [`agents/Fixer.md`](./agents/Fixer.md) |
-| `adversary` | adversarial_review | `09-Adversarial-Review.md` (tự chạy lại lệnh, soi diff + test, finding) | có finding BLOCKING / evidence không tái lập (**Gate 5**) | [`agents/Adversary.md`](./agents/Adversary.md) |
+| `orchestrator` | bootstrap | the task folder, `task.agent.json`, `00-Metadata.md`, `.agent-memory/` | required metadata is missing and cannot be inferred | [`agents/Orchestrator.md`](./agents/Orchestrator.md) |
+| `fsd-writer` | fsd_write | `01-FSD.md` (a task-level IEEE FSD — skill `document-to-ieee-srs`) | the FSD is incomplete / untraceable (**Gate 1**) | [`agents/FSDWriter.md`](./agents/FSDWriter.md) |
+| `fsd-reviewer` | fsd_review | `02-FSD-Review.md` (ACs, BA questions, risks) | intent / ACs are unclear (**Gate 2**) | [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) |
+| `technical-planner` | technical_plan | `03-Technical-Plan.md` (files to change, test plan, checklist, risks) | plan / tests missing (**Gate 3**) | [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) |
+| `implementer` | implementation (feature/hotfix) | code + `06-Implementation-Notes.md` + `08-Test-Evidence.md` | evidence missing / out of scope (**Gate 4**) | [`agents/Implementer.md`](./agents/Implementer.md) |
+| `fixer` | implementation (bugfix) | the same, aimed at reproduce-first | the same (**Gate 4**) | [`agents/Fixer.md`](./agents/Fixer.md) |
+| `adversary` | adversarial_review | `09-Adversarial-Review.md` (re-runs the commands, inspects diff + tests, findings) | a BLOCKING finding / evidence that does not reproduce (**Gate 5**) | [`agents/Adversary.md`](./agents/Adversary.md) |
 
-> Task ở một layer mà repo của layer đối diện **không** nằm trong `repos`: contract chỉ ghi ở **góc nhìn bên gọi** trong `03-Technical-Plan.md`. Có repo đó trong `repos` → đọc thẳng source (read-only) theo thang bậc [`agents/TechnicalPlanner.md` §3.2](./agents/TechnicalPlanner.md). Thiếu ⇒ `unavailable`, không bịa.
+> When a task is in one layer and the opposite layer's repo is **not** in `repos`: record the contract from the **caller's point of view only** in `03-Technical-Plan.md`. When that repo *is* in `repos` → read the source directly (read-only) per the ladder in [`agents/TechnicalPlanner.md` §3.2](./agents/TechnicalPlanner.md). Missing ⇒ `unavailable`, never invented.
 
 ---
 
@@ -60,7 +60,7 @@ flowchart TD
     FIX -->|Gate 4| ADV
     ADV -->|Gate 5| REVIEW[status: reviewing]
     ADV -.FAIL.-> IMPL
-    REVIEW --> MR([user duyệt push + MR])
+    REVIEW --> MR([user approves push + MR])
 
     WRITE -.fail.-> BLOCK[[blocked /<br/>needs_clarification]]
     FSD -.fail.-> BLOCK
@@ -70,102 +70,101 @@ flowchart TD
     ADV -.fail.-> BLOCK
 ```
 
-Gate fail → `status = blocked` / `needs_clarification`, ghi blocker vào doc + `.agent-memory/{role}.md`, **báo to cho user** (4 ý bắt buộc — [`agents/SharedRules.md` §4](./agents/SharedRules.md)), dừng automation tới khi user/BA resolve.
+A failed gate → `status = blocked` / `needs_clarification`, record the blocker in the doc + `.agent-memory/{role}.md`, **tell the user loudly** (the four mandatory points — [`agents/SharedRules.md` §4](./agents/SharedRules.md)), and stop automation until the user/BA resolves it.
 
-**Cách ly ngữ cảnh per-stage:** mỗi stage chạy như **một subagent riêng** (context mới), nhận đầu vào qua artifact + handoff `.agent-memory/` thay vì qua hội thoại. Main loop chỉ điều phối gate. Chi tiết dispatch: lệnh `/start-task` (`.claude/commands/start-task.md`).
+**Per-stage context isolation:** each stage runs as **its own subagent** (fresh context), receiving its input through artifacts + `.agent-memory/` handoffs rather than through conversation. The main loop only coordinates gates. Dispatch details: the `/start-task` command (`.claude/commands/start-task.md`).
 
 ---
 
-## 3. Định nghĩa gate
+## 3. Gate definitions
 
-Gate là điểm kiểm tra **chặn**. PASS mới handoff; FAIL → đặt status, ghi blocker, báo to, dừng.
+A gate is a **blocking** checkpoint. Hand off only on PASS; on FAIL set the status, record the blocker, report loudly, stop.
 
-| Gate | Sau stage | Điều kiện PASS | FAIL → status |
+| Gate | After stage | PASS conditions | FAIL → status |
 | --- | --- | --- | --- |
-| **Gate 1** | fsd_write | `01-FSD.md` đủ khung IEEE (Introduction, Overall Description, External Interface, Functional Requirements); mỗi requirement dùng `shall` + truy vết được (`FR-`/`FSD-`/tracker/design); assumption tách riêng; **≤ 250 dòng** (trần tại [`agents/SharedRules.md` §8](./agents/SharedRules.md)) | `needs_clarification` |
-| **Gate 2** | fsd_review | AC + business intent rõ; câu hỏi BA `blocking` đã trả lời; ID `FR-`/`NFR-`/`FSD-` đã trích; **≤ 150 dòng** | `needs_clarification` |
-| **Gate 3** | technical_plan | `03-Technical-Plan.md` có: danh sách file sẽ đổi, test plan (lệnh one-shot cụ thể), checklist, risk; **mọi AC của `02` có ở cột Covers AC hoặc bảng AC-manual** ([SharedRules §9.1](./agents/SharedRules.md)); **≤ 200 dòng** | `blocked` |
-| **Gate 4** | implementation | Bộ lệnh kiểm tra bắt buộc của project PASS ([`agents/ProjectRules.md` §7](./agents/ProjectRules.md)) với evidence thật trong `08-Test-Evidence.md`; **bảng AC coverage đủ mọi AC**, AC bị làm lệch đã có Amendment log ([SharedRules §9](./agents/SharedRules.md)); thay đổi **trong scope** danh sách Gate 3 | `blocked` |
+| **Gate 1** | fsd_write | `01-FSD.md` has the full IEEE skeleton (Introduction, Overall Description, External Interface, Functional Requirements); every requirement uses `shall` and is traceable (`FR-`/`FSD-`/tracker/design); assumptions kept separate; **≤ 250 lines** (cap in [`agents/SharedRules.md` §8](./agents/SharedRules.md)) | `needs_clarification` |
+| **Gate 2** | fsd_review | ACs + business intent are clear; `blocking` BA questions are answered; `FR-`/`NFR-`/`FSD-` IDs are quoted; **≤ 150 lines** | `needs_clarification` |
+| **Gate 3** | technical_plan | `03-Technical-Plan.md` has: the files to change, a test plan (concrete one-shot commands), a checklist, risks; **every AC from `02` appears in the Covers AC column or the AC-manual table** ([SharedRules §9.1](./agents/SharedRules.md)); **≤ 200 lines** | `blocked` |
+| **Gate 4** | implementation | The project's mandatory check commands PASS ([`agents/ProjectRules.md` §7](./agents/ProjectRules.md)) with real evidence in `08-Test-Evidence.md`; **the AC coverage table covers every AC**, and any AC diverged from has an Amendment log entry ([SharedRules §9](./agents/SharedRules.md)); the changes stay **inside the scope** of the Gate 3 list | `blocked` |
+| **Gate 5** | adversarial_review | `adversary` **re-runs** every ProjectRules §7 command and matches `08`; every AC has a test that genuinely asserts it; the diff is inside the Gate 3 scope (anything outside declared under Plan Deviations); **no** BLOCKING finding; no UNCERTAIN left | `blocked` → re-route to the implementer |
 
-| **Gate 5** | adversarial_review | `adversary` **tự chạy lại** toàn bộ lệnh ProjectRules §7 và khớp với `08`; mọi AC có test thật sự assert được nó; diff nằm trong scope Gate 3 (phần ngoài đã khai Plan Deviations); **không** finding BLOCKING; không còn UNCERTAIN | `blocked` → re-route implementer |
+The list of valid commands (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
-Danh sách lệnh hợp lệ (one-shot vs watch-mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
-
-> **Vì sao có Gate 5:** Gate 1–4 đều do chính người làm tự chấm. Validator chỉ đọc được văn bản — nó thấy `08` có lệnh và có chữ "passed", không thấy được test đó có thật sự chứng minh AC. `adversary` mặc định FAIL và phải tự kiếm bằng chứng để PASS.
+> **Why Gate 5 exists:** Gates 1–4 are all graded by the person doing the work. The validator can only read text — it sees that `08` contains a command and the word "passed"; it cannot see whether that test actually proves the AC. `adversary` starts at FAIL and has to find evidence to reach PASS.
 
 ---
 
-## 4. Chọn implementer theo `branchType`
+## 4. Choosing the implementer from `branchType`
 
 | branchType | Implementer |
 | --- | --- |
 | `feature`, `hotfix` | `implementer` |
 | `bugfix` | `fixer` |
 
-Quy tắc nhánh (tạo từ `develop` với `--ff-only`, ngoại lệ nhánh user quản lý + `branchActual`): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
+Branch rules (created from `develop` with `--ff-only`, the user-managed-branch exception + `branchActual`): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
 
 ---
 
-## 5. Đánh giá độ phức tạp → chọn độ nặng luồng & model
+## 5. Scoring complexity → choosing workflow weight & model
 
-`taskComplexity` quyết định **hai** thứ: Gate 1/2 chạy đầy hay light, và role nào đáng dùng model đắt. Đoán sai theo hướng thấp thì gate thành hình thức; đoán sai theo hướng cao thì đốt tiền vào task sửa một dòng CSS.
+`taskComplexity` decides **two** things: whether Gates 1/2 run in full or light, and which roles are worth an expensive model. Guess low and the gates become ceremony; guess high and you burn money on a one-line CSS fix.
 
-### 5.1. Chấm điểm — LLM trích, công thức tính
+### 5.1. Scoring — the LLM extracts, a formula computes
 
-**Agent không tự phán "task này 7/10".** Con số đó không kiểm lại được và không debug được. Agent chỉ **trích từng chiều**; điểm và phân loại do **công thức** ra. Vector lưu vào `task.agent.json → complexity`, validator kiểm công thức khớp phân loại.
+**An agent does not declare "this task is a 7/10".** That number cannot be re-checked and cannot be debugged. The agent only **extracts each dimension**; the score and the classification come from a **formula**. The vector is stored in `task.agent.json → complexity`, and the validator checks that the formula matches the classification.
 
-**Sáu chiều công sức**, mỗi chiều `0` (không) · `1` (vừa) · `2` (nhiều):
+**Six effort dimensions**, each `0` (none) · `1` (some) · `2` (a lot):
 
-| Chiều | `0` | `1` | `2` |
+| Dimension | `0` | `1` | `2` |
 | --- | --- | --- | --- |
-| `scope` | 1 file | vài file, một module | nhiều module / nhiều tầng |
-| `uncertainty` | yêu cầu rõ hết | vài chỗ suy ra được | phải hỏi BA mới làm được |
-| `dependency` | không phụ thuộc | phụ thuộc module có sẵn | phụ thuộc service/repo khác |
-| `dataImpact` | không chạm dữ liệu | đọc/ghi qua API sẵn có | đổi schema · migration · đổi shape dùng chung |
-| `integration` | không | gọi API sẵn có | thêm/đổi contract · hệ thống ngoài |
-| `testing` | test sẵn phủ được | thêm test thường | khó tái hiện · cần e2e/thủ công |
+| `scope` | 1 file | a few files, one module | several modules / several layers |
+| `uncertainty` | requirements fully clear | a few things to infer | cannot proceed without asking the BA |
+| `dependency` | none | an existing module | another service/repo |
+| `dataImpact` | no data touched | read/write through an existing API | schema change · migration · shared shape change |
+| `integration` | none | calls an existing API | new/changed contract · external system |
+| `testing` | existing tests cover it | ordinary new tests | hard to reproduce · needs e2e/manual |
 
-`effort = tổng` (0–12).
+`effort = the sum` (0–12).
 
-**Chấm từ số đo, không từ mô tả task.** Mô tả task là thứ nói thiếu nhất, và vector chấm từ nó là cách rẻ nhất để ước lượng thấp — mà ước lượng thấp đẻ ra retry, và retry đắt hơn mọi quyết định model cộng lại. Nên ba chiều dễ đo phải đi kèm số, ghi vào `complexity.counts` / `complexity.questions`:
+**Score from measurements, not from the task description.** The task description is the thing most likely to omit something, and a vector scored from it is the cheapest way to underestimate — and underestimating creates retries, which cost more than every model decision put together. So the three measurable dimensions must come with numbers, recorded in `complexity.counts` / `complexity.questions`:
 
-| Chiều | Chạy | Ràng buộc validator enforce |
+| Dimension | Run | Constraint the validator enforces |
 | --- | --- | --- |
-| `scope` | `rg -l '<symbol chính>' <src> \| wc -l` → `counts.symbol` + `counts.filesTouched` | `1` ⇒ `scope 0` · `>5` ⇒ `scope 2` · `0` ⇒ phải có `note` |
-| `testing` | đếm test file đang phủ code đó → `counts.existingTests` | `0` ⇒ `testing ≥ 1` |
-| `uncertainty` | viết ra danh sách "không làm được nếu không biết X" → `questions[]` | rỗng ⇒ `uncertainty 0` · có mục ⇒ `uncertainty ≥ 1` |
+| `scope` | `rg -l '<the main symbol>' <src> \| wc -l` → `counts.symbol` + `counts.filesTouched` | `1` ⇒ `scope 0` · `>5` ⇒ `scope 2` · `0` ⇒ a `note` is required |
+| `testing` | count the test files covering that code → `counts.existingTests` | `0` ⇒ `testing ≥ 1` |
+| `uncertainty` | write out the list of "cannot proceed without knowing X" → `questions[]` | empty ⇒ `uncertainty 0` · non-empty ⇒ `uncertainty ≥ 1` |
 
-**`counts.symbol` bắt buộc** vì chọn symbol chính là chọn luôn kết quả: grep một helper hiếm ra 1 file (`scope 0`), grep một symbol phổ biến ra 20 file (`scope 2`) — cùng một task. Ghi symbol ra không xoá được lựa chọn đó, nó làm lựa chọn **nhìn thấy được** khi review. `filesTouched: 0` (không khớp gì) rơi ra ngoài mọi luật trên — file mới hoàn toàn hay grep trượt là hai chuyện khác hẳn mà con số không phân biệt được, nên `note` phải nói rõ là cái nào.
+**`counts.symbol` is mandatory** because choosing the main symbol chooses the result: grep a rare helper and get 1 file (`scope 0`); grep a common symbol and get 20 (`scope 2`) — for the same task. Recording the symbol does not remove that choice, it makes the choice **visible** at review time. `filesTouched: 0` (no match) falls outside every rule above — a brand-new file and a missed grep are very different things that the number cannot distinguish, so the `note` must say which it is.
 
-Ba chiều còn lại (`dependency`, `dataImpact`, `integration`) không có phép đếm nào nói đúng được, nên vẫn là phán đoán — nhưng `note` nên nêu file/contract cụ thể đã thấy.
+The other three (`dependency`, `dataImpact`, `integration`) have no count that would say anything true, so they stay judgement calls — but the `note` should name the specific file/contract you saw.
 
-`uncertainty` là chiều bị chấm thấp nhiều nhất và đắt nhất: nó chính là thứ sinh ra `fsd_review ≥ 2`. Luật: **chưa viết ra được danh sách câu hỏi thì chưa được chấm `uncertainty: 0`** — "rỗng" phải là kết luận sau khi tìm, không phải mặc định.
+`uncertainty` is the most frequently under-scored dimension and the most expensive one: it is precisely what produces `fsd_review ≥ 2`. The rule: **you may not score `uncertainty: 0` until you have written the question list** — "empty" must be a conclusion after looking, not a default.
 
-**Hai chiều rủi ro**, tách riêng vì chúng **không đi cùng kích thước**:
+**Two risk dimensions**, kept separate because they **do not track size**:
 
-| Chiều | Ý nghĩa | Thang |
+| Dimension | Meaning | Scale |
 | --- | --- | --- |
-| `blastRadius` | hỏng thì lan tới đâu | `0` một chỗ · `1` một module · `2` một feature · `3` một service · `4` toàn hệ thống |
-| `reversibility` | rollback khó tới đâu | `0` sửa lại là xong · `1` revert commit · `2` cần deploy lại · `3` phải sửa dữ liệu · `4` không lùi được (migration xoá cột, tiền đã chuyển) |
+| `blastRadius` | how far a failure spreads | `0` one spot · `1` one module · `2` one feature · `3` one service · `4` the whole system |
+| `reversibility` | how hard a rollback is | `0` just edit again · `1` revert a commit · `2` needs a redeploy · `3` needs data repair · `4` irreversible (a migration dropping a column, money already moved) |
 
-> **Hai chiều này không đo được, và chúng mạnh nhất.** `riskFloor` một mình kéo `trivial → high`, nên chấm `blastRadius: 1` thay vì `3` lách được toàn bộ sự nghiêm ngặt ở ba chiều có `counts`. Không bịa phép đếm giả ở đây — không có phép đếm nào đúng. Chỗ bắt lại là §5.6: `escapedBugs > 0` từ task `trivial` chính là tín hiệu hai chiều này đang bị chấm thấp có hệ thống.
+> **These two cannot be measured, and they are the strongest.** `riskFloor` alone drags `trivial → high`, so scoring `blastRadius: 1` instead of `3` sidesteps all the rigour of the three `counts` dimensions. Do not invent a fake count here — no count would be right. The place this gets caught is §5.6: `escapedBugs > 0` from a `trivial` task is exactly the signal that these two are being systematically under-scored.
 
-### 5.1.1. Công thức (deterministic — không phải LLM quyết)
+### 5.1.1. The formula (deterministic — not the LLM's call)
 
 ```
 effort = scope + uncertainty + dependency + dataImpact + integration + testing   # 0–12
 
-base        = trivial khi effort ≤ 2 · normal khi effort ≤ 6 · high khi effort ≥ 7
-riskFloor   = high     khi blastRadius ≥ 3  hoặc reversibility ≥ 3
-            = normal   khi blastRadius ≥ 2  hoặc reversibility ≥ 2
-            = trivial  còn lại
+base        = trivial when effort ≤ 2 · normal when effort ≤ 6 · high when effort ≥ 7
+riskFloor   = high     when blastRadius ≥ 3  or reversibility ≥ 3
+            = normal   when blastRadius ≥ 2  or reversibility ≥ 2
+            = trivial  otherwise
 
 taskComplexity = max(base, riskFloor)          # trivial < normal < high
 ```
 
-`riskFloor` là lý do bug race condition trong websocket không bị chấm `trivial`: `effort` có thể là 2 (sửa một file) nhưng `blastRadius = 3` kéo lên `high`. Ngược lại, đổi copy ở 12 file là `effort` cao mà `blastRadius = 0` — vẫn chỉ `normal`, không đáng đốt model đắt.
+`riskFloor` is why a websocket race-condition bug does not score `trivial`: `effort` may be 2 (one file changed) but `blastRadius = 3` lifts it to `high`. Conversely, a copy change across 12 files is high `effort` with `blastRadius = 0` — still only `normal`, not worth an expensive model.
 
-### 5.1.2. Ghi vào `task.agent.json`
+### 5.1.2. What goes into `task.agent.json`
 
 ```json
 "complexity": {
@@ -173,183 +172,183 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
               "integration": 1, "testing": 2, "blastRadius": 2, "reversibility": 1 },
   "effort": 10,
   "counts": { "symbol": "useEmployeeResolver", "filesTouched": 9, "existingTests": 0 },
-  "questions": ["notification gửi cho role nào khi nhân viên bị gỡ khỏi phòng ban?"],
-  "splitEvaluated": "tách thành ABC-12 (resolver) + ABC-13 (notification) — ship riêng được",
+  "questions": ["which roles get the notification when an employee is removed from a department?"],
+  "splitEvaluated": "split into ABC-12 (resolver) + ABC-13 (notification) — they can ship separately",
   "assessedAt": "bootstrap",
-  "note": "chạm resolver nhân viên + notification; test cần mock queue"
+  "note": "touches the employee resolver + notifications; tests need a queue mock"
 }
 ```
 
-`counts` và `questions` **không phải chú thích** — validator đối chiếu chúng với vector và chặn nếu mâu thuẫn (`filesTouched: 1` mà `scope: 1`, `questions` rỗng mà `uncertainty: 2`, …). Thiếu chúng cũng là error với task tạo sau `acTrace.since`; task cũ hơn chỉ warning.
+`counts` and `questions` are **not commentary** — the validator cross-checks them against the vector and blocks on a contradiction (`filesTouched: 1` with `scope: 1`, empty `questions` with `uncertainty: 2`, …). Omitting them is also an error for tasks created after `acTrace.since`; older tasks get a warning.
 
-**Thiếu hẳn `complexity` là error, không phải warning** (với task tạo sau `acTrace.since`). Trước đó nó là warning, mà pre-commit chạy `--no-warn` — nghĩa là **xoá hẳn block đi thì rẻ hơn điền sai**, và cả §5.1 thành opt-out. Mọi quyết định định tuyến phía sau (độ nặng gate, tier model, worktree) đều đứng trên vector này.
+**A missing `complexity` block is an error, not a warning** (for tasks created after `acTrace.since`). It used to be a warning, and pre-commit runs `--no-warn` — which meant **deleting the block was cheaper than filling it in wrong**, turning all of §5.1 into opt-out. Every downstream routing decision (gate weight, model tier, worktree) rests on this vector.
 
-`taskComplexity` (trường cũ) vẫn là nơi đọc nhanh; `complexity.vector` là **cơ sở** của nó. Validator tính lại công thức từ vector — lệch với `taskComplexity` là **error**. Đó là chỗ "deterministic" có răng: agent không ghi được vector thấp rồi tuyên bố `high`, hay ngược lại.
+`taskComplexity` (the older field) is still the quick read; `complexity.vector` is its **basis**. The validator recomputes the formula from the vector — a mismatch with `taskComplexity` is an **error**. That is where "deterministic" gets teeth: an agent cannot record a low vector and then declare `high`, or the reverse.
 
-### 5.1.3. Đánh giá lại sau khi khảo sát
+### 5.1.3. Re-assessment after the survey
 
-Đánh giá ở bootstrap dựa trên mô tả task, mà mô tả task hay nói thiếu. `technical-planner` khảo sát `src/` xong **phải** đối chiếu lại vector:
+The bootstrap assessment rests on the task description, and task descriptions leave things out. Once `technical-planner` has surveyed `src/`, it **must** re-check the vector:
 
-- Vector cũ vẫn đúng → không làm gì.
-- Rộng hơn hẳn (phát hiện thêm tầng phụ thuộc, migration, contract đổi) → **cập nhật vector**, ghi `assessedAt: "technical_plan"` + lý do, tính lại `taskComplexity`.
+- The old vector still holds → do nothing.
+- Materially wider (an extra dependency layer, a migration, a changed contract) → **update the vector**, record `assessedAt: "technical_plan"` + the reason, recompute `taskComplexity`.
 
-Chỉ được **nâng**. Hạ để chạy nhẹ đi là né gate — muốn hạ thì `needs_clarification`, hỏi user.
+Only **raising** is allowed. Lowering it to get a lighter run is gate evasion — to lower it, go to `needs_clarification` and ask the user.
 
-**Luật này có răng.** Validator đối chiếu vector đang lưu với vector đã ghi ở `_triage.log`, **cả hai hướng**:
+**This rule has teeth.** The validator compares the stored vector against the vector recorded in `_triage.log`, **in both directions**:
 
-| Hướng | Mức | Vì sao |
+| Direction | Level | Why |
 | --- | --- | --- |
-| cao hơn lúc triage | warning | bình thường — khảo sát thấy nhiều hơn Glob/Grep. Chỉ nhắc: con số thấp hơn là con số đã quyết task này có cần harness không |
-| **thấp hơn** lúc triage | **error** | đây là hướng bị cấm: hạ một chiều là mua gate nhẹ hơn + tier rẻ hơn, không tốn gì |
+| higher than at triage | warning | normal — a survey sees more than Glob/Grep did. Just a reminder: the lower number is what decided whether this task needed the harness at all |
+| **lower** than at triage | **error** | this is the forbidden direction: lowering a dimension buys a lighter gate and a cheaper tier at no cost |
 
-Vector tăng lên `high` sau khảo sát → stage sau dùng model theo cột `high` (§5.3), và nếu `blastRadius ≥ 3` thì planner nêu ở Risk để user biết trước khi implementer chạy.
+A vector that rises to `high` after the survey → later stages use the `high` column (§5.3), and if `blastRadius ≥ 3` the planner raises it under Risk so the user knows before the implementer runs.
 
-### 5.1.4. Tách task **trước** khi đốt budget
+### 5.1.4. Split the task **before** burning the budget
 
-Đòn bẩy chi phí lớn nhất không nằm ở chọn model — nằm ở chỗ một task quá to. So sánh thẳng:
+The biggest cost lever is not model choice — it is a task that is too big. Compared directly:
 
-| | 1 task `high` | 2 task `normal` |
+| | 1 `high` task | 2 `normal` tasks |
 | --- | --- | --- |
-| Stage | 7 × tier `strong` ở 3 role | 14 × tier `mid` |
-| Gate 1/2 | đầy đủ + soi kỹ | rút gọn được |
-| Retry | xác suất cao (spec rộng, plan dễ sai chỗ) | mỗi task hẹp, ít bật |
+| Stages | 7 × the `strong` tier across 3 roles | 14 × the `mid` tier |
+| Gates 1/2 | full + careful scrutiny | can be abbreviated |
+| Retries | likely (a wide spec, a plan easy to get wrong) | each task is narrow, fewer bounces |
 
-Số stage gấp đôi nhưng tier rẻ hơn và rework ít hơn — tổng thường **rẻ hơn**, và cái rẻ đi rõ nhất là rework.
+Twice the stages, but a cheaper tier and less rework — the total is usually **cheaper**, and the clearest saving is the rework.
 
-`status = split` (§5.5) đã có, nhưng nó là lối thoát khi **hết** `retryBudget` — lúc đó tiền đã đốt xong. Nên có thêm một chốt ở bootstrap:
+`status = split` (§5.5) already exists, but it is the escape hatch for when `retryBudget` **runs out** — by then the money is spent. So there is also a checkpoint at bootstrap:
 
-> `effort ≥ splitEffort` (mặc định `9`, khai ở `harness.config.json`), **hoặc** `scope = 2` kèm `uncertainty = 2` → phải điền `complexity.splitEvaluated`.
+> `effort ≥ splitEffort` (default `9`, declared in `harness.config.json`), **or** `scope = 2` together with `uncertainty = 2` → `complexity.splitEvaluated` must be filled in.
 
-Hai giá trị hợp lệ: danh sách taskId con (đã tách), hoặc lý do không tách được ("một migration, một lần deploy — không ship riêng được"). Validator chặn nếu để trống. Nó không ép tách — nó ép **trả lời câu hỏi có tách không** vào đúng lúc câu trả lời còn rẻ.
+Two values are valid: the list of child taskIds (already split), or the reason it cannot be split ("one migration, one deploy — they cannot ship separately"). The validator blocks an empty value. It does not force a split — it forces **the split question to be answered** while the answer is still cheap.
 
-`scope 2 + uncertainty 2` lọt vào dù `effort` chưa tới 9 vì đó là tổ hợp tệ nhất: rộng **và** chưa rõ. Task kiểu đó gần như luôn bật ở `fsd_review` rồi bật tiếp ở `implementation`.
+`scope 2 + uncertainty 2` qualifies even below `effort` 9 because it is the worst combination: wide **and** unclear. Tasks like that almost always bounce at `fsd_review` and then again at `implementation`.
 
-### 5.2. Độ nặng luồng
+### 5.2. Workflow weight
 
-Không mức nào bỏ được stage hay gate. `trivial` chỉ làm Gate 1/2 **ngắn lại**:
+No level skips a stage or a gate. `trivial` only makes Gates 1/2 **shorter**:
 
 | | `trivial` | `normal` | `high` |
 | --- | --- | --- | --- |
-| `fsd-writer` | khung IEEE tối thiểu: Introduction + Functional Requirements có `shall` + trace. Rút gọn non-functional/data khi task không chạm | đầy đủ | đầy đủ + soi kỹ ràng buộc & phụ thuộc |
-| `fsd-reviewer` | AC tối thiểu + ID liên quan; bỏ được risk dài/câu hỏi BA nếu intent đã rõ | đầy đủ | thêm phân tích risk + đối chiếu chéo spec |
-| `technical-planner` · implementer · `adversary` | **không** rút gọn | **không** rút gọn | **không** rút gọn |
+| `fsd-writer` | the minimal IEEE skeleton: Introduction + Functional Requirements with `shall` + a trace. Abbreviate non-functional/data when the task does not touch them | full | full + careful scrutiny of constraints & dependencies |
+| `fsd-reviewer` | minimal ACs + the related IDs; the long risk section/BA questions can be dropped when the intent is clear | full | plus risk analysis + cross-checking the spec |
+| `technical-planner` · implementer · `adversary` | **never** abbreviated | **never** abbreviated | **never** abbreviated |
 
-Gate 1 và Gate 2 vẫn phải PASS ở cả ba mức.
+Gates 1 and 2 still have to PASS at all three levels.
 
-### 5.3. Chọn model theo **tier**, không theo tên hãng
+### 5.3. Choose the model by **tier**, not by vendor name
 
-Kernel không biết bạn chạy Claude Code, Codex, hay CLI khác — nên nó chỉ nói **ba tier**. Ánh xạ tier → tên model thật nằm ở `harness.config.json → models`:
+The kernel does not know whether you run Claude Code, Codex or another CLI — so it only names **three tiers**. The tier → real model mapping lives in `harness.config.json → models`:
 
 ```json
 "models": { "cheap": "haiku", "mid": "sonnet", "strong": "opus" }
 ```
 
-Đổi CLI thì đổi đúng ba dòng đó (`gpt-5-mini` / `gpt-5` / `gpt-5-pro`, `gemini-flash` / `gemini-pro` / …). Toàn bộ bảng dưới không đổi. Để `models` rỗng `{}` = dùng mặc định của CLI, không định tuyến gì.
+Switching CLI means changing exactly those three lines (`gpt-5-mini` / `gpt-5` / `gpt-5-pro`, `gemini-flash` / `gemini-pro` / …). The table below does not change. Leaving `models` as `{}` means using the CLI's default and routing nothing.
 
-Nguyên tắc: **tier rẻ cho việc đọc-và-chép, tier mạnh cho việc phán đoán.** Stage nào sai thì cả chuỗi sau sai theo — đó là chỗ trả tiền đáng.
+The principle: **the cheap tier for reading-and-transcribing, the strong tier for judgement.** A stage that gets it wrong makes everything downstream wrong — that is where paying is worth it.
 
-| Role | trivial | normal | high | Vì sao |
+| Role | trivial | normal | high | Why |
 | --- | --- | --- | --- | --- |
-| `orchestrator` | cheap | cheap | mid | đọc tracker, điền template — ít phán đoán |
-| `fsd-writer` | cheap | mid | mid | chuyển mô tả thành requirement có cấu trúc |
-| `fsd-reviewer` | mid | mid | strong | **AC sai ở đây thì mọi stage sau đều sai** |
-| `technical-planner` | mid | mid | strong | chọn sai chỗ sửa → implementer làm lại từ đầu |
-| `implementer` / `fixer` | mid | mid | strong | viết code thật |
-| `adversary` | mid | mid | strong | phải tìm ra cái implementer bỏ sót — cùng tier thì cùng điểm mù |
+| `orchestrator` | cheap | cheap | mid | reads the tracker, fills a template — little judgement |
+| `fsd-writer` | cheap | mid | mid | turns a description into structured requirements |
+| `fsd-reviewer` | mid | mid | strong | **a wrong AC here makes every later stage wrong** |
+| `technical-planner` | mid | mid | strong | choosing the wrong place to change → the implementer starts over |
+| `implementer` / `fixer` | mid | mid | strong | writes the actual code |
+| `adversary` | mid | mid | strong | has to find what the implementer missed — the same tier has the same blind spots |
 
-**Tại sao `adversary` không hạ xuống cheap:** role này tồn tại để nhìn ra thứ người làm không nhìn ra. Tier yếu hơn implementer thì nó chỉ gật đầu.
+**Why `adversary` is never dropped to cheap:** this role exists to see what the person doing the work did not. On a weaker tier than the implementer, it just nods along.
 
-**Áp dụng:** file `.claude/agents/{role}.md` **không ghi `model:`** — mặc định là model của phiên. `/start-task` tra bảng trên + `config.models` rồi truyền `model` khi dispatch. CLI không hỗ trợ chọn model per-subagent → bỏ qua, mọi stage chạy model của phiên; harness vẫn đúng, chỉ không tiết kiệm.
+**How it is applied:** the `.claude/agents/{role}.md` files carry **no `model:`** — the default is the session's model. `/start-task` looks up the table above plus `config.models` and passes `model` at dispatch. If the CLI does not support per-subagent model selection → skip it; every stage runs the session model, the harness still works, it just saves nothing.
 
-**Đừng tối ưu ngược:** hạ tier của `fsd-reviewer`/`adversary` để tiết kiệm là bỏ tiền mua rủi ro — một AC rơi hoặc một bug lọt tốn nhiều hơn toàn bộ tiền model của task.
+**Do not optimise backwards:** dropping the tier of `fsd-reviewer`/`adversary` to save money is buying risk — one dropped AC or one escaped bug costs more than the entire model spend of the task.
 
-### 5.4. Hai chiều rủi ro dùng ngoài việc chọn model
+### 5.4. The two risk dimensions outside model choice
 
-`blastRadius` và `reversibility` không chỉ kéo `taskComplexity`. Chúng còn quyết định **dừng ở đâu để hỏi người**:
+`blastRadius` and `reversibility` do not only lift `taskComplexity`. They also decide **where to stop and ask a human**:
 
-| Điều kiện | Harness làm gì |
+| Condition | What the harness does |
 | --- | --- |
-| `reversibility ≥ 3` (phải sửa dữ liệu, hoặc không lùi được) | `technical-planner` nêu thành Risk bắt buộc + **cách rollback**; không có cách rollback → `needs_clarification`, hỏi user trước khi implementer chạy |
-| `blastRadius ≥ 3` (một service trở lên) | `adversary` **không** được kết luận PASS chỉ bằng test scope của task — phải kiểm thêm đường lân cận, hoặc ghi rõ giới hạn trong `09` |
-| `uncertainty = 2` (phải hỏi BA) | Gate 2 chặn sẵn: Q `blocking` còn `open` thì không qua được (§3) |
+| `reversibility ≥ 3` (data repair needed, or irreversible) | `technical-planner` must raise it as a Risk with a **rollback plan**; no rollback plan → `needs_clarification`, ask the user before the implementer runs |
+| `blastRadius ≥ 3` (one service or more) | `adversary` may **not** conclude PASS from the task's scoped tests alone — it must check neighbouring paths, or state the limit explicitly in `09` |
+| `uncertainty = 2` (must ask the BA) | Gate 2 already blocks: a `blocking` question still `open` cannot pass (§3) |
 
-Đây là chỗ vector hơn một con số: *"code không nhiều nhưng không lùi được"* là tình huống có thật, và một con số 42 không nói ra được điều đó.
+This is where a vector beats a single number: *"not much code, but no way back"* is a real situation, and a "42" cannot say it.
 
-### 5.5. Đo lại sau khi chạy: `attempts`
+### 5.5. Measuring afterwards: `attempts`
 
-Vector là **ước lượng trước**. Thứ duy nhất đo được **sau** là task phải làm lại bao nhiêu lần.
+The vector is an estimate made **beforehand**. The only thing measurable **afterwards** is how many times the task had to be redone.
 
-`task.agent.json → attempts` đếm số lần mỗi stage thực sự chạy. Tối ưu là `1`. Mỗi lần gate trả về là `+1`:
+`task.agent.json → attempts` counts how many times each stage actually ran. The optimum is `1`. Each bounce is `+1`:
 
 ```json
 "attempts": { "fsd_write": 1, "fsd_review": 2, "technical_plan": 1, "implementation": 2 }
 ```
 
-Đọc nó theo cặp — chỗ bị trả về nói ra chỗ hỏng thật:
+Read it in pairs — where it bounced tells you what is actually broken:
 
-| Dấu hiệu | Nghĩa |
+| Signal | Meaning |
 | --- | --- |
-| `fsd_review` ≥ 2 | FSD viết thiếu, hoặc yêu cầu vốn mơ hồ — `uncertainty` trong vector chấm thấp hơn thực tế |
-| `technical_plan` ≥ 2 | AC chưa đủ rõ để lập plan; Gate 2 qua quá dễ |
-| `implementation` ≥ 2 | plan sai chỗ sửa, hoặc scope Gate 3 thiếu |
-| `adversarial_review` ≥ 2 | evidence lần đầu không tái lập được — chỗ này đúng là việc của Gate 5 |
+| `fsd_review` ≥ 2 | the FSD was incomplete, or the requirement was ambiguous to begin with — `uncertainty` was scored below reality |
+| `technical_plan` ≥ 2 | the ACs were not clear enough to plan against; Gate 2 passed too easily |
+| `implementation` ≥ 2 | the plan pointed at the wrong place, or the Gate 3 scope was incomplete |
+| `adversarial_review` ≥ 2 | the first round of evidence did not reproduce — which is exactly Gate 5's job |
 
-`attempts` ≥ 3 ở một stage → validator cảnh báo. Không phải lỗi (có task khó thật), nhưng đó là tín hiệu đáng đọc khi chỉnh prompt hoặc khi nên tách task.
+`attempts` ≥ 3 on one stage → the validator warns. Not an error (some tasks really are hard), but a signal worth reading when tuning prompts or deciding to split a task.
 
-**Retry budget có răng — và không tin lời khai.** `attempts` do coordinator ghi, mà coordinator chính là actor sẽ lặp nếu nó lặp; không ai tự ghi `attempts: 7` để tố cáo mình. Nên validator đếm **block handoff** trong `.agent-memory/{role}.md` — append-only (SharedRules §4), role không xoá được:
+**The retry budget has teeth — and does not take the coordinator's word for it.** `attempts` is written by the coordinator, and the coordinator is the actor that would be doing the looping; nobody writes `attempts: 7` to incriminate themselves. So the validator counts **handoff blocks** in `.agent-memory/{role}.md` — append-only (SharedRules §4), and a role cannot delete them:
 
-| Điều kiện | Mức |
+| Condition | Level |
 | --- | --- |
-| số block > `attempts[stage]` đã khai | **warning** — rework bị khai thiếu |
-| số block ≥ `retryBudget` (mặc định 4) | **error** — hết ngân sách, tách task hoặc sửa spec, đừng retry tiếp |
+| more blocks than the declared `attempts[stage]` | **warning** — rework is being under-reported |
+| blocks ≥ `retryBudget` (4 by default) | **error** — out of budget; split the task or fix the spec, do not retry again |
 
-Đây là chỗ duy nhất harness đo được rework một cách độc lập với lời khai. `retryBudget` khai ở `harness.config.json`.
+This is the one place the harness can measure rework independently of what it is told. `retryBudget` is declared in `harness.config.json`.
 
-**Hết budget thì đi đâu: `status = split`.** "Tách task" phải có cách nói ra — không thì task kẹt cứng: doc là append-only nên không xoá bớt block được, hạ `attempts` là khai man (validator đối chiếu với số block), còn `done` thì Gate 4/5 đòi evidence chưa có. Mọi commit chạm vào đều đỏ, và gate mà lối đi duy nhất là `--no-verify` là gate sắp chết.
+**Where you go when the budget runs out: `status = split`.** "Split the task" needs a way to be said — otherwise the task jams: the docs are append-only so blocks cannot be removed, lowering `attempts` is a false statement (the validator compares it against the block count), and `done` requires Gate 4/5 evidence that does not exist. Every commit that touches it goes red, and a gate whose only remaining exit is `--no-verify` is a gate about to die.
 
-| Điều kiện | Mức |
+| Condition | Level |
 | --- | --- |
-| `status = split` + `splitInto` ≥2 taskId | budget xuống **warning** — giữ lại làm lịch sử |
-| `status = split` thiếu `splitInto` (hoặc chỉ 1) | **error** — "tách" mà không tách là đổi tên cho việc bỏ cuộc |
+| `status = split` + `splitInto` with ≥2 taskIds | the budget drops to a **warning** — kept as history |
+| `status = split` without `splitInto` (or with only one) | **error** — a "split" that does not split is a rename for giving up |
 
-`split` không nằm trong `gate4Statuses` nên không bị đòi evidence — nó chưa từng ship. Đây là lối thoát **có tên và để lại dấu vết**, không phải cửa sau: `--calibrate` đếm task `split` như tín hiệu `scope` bị chấm thấp ở bootstrap.
+`split` is not in `gate4Statuses`, so no evidence is demanded — it never shipped. This is an escape hatch that is **named and leaves a trace**, not a back door: `--calibrate` counts `split` tasks as a signal that `scope` is being under-scored at bootstrap.
 
-**Context bleed — luật `/clear` có thêm một phép đo.** Mỗi stage chỉ đọc artifact **của chính nó** (`03` đọc `02`, không đọc `01`), nên `telemetry[].inputTokens` phải **dao động quanh một mức**. Không clear ngữ cảnh thì lịch sử hội thoại cộng dồn — tăng đơn điệu, stage sau luôn lớn hơn stage trước. ≥4 dispatch tăng đơn điệu và cuối ≥ 2.5× đầu → **warning**.
+**Context bleed — the `/clear` rule now has a measurement.** Each stage reads only **its own** artifacts (`03` reads `02`, not `01`), so `telemetry[].inputTokens` should **fluctuate around a level**. Without clearing the context the conversation history accumulates — monotonically increasing, each stage larger than the last. ≥4 dispatches increasing monotonically with the last ≥ 2.5× the first → **warning**.
 
-Warning chứ không error: task khó thật cũng có thể tăng, và `08` dán output máy thì to hợp lệ. Chuỗi dao động — dù tổng lớn — không bị báo. CLI không báo token thì im lặng, không đoán.
+A warning, not an error: a genuinely hard task can also grow, and `08` pasting machine output is legitimately large. A fluctuating series — even a large one — is not flagged. If the CLI does not report tokens, it stays silent rather than guessing.
 
-**Dùng nó để sửa vector, đừng để nó nằm im.** Task nào cũng `implementation: 2` thì hoặc `scope` đang bị chấm thấp, hoặc Gate 3 chưa liệt kê đủ file. Đó là dữ liệu thật để hiệu chỉnh §5.1, thay cho việc đoán trọng số.
+**Use it to fix the vector, do not let it sit there.** If every task shows `implementation: 2`, then either `scope` is being under-scored or Gate 3 is not listing enough files. That is real data for calibrating §5.1, instead of guessing at weights.
 
-### 5.6. Đóng vòng: `outcome` + `--calibrate`
+### 5.6. Closing the loop: `outcome` + `--calibrate`
 
-`vector` là ước lượng **trước**, `attempts` là rework **trong** quá trình. Cả hai đều không biết task có thật sự ổn sau khi ship hay không. Thứ đó là `outcome`, điền khi task đóng:
+The `vector` is the estimate **before**, `attempts` is the rework **during**. Neither knows whether the task actually held up after shipping. That is `outcome`, filled in when the task closes:
 
 ```json
 "outcome": {
   "escapedBugs": 1,
   "reworkAfterReview": 0,
   "closedAt": "2026-09-10",
-  "note": "AC-03 thiếu trường hợp user không có phòng ban"
+  "note": "AC-03 missed the case where the user has no department"
 }
 ```
 
-- `escapedBugs` — bug tìm thấy **sau** khi task rời harness (QC, staging, production). `> 0` nghĩa là gate đã cho qua thứ lẽ ra phải chặn.
-- `reworkAfterReview` — số lần task quay lại sửa code sau `reviewing`.
-- `note` — một dòng: ước lượng đã bỏ sót gì.
+- `escapedBugs` — bugs found **after** the task left the harness (QC, staging, production). `> 0` means a gate let through something it should have stopped.
+- `reworkAfterReview` — how many times the task came back for code changes after `reviewing`.
+- `note` — one line: what the estimate missed.
 
-Không điền thì harness không học được gì. Đây là điểm duy nhất con người phải nhập tay, và là điểm đắt nhất nếu bỏ qua — nên `status = done` mà thiếu `closedAt` là **error**, không phải warning. (Warning thì pre-commit chạy `--no-warn` không bao giờ chặn, và vòng lặp học chết trong khi mọi gate vẫn xanh.) Task tạo **trước** `acTrace.since` vẫn chỉ là warning — nó có trước harness.
+Leave it empty and the harness learns nothing. This is the only point a human must type into, and the most expensive one to skip — so `status = done` without `closedAt` is an **error**, not a warning. (As a warning, pre-commit's `--no-warn` would never stop it, and the learning loop would die while every gate stayed green.) Tasks created **before** `acTrace.since` stay a warning — they predate the harness.
 
-`--calibrate` in **độ phủ** ngay dòng đầu (`outcome coverage: 12/20`). Dưới 80% thì finding bên dưới đang dựa trên mẫu thủng — đừng sửa ngưỡng bằng nó.
+`--calibrate` prints **coverage** on its first line (`outcome coverage: 12/20`). Below 80%, the findings underneath rest on a holed sample — do not adjust thresholds from it.
 
-`telemetry` (coordinator ghi mỗi lần dispatch: stage · tier · model · mốc thời gian) là **nửa còn lại** của câu hỏi ROI. `outcome` nói task có ổn không; `telemetry` nói nó tốn gì. Thiếu nó thì §5.3 ("tier mạnh đáng tiền") là niềm tin không ai kiểm chứng được. Không ghi token/usage — đó là dữ liệu vendor; tên model + wall-clock đã đủ.
+`telemetry` (written by the coordinator at each dispatch: stage · tier · model · timestamps) is the **other half** of the ROI question. `outcome` says whether the task held up; `telemetry` says what it cost. Without it, §5.3 ("the strong tier is worth the money") is an article of faith nobody can check. No token/usage is recorded — that is vendor data; the model name + wall clock is enough.
 
-**Đọc lại định kỳ** (cuối sprint, hoặc mỗi ~20 task):
+**Re-read it periodically** (end of sprint, or every ~20 tasks):
 
 ```bash
 node scripts/validate-tasks.mjs --calibrate
 ```
 
-Nó đối chiếu ước lượng với kết quả và chỉ ra ngưỡng nào đang sai:
+It compares the estimates against the outcomes and points at the thresholds that are wrong:
 
 ```
 trivial  n=1  escaped=1  rework=0  stage-retries=1
@@ -360,24 +359,24 @@ findings:
 • 1 bug(s) escaped from "trivial" tasks — the riskFloor thresholds (§5.1.1) are letting real risk through
 ```
 
-**Nó in bằng chứng, không tự sửa ngưỡng.** Một luật mà harness âm thầm viết lại là luật không ai review — và ngưỡng ở §5.1.1 quyết định model, độ nặng gate, worktree. Con người đọc finding rồi sửa §5.1.1 bằng một commit, có lý do ghi lại. Đó là vòng lặp đóng, không phải tự động hoá mù.
+**It prints evidence; it does not rewrite the thresholds.** A rule the harness silently rewrites is a rule nobody reviews — and the thresholds in §5.1.1 decide models, gate weight and worktrees. A human reads the findings and amends §5.1.1 in a commit, with the reason recorded. That is a closed loop, not blind automation.
 
-Ba cách sửa thường gặp:
+Three common fixes:
 
-| Finding | Sửa gì |
+| Finding | What to change |
 | --- | --- |
-| stage nào đó bị chạy lại nhiều | chiều tương ứng đang chấm thấp — sửa **mô tả thang** ở §5.1 cho rõ hơn, không phải sửa công thức |
-| bug lọt từ `trivial` | ngưỡng `riskFloor` quá lỏng — hạ mốc `blastRadius`/`reversibility` ở §5.1.1 |
-| nhiều `high` mà không rework, không bug lọt | ngưỡng `high` quá dễ kích hoạt — đang trả tiền model mạnh mà không mua được gì |
-| `strong-runs` cao mà escaped=0, rework=0 | cùng chuyện trên nhưng **đo được**: tier mạnh chạy đều mà không mua được gì — hạ tier của stage ít phán đoán trước, đừng hạ `fsd-reviewer`/`adversary` |
+| a stage keeps getting re-run | the matching dimension is scored too low — sharpen the **scale description** in §5.1, not the formula |
+| bugs escaping from `trivial` | the `riskFloor` thresholds are too loose — lower the `blastRadius`/`reversibility` cut-offs in §5.1.1 |
+| lots of `high` with no rework and no escaped bugs | the `high` threshold triggers too easily — you are paying for a strong model and buying nothing |
+| high `strong-runs` with escaped=0, rework=0 | the same thing but **measured**: the strong tier runs constantly and buys nothing — lower the tier of the low-judgement stages first, never `fsd-reviewer`/`adversary` |
 
-> Finding chỉ xuất hiện từ **5 task đã đóng** trở lên. Một task khó bất thường không phải là xu hướng, và một khuyến nghị nghe rất chắc chắn dựa trên n=1 sẽ dẫn tới sửa sai ngưỡng.
+> Findings only appear from **5 closed tasks** upwards. One unusually hard task is not a trend, and a very confident-sounding recommendation based on n=1 leads to adjusting the wrong threshold.
 
 ---
 
-## 6. Liên kết
+## 6. Links
 
-- Quy tắc vận hành chi tiết: [`agents/SharedRules.md`](./agents/SharedRules.md) · Global rule: [`Instructions.md`](./Instructions.md)
-- Bootstrap & resume: [`HarnessSetup.md`](./HarnessSetup.md) · Chỉ mục: [`README.md`](./README.md)
-- Role: [`agents/Orchestrator.md`](./agents/Orchestrator.md) · [`agents/FSDWriter.md`](./agents/FSDWriter.md) · [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) · [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) · [`agents/Implementer.md`](./agents/Implementer.md) · [`agents/Fixer.md`](./agents/Fixer.md) · [`agents/Adversary.md`](./agents/Adversary.md)
-- Task docs & template: [`tasks/README.md`](./tasks/README.md) · Artifact nguồn: [`srs/`](./srs/README.md) · [`fsd/`](./fsd/README.md) · [`api/`](./api/README.md)
+- Detailed operating rules: [`agents/SharedRules.md`](./agents/SharedRules.md) · Global rules: [`Instructions.md`](./Instructions.md)
+- Bootstrap & resume: [`HarnessSetup.md`](./HarnessSetup.md) · Index: [`README.md`](./README.md)
+- Roles: [`agents/Orchestrator.md`](./agents/Orchestrator.md) · [`agents/FSDWriter.md`](./agents/FSDWriter.md) · [`agents/FSDReviewer.md`](./agents/FSDReviewer.md) · [`agents/TechnicalPlanner.md`](./agents/TechnicalPlanner.md) · [`agents/Implementer.md`](./agents/Implementer.md) · [`agents/Fixer.md`](./agents/Fixer.md) · [`agents/Adversary.md`](./agents/Adversary.md)
+- Task docs & templates: [`tasks/README.md`](./tasks/README.md) · Source artifacts: [`srs/`](./srs/README.md) · [`fsd/`](./fsd/README.md) · [`api/`](./api/README.md)
