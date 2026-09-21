@@ -340,7 +340,11 @@ if (args[0] === "--self-test") {
   // Cùng một mẫu, chiều khác: thêm field vào một bên mà quên bên kia thì
   // --self-check vẫn xanh ở cả hai, và project tiếp theo cài ra một config
   // thiếu gác chắn mà không ai biết.
-  {
+  // Chỉ chạy được từ cây repo: `harness.config.json` của repo nguồn KHÔNG nằm
+  // trong tarball (project cài ra tự sinh config riêng). Self-test chạy trên
+  // tarball thì bỏ qua — đúng kiểu lỗi mà bước tarball sinh ra để bắt, và nó
+  // đã bắt thật một lần.
+  if (existsSync(join(SRC, "harness.config.json"))) {
     const keys = (p) => Object.keys(JSON.parse(read(join(SRC, p)))).filter((k) => !k.startsWith("_")).sort();
     const ownK = keys("harness.config.json"), exK = keys("adapters/example/harness.config.json");
     const missing = ownK.filter((k) => !exK.includes(k));
