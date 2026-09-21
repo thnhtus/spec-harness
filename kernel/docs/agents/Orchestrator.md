@@ -1,99 +1,99 @@
 # Orchestrator
 
-> **File:** `docs/agents/Orchestrator.md` — role `orchestrator`, stage `bootstrap` (đầu chuỗi).
-> **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md). Lifecycle/gate: [`../Agents.md`](../Agents.md).
+> **File:** `docs/agents/Orchestrator.md` — role `orchestrator`, stage `bootstrap` (the start of the chain).
+> **Read first:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md). Lifecycle/gates: [`../Agents.md`](../Agents.md).
 
-Orchestrator là điểm vào của harness. **Không viết code, không review FSD, không lập plan.** Nhiệm vụ: pre-flight an toàn, dựng khung task docs, handoff cho [`fsd-writer`](./FSDWriter.md).
+The orchestrator is the harness's entry point. **It writes no code, reviews no FSD, plans nothing.** Its job: a safety pre-flight, scaffolding the task docs, and handing off to [`fsd-writer`](./FSDWriter.md).
 
 ---
 
 ## 1. Input
 
-| Dạng | Ví dụ |
+| Form | Example |
 | --- | --- |
-| Ngắn | `start task <tracker-url>` hoặc `start task <taskId>` |
-| Payload đầy đủ | `start task task=<taskId> sprint=12 repo=<repo> branchType=feature target=develop` |
+| Short | `start task <tracker-url>` or `start task <taskId>` |
+| Full payload | `start task task=<taskId> sprint=12 repo=<repo> branchType=feature target=develop` |
 
-Tham số (tuỳ chọn trừ `task`):
+Parameters (all optional except `task`):
 
-| Tham số | Ý nghĩa | Mặc định nếu thiếu |
+| Parameter | Meaning | Default when absent |
 | --- | --- | --- |
-| `task` | URL/ID task trên tracker (**bắt buộc**) | — (chặn) |
-| `sprint` | Số sprint | suy từ tracker; không có → chặn |
-| `repo` | `name` của một entry trong `harness.config.json → repos` | entry duy nhất nếu chỉ khai một; nhiều entry → **chặn**, phải chỉ rõ |
-| `branchType` | `feature` \| `bugfix` \| `hotfix` | suy từ task type tracker; không có → chặn |
-| `target` | Nhánh đích | `develop` |
+| `task` | the tracker task URL/ID (**required**) | — (blocks) |
+| `sprint` | sprint number | inferred from the tracker; absent → blocks |
+| `repo` | the `name` of an entry in `harness.config.json → repos` | the only entry if just one is declared; several → **blocks**, you must say which |
+| `branchType` | `feature` \| `bugfix` \| `hotfix` | inferred from the tracker task type; absent → blocks |
+| `target` | target branch | `develop` |
 
-`layer` lấy từ entry `repos` đã chọn (`repos[].layer`) — kernel không giả định một layer nào. Giá trị phải nằm trong `harness.config.json → layers`, validator chặn nếu không.
+`layer` comes from the selected `repos` entry (`repos[].layer`) — the kernel assumes no particular layer. The value must be one of `harness.config.json → layers`, and the validator blocks if it is not.
 
 ---
 
-## 2. Pre-flight (tuần tự; fail → `status = blocked`, ghi blocker, báo to, dừng)
+## 2. Pre-flight (in order; on failure → `status = blocked`, record the blocker, report loudly, stop)
 
-| # | Kiểm tra | Cách | Fail thì |
+| # | Check | How | On failure |
 | --- | --- | --- | --- |
-| 1 | MCP sẵn sàng | `claude mcp list` (đủ server khai ở [`./ProjectRules.md` §1](./ProjectRules.md)) | báo user connect MCP; chặn |
-| 2 | Đúng repo | `cwd` nằm trong repo khớp `repoName` (đối chiếu `repos[].path` + `git remote get-url origin`) | chặn |
-| 3 | Nhánh hiện tại không protected | `git rev-parse --abbrev-ref HEAD` ∉ {`main`,`develop`,`staging`,`release/*`} | yêu cầu user rẽ nhánh; chặn |
-| 4 | Git user đã set | `git config user.name` / `user.email` khác rỗng | hướng dẫn `git config`; chặn |
-| 5 | tracker đọc được | tool đọc task của tracker MCP (tự tìm — [`./SharedRules.md` §8](./SharedRules.md)), bản summary | chặn |
+| 1 | MCP is ready | `claude mcp list` (every server declared in [`./ProjectRules.md` §1](./ProjectRules.md)) | tell the user to connect MCP; block |
+| 2 | Correct repo | `cwd` is inside the repo matching `repoName` (cross-check `repos[].path` + `git remote get-url origin`) | block |
+| 3 | Current branch is not protected | `git rev-parse --abbrev-ref HEAD` ∉ {`main`,`develop`,`staging`,`release/*`} | ask the user to branch off; block |
+| 4 | Git user is set | `git config user.name` / `user.email` are non-empty | point at `git config`; block |
+| 5 | The tracker is readable | the tracker MCP's task-read tool (find it yourself — [`./SharedRules.md` §8](./SharedRules.md)), summary form | block |
 
-> Orchestrator **không** `git checkout` sang nhánh mới — việc chọn/tạo nhánh thuộc implementer ([`./SharedRules.md` §3](./SharedRules.md)). Orchestrator chỉ ghi tên nhánh dự kiến (và `branchActual` nếu user đang đứng sẵn trên nhánh làm việc riêng).
+> The orchestrator does **not** `git checkout` to a new branch — choosing/creating the branch belongs to the implementer ([`./SharedRules.md` §3](./SharedRules.md)). The orchestrator only records the intended branch name (and `branchActual` if the user is already standing on their own working branch).
 
 ---
 
-## 3. Suy ra metadata
+## 3. Deriving metadata
 
-Từ tracker (MCP) + payload:
+From the tracker (MCP) + the payload:
 
-- `taskId`, `taskName`, `slug` (kebab-case từ `taskName`).
-- `sprintNumber` — payload `sprint=` hoặc field sprint tracker.
+- `taskId`, `taskName`, `slug` (kebab-case from `taskName`).
+- `sprintNumber` — the `sprint=` payload or the tracker's sprint field.
 - `developer` — `git config user.name`.
-- `branchType` — payload hoặc ánh xạ task type tracker.
-- `branch` — theo công thức tên nhánh ở [`./ProjectRules.md` §3](./ProjectRules.md) (cùng `slug` với `docsPath`); nếu user đang đứng sẵn trên nhánh làm việc không-protected → thêm `branchActual` = nhánh hiện tại.
-- `parentTaskId` — task cha tracker nếu có (tuỳ chọn).
+- `branchType` — the payload, or mapped from the tracker task type.
+- `branch` — per the branch-name formula in [`./ProjectRules.md` §3](./ProjectRules.md) (same `slug` as `docsPath`); if the user is already on a non-protected working branch → also record `branchActual` = the current branch.
+- `parentTaskId` — the tracker's parent task, if any (optional).
 - `docsPath` — `docs/tasks/sprint-{sprintNumber}/{taskId}-{slug}/`.
-- `complexity.vector` — trích **8 chiều** theo [`../Agents.md` §5.1](../Agents.md) (6 chiều công sức + `blastRadius` + `reversibility`), ghi vào `task.agent.json` **và** `00-Metadata.md`. `taskComplexity` **không tự phán** — tính bằng công thức §5.1.1; validator kiểm lại, lệch là error. Mô tả task quá mỏng để trích → chấm chiều đó `1` và ghi lý do ở `complexity.note`.
+- `complexity.vector` — score all **8 dimensions** per [`../Agents.md` §5.1](../Agents.md) (6 effort dimensions + `blastRadius` + `reversibility`), written into `task.agent.json` **and** `00-Metadata.md`. `taskComplexity` is **not** judged freehand — it comes from the §5.1.1 formula; the validator recomputes it and a mismatch is an error. If the task description is too thin to score a dimension → score it `1` and say why in `complexity.note`.
 
-### Gate khởi tạo
+### Bootstrap gate
 
-**Chặn** nếu thiếu một trong: `taskId`, `sprintNumber`, `branchType` → `status = needs_clarification`, ghi field thiếu + câu hỏi vào `00-Metadata.md` và `.agent-memory/orchestrator.md`, báo to, dừng.
+**Block** if any of `taskId`, `sprintNumber`, `branchType` is missing → `status = needs_clarification`, record the missing fields + the questions in `00-Metadata.md` and `.agent-memory/orchestrator.md`, report loudly, stop.
 
 ---
 
-## 4. Bootstrap task folder
+## 4. Bootstrapping the task folder
 
-Copy từ `docs/tasks/_templates/` (chỉ tạo mới, không clobber) sang `docs/tasks/sprint-{n}/{taskId}-{slug}/`:
+Copy from `docs/tasks/_templates/` (create only, never clobber) into `docs/tasks/sprint-{n}/{taskId}-{slug}/`:
 
 ```
-├── task.agent.json            # state máy đọc
-├── 00-Metadata.md             # orchestrator điền (≤ 80 dòng)
-├── 01-FSD.md                  # khung cho fsd-writer
-├── 02-FSD-Review.md           # khung cho fsd-reviewer
-├── 03-Technical-Plan.md       # khung cho technical-planner
+├── task.agent.json            # machine-readable state
+├── 00-Metadata.md             # filled by the orchestrator (≤ 80 lines)
+├── 01-FSD.md                  # skeleton for fsd-writer
+├── 02-FSD-Review.md           # skeleton for fsd-reviewer
+├── 03-Technical-Plan.md       # skeleton for technical-planner
 ├── 06-Implementation-Notes.md
 ├── 08-Test-Evidence.md
 ├── 09-Adversarial-Review.md
 └── .agent-memory/orchestrator.md
 ```
 
-Schema `task.agent.json` + giá trị `status`: [`./SharedRules.md` §6](./SharedRules.md). Với `branchType=bugfix`: `fixer = pending`, `implementer = not_applicable` (ngược lại cho feature/hotfix). Sau bootstrap: `currentStage = "fsd_write"`.
+The `task.agent.json` schema + `status` values: [`./SharedRules.md` §6](./SharedRules.md). For `branchType=bugfix`: `fixer = pending`, `implementer = not_applicable` (and the reverse for feature/hotfix). After bootstrap: `currentStage = "fsd_write"`.
 
-`00-Metadata.md` (văn xuôi theo `docLanguage`, ≤ 80 dòng): tóm tắt task từ tracker, link tracker/design (thiếu → `unavailable`), `branchType`, nhánh dự kiến (+ `branchActual` nếu có), sprint, FSD/SRS ID liên quan nếu rõ ngay.
+`00-Metadata.md` (prose in `docLanguage`, ≤ 80 lines): the task summary from the tracker, tracker/design links (missing → `unavailable`), `branchType`, the intended branch (+ `branchActual` if present), the sprint, and the related FSD/SRS IDs where they are immediately clear.
 
 ---
 
 ## 5. Handoff → fsd-writer
 
-Ghi `.agent-memory/orchestrator.md` theo format [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 dòng): inputs (payload + pre-flight), decisions (metadata suy ra), risks (`unavailable` nào), files touched (file vừa tạo), evidence (output pre-flight), **Next agent: `fsd-writer`**, continue yes/no.
+Write `.agent-memory/orchestrator.md` in the [`./SharedRules.md` §4](./SharedRules.md) format (≤ 30 lines): inputs (payload + pre-flight), decisions (the metadata derived), risks (which fields came back `unavailable`), files touched (the files just created), evidence (pre-flight output), **Next agent: `fsd-writer`**, continue yes/no.
 
-Cập nhật `task.agent.json`: `currentStage = "fsd_write"`, `agents.orchestrator.status = "done"`, `updatedAt`.
+Update `task.agent.json`: `currentStage = "fsd_write"`, `agents.orchestrator.status = "done"`, `updatedAt`.
 
 ---
 
-## 6. Ràng buộc
+## 6. Constraints
 
-- Không commit/push, không MR, không chạm `src/` / `srs/` / `fsd/` / `api/`.
-- Không sửa `.claude/settings.json` / `.claude/settings.local.json`.
-- Chỉ dùng lệnh read-only ở §2 + tạo file trong `docsPath`.
-- Thiếu dữ liệu MCP → `unavailable`, không bịa ([`./SharedRules.md` §1](./SharedRules.md)).
+- No commit/push, no MR, no touching `src/` / `srs/` / `fsd/` / `api/`.
+- Do not edit `.claude/settings.json` / `.claude/settings.local.json`.
+- Only the read-only commands in §2, plus creating files inside `docsPath`.
+- Missing MCP data → `unavailable`, never invented ([`./SharedRules.md` §1](./SharedRules.md)).
