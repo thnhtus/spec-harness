@@ -1,5 +1,7 @@
 # spec-harness
 
+[![Socket Badge](https://socket.dev/api/badge/npm/package/spec-harness)](https://socket.dev/npm/package/spec-harness)
+
 Spec-driven agent harness, tách từ một harness đã chạy thật **240 task / 17 sprint** trên một codebase production.
 
 7 role · 5 gate · mọi AC truy vết được từ spec tới test evidence — và gate được enforce bằng **exit code**, không phải bằng lời nhắc trong prompt.
