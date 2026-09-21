@@ -1,214 +1,214 @@
 ---
 name: pre-qc-gate
-description: Use when a ClickUp ticket is code-complete and the question is "đã sẵn sàng đẩy QC chưa" — e.g. "pre-qc <id>", "verify task trước khi giao QC", "AI QC ticket này", "chạy gate trước khi chuyển QC". Runs build/type/lint/unit, drives the real app in a browser against every acceptance criterion, hunts for bugs the AC didn't name, and returns PASS (ready for QC) or FAIL with evidence. Verifies only — never writes app code.
+description: Use when a ClickUp ticket is code-complete and the question is "is this ready to hand to QC" — e.g. "pre-qc <id>", "verify task before handing to QC", "AI QC this ticket", "run the gate before moving to QC". Runs build/type/lint/unit, drives the real app in a browser against every acceptance criterion, hunts for bugs the AC didn't name, and returns PASS (ready for QC) or FAIL with evidence. Verifies only — never writes app code.
 ---
 
-# pre-qc-gate — cổng verify trước khi giao QC
+# pre-qc-gate — the verify gate before handing to QC
 
-DEV xong ticket → cổng này chạy → **PASS** mới chuyển QC, **FAIL** trả lại DEV kèm evidence.
+DEV finishes the ticket → this gate runs → **PASS** moves it to QC, **FAIL** sends it back to DEV with evidence.
 
-**Nguyên tắc: Playwright trả lời "đúng hay sai", bạn trả lời "nên test gì và kết quả có hợp lý không".**
-Không có assertion chạy thật thì không có PASS. "Nhìn có vẻ đúng" ≠ pass.
+**Principle: Playwright answers "right or wrong", you answer "what is worth testing and is this result plausible".**
+No assertion that actually ran means no PASS. "Looks right" ≠ pass.
 
-Skill này **chỉ verify**. Thấy bug → báo cáo, không sửa `src/`. Muốn sửa: `fix-bug` / `quick-task`.
+This skill **only verifies**. Found a bug → report it, do not touch `src/`. To fix: `fix-bug` / `quick-task`.
 
-## Đã có sẵn, đừng dựng lại
+## Already there, do not rebuild it
 
-**Skill này không gắn với ngôn ngữ hay test runner nào.** Mọi lệnh lấy từ
-**ProjectRules §7** của repo đang chạy. Cột "ví dụ" dưới đây là một FE TypeScript —
-đọc để hiểu *cần gì*, không phải để copy lệnh.
+**This skill is not tied to any language or test runner.** Every command comes from
+**ProjectRules §7** of the repo you are running in. The "example" column below is a TypeScript FE —
+read it to understand *what is needed*, not to copy the commands.
 
-| Cần | Tìm ở đâu trong repo | Ví dụ (FE TS) |
+| Needed | Where to find it in the repo | Example (TS FE) |
 | --- | --- | --- |
-| Lệnh test/lint/build one-shot | **ProjectRules §7** (nguồn chuẩn) | `npm run test:scope`, `npx tsc -b` |
-| Harness kiểm tích hợp sẵn có | `e2e/`, `tests/`, `*_test.go`, `test/integration/`, `conftest.py`, `playwright.config.*`, `*.spec.*` | vitest project `browser` |
-| Cách login / auth thật | helper auth trong harness đó | `helpers/auth.ts` → `loginAs(page)` |
-| Credentials + host | biến môi trường của project (`.env`, `.env.test`, secret CI) | `VITE_API`, `E2E_*` |
-| Nguồn AC | tracker MCP; task chạy harness → `{tasksDir}/*/{taskId}-*/02-FSD-Review.md` | |
+| One-shot test/lint/build command | **ProjectRules §7** (the normative source) | `npm run test:scope`, `npx tsc -b` |
+| Existing integration test harness | `e2e/`, `tests/`, `*_test.go`, `test/integration/`, `conftest.py`, `playwright.config.*`, `*.spec.*` | vitest project `browser` |
+| How real login / auth works | the auth helper inside that harness | `helpers/auth.ts` → `loginAs(page)` |
+| Credentials + host | the project's environment variables (`.env`, `.env.test`, CI secrets) | `VITE_API`, `E2E_*` |
+| Source of AC | tracker MCP; for a task running the harness → `{tasksDir}/*/{taskId}-*/02-FSD-Review.md` | |
 
-**Không có harness sẵn thì không dựng mới.** Không thêm dependency, không tạo
-`playwright.config.*`/`pytest.ini`/`docker-compose.test.yml`, không dựng framework
-report. Ghi vào evidence là tầng đó **không kiểm được** và vì sao — giới hạn ghi rõ
-đáng tin hơn một framework dựng vội trong lúc verify.
+**No harness there already means do not build one.** Do not add a dependency, do not create
+`playwright.config.*`/`pytest.ini`/`docker-compose.test.yml`, do not stand up a reporting
+framework. Write in the evidence that the layer **could not be verified** and why — a clearly
+stated limit is worth more than a framework thrown together mid-verification.
 
-## Chọn tầng verify theo loại task
+## Pick the verify layer by task type
 
-`layer` trong `task.agent.json` (hoặc bản chất repo) quyết định bước 4 làm gì:
+`layer` in `task.agent.json` (or the nature of the repo) decides what step 4 does:
 
-| Loại | Tầng "chạy thật" là gì | Bước 4 đọc mục |
+| Type | What the "really run it" layer is | Step 4 reads section |
 | --- | --- | --- |
-| Có UI (web FE) | drive browser | §4a |
-| Service/API, CLI, job, library — **không có UI** | gọi thật vào interface của nó: HTTP request, CLI invocation, hàm public | §4b |
+| Has a UI (web FE) | drive a browser | §4a |
+| Service/API, CLI, job, library — **no UI** | call its real interface: HTTP request, CLI invocation, public function | §4b |
 
-Không có UI mà vẫn cố mở browser là lãng phí; bỏ qua tầng chạy thật vì "không có UI"
-là bỏ gate. Cả hai đều sai.
+Forcing a browser open when there is no UI is waste; skipping the really-run-it layer because
+"there is no UI" is skipping the gate. Both are wrong.
 
 ## Flow
 
-### 1. Lấy AC (đừng đoán)
+### 1. Get the AC (do not guess)
 
-Tool đọc task của tracker MCP (tự tìm trong tool của phiên — ProjectRules §1) với id (bỏ tiền tố `#`, `CU-`, phần URL). Đọc description + comment + parent.
-Có `docs/tasks/sprint-*/{taskId}-*/02-FSD-Review.md` → đó là AC chuẩn (`AC-01`, `AC-02`…), ClickUp là bổ sung.
+The tracker MCP's read-task tool (find it among the session's tools — ProjectRules §1) with the id (strip the `#`, `CU-`, URL parts). Read description + comments + parent.
+If `docs/tasks/sprint-*/{taskId}-*/02-FSD-Review.md` exists → that is the normative AC (`AC-01`, `AC-02`…), ClickUp is supplementary.
 
-Không tìm ra AC rõ ràng → **hỏi user, dừng**. Gate không có tiêu chí là gate giả.
+No clear AC found → **ask the user, stop**. A gate with no criteria is a fake gate.
 
-Ghi ra danh sách phẳng: mỗi AC một dòng, kèm màn hình/route để chạm tới nó.
+Write out a flat list: one AC per line, with the screen/route that reaches it.
 
-### 2. Test plan — 3 nhóm
+### 2. Test plan — 3 groups
 
-Từ AC sinh ra:
+From the AC, produce:
 
-- **critical** — mỗi AC một scenario. Bắt buộc chạy, bắt buộc có assertion.
-- **edge** — thứ AC không nói nhưng dev hay làm vỡ: input rỗng, string rất dài, ký tự đặc biệt, double-click submit, F5 giữa flow, nút Back, cancel giữa chừng, trùng dữ liệu, quyền không đủ.
-- **manual** — cái chặn bởi hệ thống ngoài (gateway thanh toán, email thật, SSO, dữ liệu prod không tạo được). Ghi rõ lý do; **không** đếm là pass.
+- **critical** — one scenario per AC. Must run, must have an assertion.
+- **edge** — what the AC does not mention but devs routinely break: empty input, very long strings, special characters, double-click submit, F5 mid-flow, the Back button, cancelling halfway, duplicate data, insufficient permissions.
+- **manual** — what is blocked by an external system (payment gateway, real email, SSO, prod data you cannot create). State the reason; do **not** count it as a pass.
 
-Nói với user plan này trước khi chạy nếu ticket lớn (>8 scenario).
+Tell the user this plan before running if the ticket is large (>8 scenarios).
 
-### 3. Tầng tĩnh
+### 3. Static layer
 
-Chạy **đúng bộ lệnh của ProjectRules §7** — không đoán, không tự chế lệnh. Dán output thật.
+Run **exactly the command set from ProjectRules §7** — do not guess, do not invent commands. Paste the real output.
 
-Bộ đó thường gồm: type-check (nếu ngôn ngữ có) · lint · unit test giới hạn scope của task ·
-build. Tên lệnh khác nhau theo stack (`npm run`, `go test`, `pytest`, `cargo`, `mvn`,
-`dotnet`, `make`) — §7 là nơi duy nhất nói lệnh nào đúng cho repo này.
+That set usually covers: type-check (if the language has one) · lint · unit tests scoped to the task ·
+build. Command names differ by stack (`npm run`, `go test`, `pytest`, `cargo`, `mvn`,
+`dotnet`, `make`) — §7 is the only place that says which command is right for this repo.
 
-Đỏ ở bước này → **FAIL ngay**, không cần sang tầng chạy thật.
+Red at this step → **FAIL immediately**, no need to move to the really-run-it layer.
 
-### 4a. Tầng browser (task có UI)
+### 4a. Browser layer (task has a UI)
 
-Dev server **riêng**, port tự do — đừng tin server đang chạy sẵn của người khác. Lệnh
-khởi động lấy từ ProjectRules §7 (nó cũng nói lệnh nào là watch-mode bị cấm).
+A **separate** dev server, free port — do not trust someone else's already-running server. The
+startup command comes from ProjectRules §7 (which also says which commands are forbidden watch-mode ones).
 
-Test đặt cạnh harness e2e sẵn có, tên chứa `preqc-{taskId}`, mỗi case mang **ID của AC**
-trong tên để grep ngược được:
+Put the tests next to the existing e2e harness, name them with `preqc-{taskId}`, and carry the **AC's ID**
+in each case name so it can be grepped back:
 
 ```
-it('AC-01 — <hành vi người dùng>', …)      // hoặc: func TestAC01_… / def test_ac01_…
+it('AC-01 — <user-visible behaviour>', …)      // or: func TestAC01_… / def test_ac01_…
 ```
 
-Assertion phải cụ thể — **trạng thái sau hành động**, không phải "element tồn tại":
-URL sau khi submit, giá trị vừa tạo xuất hiện trong danh sách, nút bị disable khi thiếu field.
+Assertions must be specific — **the state after the action**, not "the element exists":
+the URL after submit, the newly created value appearing in the list, the button disabled when a field is missing.
 
-**Live backend hay intercept?** AC nói về *dữ liệu và luồng nghiệp vụ thật* → login thật,
-backend thật. AC nói về *cách UI phản ứng với một state* (rỗng, lỗi, 403, chuỗi quá dài)
-→ intercept request để ghim state đó.
+**Live backend or intercept?** The AC is about *real data and real business flow* → real login,
+real backend. The AC is about *how the UI reacts to a state* (empty, error, 403, over-long string)
+→ intercept the request to pin that state.
 
-Ghi output ra file rồi `Read` file đó — pipe qua shell làm hỏng ký tự khung của nhiều runner.
+Write the output to a file then `Read` that file — piping through a shell mangles the box-drawing characters of many runners.
 
-### 4b. Tầng chạy thật (service/API, CLI, job, library — không có UI)
+### 4b. Really-run-it layer (service/API, CLI, job, library — no UI)
 
-Cùng kỷ luật, khác bề mặt: gọi thật vào interface mà người dùng thật sự dùng.
+Same discipline, different surface: make a real call into the interface people actually use.
 
-| Loại | Chạm thật là | Assert cái gì |
+| Type | Real contact is | Assert what |
 | --- | --- | --- |
-| HTTP API | request thật tới service đang chạy (test container / instance local) | status code · shape response · **state sau đó**: đọc lại, hoặc query DB, thấy đúng thứ vừa ghi |
-| CLI | chạy binary/lệnh với arg thật | exit code · stdout/stderr · file hoặc DB nó tạo ra |
-| Job / worker | đẩy một message/record thật rồi chờ | side effect: bản ghi, file, message ra |
-| Library | gọi hàm public như người dùng ngoài | giá trị trả về · lỗi ném ra · trạng thái sau |
+| HTTP API | a real request to the running service (test container / local instance) | status code · response shape · **the state afterwards**: read it back, or query the DB, and see what you just wrote |
+| CLI | run the binary/command with real args | exit code · stdout/stderr · the file or DB rows it creates |
+| Job / worker | push a real message/record then wait | the side effect: a record, a file, an outgoing message |
+| Library | call the public function the way an outside user would | return value · thrown errors · state afterwards |
 
-Bẫy riêng của BE, soi kỹ:
+Backend-specific traps, look hard:
 
-- **Migration** chạy được cả chiều lên và xuống? Có dữ liệu sẵn thì sao?
-- **Transaction** — lỗi giữa chừng có rollback sạch không, hay để lại bản ghi mồ côi?
-- **Idempotency** — gọi cùng request hai lần có tạo hai bản ghi không?
-- **Authz** — user thiếu quyền gọi endpoint này: 403 hay lọt?
-- **Validate ở biên** — payload rỗng, field thừa, type sai, số âm, chuỗi quá dài.
-- **N+1 query** hoặc thiếu index trên đường AC đi qua.
-- **Rò rỉ** — log/response có in secret, PII, stack trace ra ngoài không?
+- **Migrations** — do they run both up and down? What happens when data already exists?
+- **Transactions** — does a failure halfway roll back cleanly, or leave orphan records?
+- **Idempotency** — does the same request twice create two records?
+- **Authz** — a user without the permission calls this endpoint: 403, or does it go through?
+- **Boundary validation** — empty payload, extra fields, wrong type, negative numbers, over-long strings.
+- **N+1 queries** or a missing index on the path the AC goes through.
+- **Leaks** — do logs/responses print secrets, PII, or a stack trace to the outside?
 
-Tương đương "console error / network 4xx-5xx" của FE là: **log ERROR/WARN mới** và
-**exception nuốt im lặng** trên đường AC đi qua. Có là finding, kể cả khi AC vẫn pass.
+The equivalent of the FE's "console error / network 4xx-5xx" is: **new ERROR/WARN logs** and
+**silently swallowed exceptions** on the path the AC goes through. Either one is a finding, even if the AC still passes.
 
-### 5. Tầng exploratory + visual
+### 5. Exploratory + visual layer
 
-Sau khi critical đã xanh, thu thập trên chính đường AC vừa đi.
+Once critical is green, collect along the same AC path you just walked.
 
-**Có UI:** bắt console error, `pageerror`, và response ≥ 400 trong cùng phiên browser. Rồi tự kiểm:
-nút submit có disable khi thiếu field bắt buộc? message validate có đúng chỗ? layout vỡ ở màn hẹp?
-bấm Lưu hai lần có tạo hai bản ghi?
+**With a UI:** capture console errors, `pageerror`, and responses ≥ 400 in the same browser session. Then check yourself:
+does the submit button disable when a required field is missing? is the validation message in the right place? does the layout break at a narrow width?
+does pressing Save twice create two records?
 
-**Không UI:** bắt log ERROR/WARN mới và exception bị nuốt. Rồi tự kiểm theo bảng bẫy BE ở §4b —
-double-call, rollback, authz, payload biên.
+**No UI:** capture new ERROR/WARN logs and swallowed exceptions. Then check yourself against the BE trap table in §4b —
+double-call, rollback, authz, boundary payloads.
 
-Mỗi phát hiện phân loại: **BLOCKING** (sai AC / mất dữ liệu / lỗi JS / API 5xx) — **NON-BLOCKING** (cosmetic, ghi nhận cho QC) — **UNCERTAIN** (không chắc đúng sai → hỏi user, đừng tự phán).
+Classify every finding: **BLOCKING** (violates an AC / data loss / JS error / API 5xx) — **NON-BLOCKING** (cosmetic, noted for QC) — **UNCERTAIN** (not sure whether it is wrong → ask the user, do not rule on it yourself).
 
-Console error / API 4xx-5xx trên đường đi của AC = **BLOCKING**, kể cả khi AC vẫn pass.
+A console error / API 4xx-5xx on the AC's path = **BLOCKING**, even if the AC still passes.
 
-### 6. Chấm điểm
+### 6. Scoring
 
-PASS chỉ khi **tất cả** đúng:
+PASS only when **all** of these hold:
 
-| Hạng mục | Điều kiện |
+| Item | Condition |
 | --- | --- |
-| Toàn bộ lệnh ProjectRules §7 | xanh, output thật |
-| Critical scenario | 100% pass, có log thật |
-| AC coverage | mọi AC → automated pass, hoặc manual có lý do rõ |
-| Lỗi runtime | không error mới — console (UI) / log ERROR (service) |
-| Lỗi tầng giao tiếp | không 4xx/5xx ngoài dự kiến (UI) · không exception nuốt im lặng (service) |
-| Exploratory | không có finding BLOCKING |
+| Every ProjectRules §7 command | green, real output |
+| Critical scenarios | 100% pass, with real logs |
+| AC coverage | every AC → automated pass, or manual with a stated reason |
+| Runtime errors | no new errors — console (UI) / ERROR logs (service) |
+| Transport-layer errors | no unexpected 4xx/5xx (UI) · no silently swallowed exceptions (service) |
+| Exploratory | no BLOCKING finding |
 
-Một ô đỏ → **FAIL**. Không có "pass với điều kiện". Không tự hạ AC xuống manual để né đỏ.
+One red cell → **FAIL**. There is no "conditional pass". Do not demote an AC to manual to dodge a red cell.
 
-Còn **UNCERTAIN** chưa được user trả lời → kết quả là **UNCERTAIN**, không phải PASS.
+An **UNCERTAIN** the user has not answered yet → the result is **UNCERTAIN**, not PASS.
 
-### 7. Evidence — MỘT file
+### 7. Evidence — ONE file
 
-`docs/tasks/fixes/preqc-{taskId}-{slug}.md`, tiếng Việt, output thật, không tô hồng:
+`docs/tasks/fixes/preqc-{taskId}-{slug}.md`, prose in `harness.config.json → docLanguage`, real output, no sugar-coating:
 
 ```markdown
-# Pre-QC {taskId} — {tên task}
+# Pre-QC {taskId} — {task name}
 
-**Kết quả: PASS | FAIL | UNCERTAIN**  ·  {ngày}  ·  tầng chạy thật: {browser | api | cli | none — lý do}
+**Verdict: PASS | FAIL | UNCERTAIN**  ·  {date}  ·  really-run-it layer: {browser | api | cli | none — reason}
 
 ## AC coverage
-| AC | Scenario | Test | Kết quả |
+| AC | Scenario | Test | Result |
 | --- | --- | --- | --- |
 | AC-01 | … | `<test file>::AC-01 — …` | PASS |
-| AC-04 | … | manual — cần SSO tài khoản HR | MANUAL |
+| AC-04 | … | manual — needs an HR SSO account | MANUAL |
 
-## Tầng tĩnh
-| Lệnh (ProjectRules §7) | Kết quả |
+## Static layer
+| Command (ProjectRules §7) | Result |
 | --- | --- |
-| `<lệnh type-check>` | 0 lỗi |
-| `<lệnh lint>` | sạch |
-| `<lệnh unit scope>` | 12/12 passed |
+| `<type-check command>` | 0 errors |
+| `<lint command>` | clean |
+| `<scoped unit command>` | 12/12 passed |
 
 ## Exploratory
-- BLOCKING — {mô tả} · expected: … · actual: … · `/tmp/preqc-*.png`
-- NON-BLOCKING — {mô tả}
+- BLOCKING — {description} · expected: … · actual: … · `/tmp/preqc-*.png`
+- NON-BLOCKING — {description}
 
-## Lỗi runtime
-- console / log ERROR: 0
-- network 4xx-5xx / exception nuốt: 0
+## Runtime errors
+- console / ERROR logs: 0
+- network 4xx-5xx / swallowed exceptions: 0
 
-## Kết luận
-PASS → READY FOR QC. | FAIL → trả DEV, lý do: …
+## Conclusion
+PASS → READY FOR QC. | FAIL → back to DEV, reason: …
 ```
 
-Screenshot của mỗi finding: lưu `/tmp/preqc-{taskId}-{n}.png`, trỏ đường dẫn trong file.
+A screenshot per finding: save to `/tmp/preqc-{taskId}-{n}.png`, reference the path in the file.
 
-### 8. Báo về ClickUp — chỉ khi user yêu cầu
+### 8. Reporting back to ClickUp — only when the user asks
 
-Comment vào ClickUp và đổi status là **hành động ra ngoài**: chỉ làm khi user nói rõ.
-Mặc định: báo kết quả trong chat + đường dẫn file evidence, để user quyết.
+Commenting on ClickUp and changing the status is an **outward action**: only do it when the user says so explicitly.
+Default: report the result in chat plus the path to the evidence file, and let the user decide.
 
-Khi được yêu cầu, gọi tool thêm bình luận của tracker MCP với đúng nội dung file evidence (rút gọn), kèm câu cuối:
-`Recommendation: READY FOR QC` hoặc `Recommendation: BACK TO DEV`.
+When asked, call the tracker MCP's add-comment tool with the evidence file's content (condensed), ending with:
+`Recommendation: READY FOR QC` or `Recommendation: BACK TO DEV`.
 
-## Ranh giới
+## Boundaries
 
-- **Không sửa `src/`.** Thấy root cause thì viết vào evidence và nói với user; sửa là việc của `fix-bug`.
-- **Không xoá/sửa test có sẵn** để cho xanh. Test cũ đỏ là finding, không phải chướng ngại.
-- **Backend thật = dữ liệu thật.** Mỗi lần click tạo ticket là một bản ghi có thật trên dev (UI có thể không có modal confirm). Tạo ít nhất có thể, ghi lại id đã tạo trong evidence.
-- **Không PASS vì browser chạy hết luồng.** Chỉ assertion mới PASS được.
+- **Do not touch `src/`.** Found the root cause? Write it in the evidence and tell the user; fixing is `fix-bug`'s job.
+- **Do not delete or edit existing tests** to make things green. An old test going red is a finding, not an obstacle.
+- **A real backend means real data.** Every click that creates a ticket is a real record on dev (the UI may have no confirm modal). Create as few as possible, and record the ids you created in the evidence.
+- **Do not PASS because the browser walked the whole flow.** Only an assertion can PASS.
 
-## Sai lầm hay gặp
+## Common mistakes
 
-| Cám dỗ | Thực tế |
+| Temptation | Reality |
 | --- | --- |
-| "Test tích hợp chậm quá, unit phủ rồi" | Unit mock đúng lớp đang cần kiểm → không chứng minh được hệ thống thật hoạt động. Đó chính là loại bug lọt QC. |
-| "Console error này có sẵn từ trước" | Vẫn ghi vào evidence là NON-BLOCKING kèm ghi chú, để QC không mất thời gian điều tra lại. |
-| "AC-04 khó test, cho vào manual" | Manual chỉ dành cho chặn bởi hệ thống ngoài. Khó ≠ manual. |
-| "Chỉ còn mỗi lint đỏ, PASS đi" | Một ô đỏ = FAIL. Cổng có ngoại lệ là cổng mở. |
-| "Tôi thấy màn hình ổn" / "response nhìn đúng rồi" | Nhìn không phải assertion. Viết assert hoặc đừng tính là verified. |
-| "Service này không có UI nên bỏ tầng chạy thật" | Không UI ≠ không chạy được. Gọi HTTP/CLI/hàm public — §4b. |
+| "Integration tests are too slow, units already cover it" | The unit mocks exactly the layer under test → it proves nothing about the real system working. That is precisely the class of bug that reaches QC. |
+| "This console error was already there" | Still record it in the evidence as NON-BLOCKING with a note, so QC does not waste time re-investigating it. |
+| "AC-04 is hard to test, put it in manual" | Manual is only for things blocked by an external system. Hard ≠ manual. |
+| "Only lint is red, just PASS it" | One red cell = FAIL. A gate with exceptions is an open gate. |
+| "The screen looks fine to me" / "the response looks right" | Looking is not an assertion. Write the assert or do not count it as verified. |
+| "This service has no UI so skip the really-run-it layer" | No UI ≠ cannot be run. Call the HTTP/CLI/public function — §4b. |

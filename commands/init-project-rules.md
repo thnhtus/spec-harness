@@ -1,107 +1,113 @@
 ---
-description: BẮT BUỘC sau khi cài harness — dò repo rồi điền docs/agents/ProjectRules.md (§1 MCP · §2 guardrail · §3 nhánh · §7 lệnh) + harness.config.json (repos, layers, models, evidenceCommandPattern)
-argument-hint: (không cần tham số)
+description: REQUIRED after installing the harness — probe the repo, then fill in docs/agents/ProjectRules.md (§1 MCP · §2 guardrail · §3 branches · §7 commands) + harness.config.json (repos, layers, models, evidenceCommandPattern)
+argument-hint: (no arguments needed)
 ---
 
-**Bước bắt buộc sau khi cài harness.** `install.mjs` chỉ chép file; nó không biết
-project dùng stack gì, tracker nào, nhánh đặt tên ra sao. Chưa chạy lệnh này thì
-`ProjectRules.md` và `harness.config.json` còn là khung rỗng — gate không có gì
-để kiểm.
+**Required step after installing the harness.** `install.mjs` only copies files; it
+does not know what stack the project uses, which tracker, how branches are named.
+Until you run this command, `ProjectRules.md` and `harness.config.json` are still
+empty skeletons — the gates have nothing to check.
 
-Điền hai file:
+Fill in two files:
 
-| File | Mục |
+| File | Sections |
 | --- | --- |
-| `docs/agents/ProjectRules.md` | §1 nguồn truth MCP · §2 guardrail source · §3 quy tắc nhánh · §7 lệnh kiểm tra |
+| `docs/agents/ProjectRules.md` | §1 MCP source of truth · §2 guardrail source · §3 branch rules · §7 verification commands |
 | `harness.config.json` | `repos` · `layers` · `models` · `evidenceCommandPattern` + `evidenceSampleCommand` + `evidenceNegativeSamples` |
 
-**Nhận biết bố cục trước tiên** — nó quyết định `repos`:
+**Identify the layout first** — it determines `repos`:
 
-- `harness.config.json` nằm **trong** repo code (`git rev-parse --show-toplevel`
-  = thư mục chứa config) → `repos: [{ name, path: ".", layer }]`.
-- Nằm **cạnh** các repo code (thư mục chứa config là repo riêng, `ls ..` thấy
-  repo anh em) → mỗi repo code một entry, `path` là `../<tên>`. Hỏi user repo
-  nào thuộc layer nào nếu không suy ra được từ manifest.
+- `harness.config.json` sits **inside** the code repo (`git rev-parse --show-toplevel`
+  = the directory holding the config) → `repos: [{ name, path: ".", layer }]`.
+- It sits **next to** the code repos (the directory holding the config is its own
+  repo, `ls ..` shows sibling repos) → one entry per code repo, `path` is
+  `../<name>`. Ask the user which repo belongs to which layer if you cannot infer
+  it from the manifest.
 
-**Giữ nguyên số mục 1/2/3/7.** Kernel tham chiếu chéo bằng số (`SharedRules §2`
-= mục 2 của file này). Đừng đánh lại số, đừng chèn mục mới xen giữa.
+**Keep section numbers 1/2/3/7 as they are.** The kernel cross-references by number
+(`SharedRules §2` = section 2 of this file). Do not renumber, do not insert new
+sections in between.
 
-## Nguyên tắc
+## Principles
 
-- **Dò trước, hỏi sau.** Phần lớn 4 mục suy ra được từ repo. Chỉ hỏi user thứ
-  không có trong file nào (quy ước tên nhánh, nhánh đích).
-- **Không bịa.** Không tìm thấy thì để `<…>` kèm `TODO:` — người đọc thấy ngay
-  chỗ trống còn hơn đọc một dòng sai mà tin.
-- **Viết cái đã biết, không viết cho đủ.** §2 đắt nhất khi viết vội; phần lớn
-  giá trị của nó đến sau sự cố thật. Ba dòng đúng hơn hai mươi dòng đoán.
+- **Probe first, ask second.** Most of the 4 sections can be inferred from the
+  repo. Only ask the user for what is in no file (branch naming convention,
+  target branch).
+- **Do not invent.** If you cannot find it, leave `<…>` with a `TODO:` — a reader
+  seeing the gap immediately beats a reader believing a wrong line.
+- **Write what you know, not what fills the page.** §2 is most expensive when
+  written in a hurry; most of its value arrives after a real incident. Three
+  correct lines beat twenty guessed ones.
 
-## Bước 1 — dò
+## Step 1 — probe
 
-Chạy song song, đọc kết quả rồi mới viết:
+Run these in parallel, read the results, and only then write:
 
-| Cần biết | Dò ở đâu |
+| What you need | Where to probe |
 | --- | --- |
-| MCP server (§1) | `.mcp.json` ở repo root — lấy đúng key trong `mcpServers` |
-| Stack (§2) | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml`… — dependencies chính |
-| Layout thư mục (§2) | `ls src/` (hoặc gốc source tương đương), 2 cấp |
-| Guardrail có sẵn (§2) | `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `.cursorrules`, `docs/*RULES*` — nếu có thì **trích ngắn + link**, đừng chép cả file |
-| Nhánh protected + nhánh đích (§3) | `git branch -r`, `git symbolic-ref refs/remotes/origin/HEAD` |
-| Tên nhánh đang dùng (§3) | `git branch --format='%(refname:short)' \| head -20` — suy ra công thức thật của team |
-| Lệnh test/lint/build (§7) | `scripts` trong `package.json`, `Makefile`, `justfile`, `tox.ini`, CI workflow (`.github/workflows/*.yml`) |
-| Lệnh watch/server cấm agent (§7) | cùng nguồn — lệnh nào không tự kết thúc (`dev`, `watch`, `serve`, `--watch`) |
-| Repo BE cùng cấp (§1, bậc 2) | `ls ..` — có repo anh em nào là backend của project này không (tên gợi ý: `*-service`, `*-api`, `*-backend`) |
-| Swagger/OpenAPI (§1, bậc 3) | `.claude/skills/api-docs-sync/services.json`, hoặc URL swagger trong README / `.env.example` / docker-compose |
-| `models` cho `harness.config.json` | CLI đang dùng là gì (Claude Code / Codex / khác) → map `cheap`/`mid`/`strong` sang tên model của nó; không rõ → để `{}` |
-| `repos` cho `harness.config.json` | `harness.config.json` nằm trong repo code hay repo riêng? (`git rev-parse --show-toplevel` so với cwd) · `ls ..` tìm repo anh em · điền `[{name,path,layer}]`, `path: "."` nếu cùng repo |
-| `layers` cho `harness.config.json` | repo là FE, BE, hay monorepo? (`ls`, `go.mod`/`package.json`/`pyproject.toml` ở đâu) — ghi vào `layers`, vd `["frontend"]` hoặc `["frontend","backend"]` |
-| Tầng chạy thật khi verify (§7) | có UI không? có harness e2e/integration sẵn không (`e2e/`, `test/integration/`, `*_test.go`, `conftest.py`) |
+| MCP server (§1) | `.mcp.json` at the repo root — take the exact key in `mcpServers` |
+| Stack (§2) | `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml`… — the main dependencies |
+| Directory layout (§2) | `ls src/` (or the equivalent source root), 2 levels |
+| Existing guardrails (§2) | `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `.cursorrules`, `docs/*RULES*` — if present, **quote briefly + link**, do not copy the whole file |
+| Protected branch + target branch (§3) | `git branch -r`, `git symbolic-ref refs/remotes/origin/HEAD` |
+| Branch names in use (§3) | `git branch --format='%(refname:short)' \| head -20` — infer the team's actual formula |
+| Test/lint/build commands (§7) | `scripts` in `package.json`, `Makefile`, `justfile`, `tox.ini`, CI workflow (`.github/workflows/*.yml`) |
+| Watch/server commands the agent must not run (§7) | same sources — any command that does not terminate on its own (`dev`, `watch`, `serve`, `--watch`) |
+| Sibling BE repo (§1, tier 2) | `ls ..` — is any sibling repo the backend of this project (name hints: `*-service`, `*-api`, `*-backend`) |
+| Swagger/OpenAPI (§1, tier 3) | `.claude/skills/api-docs-sync/services.json`, or a swagger URL in README / `.env.example` / docker-compose |
+| `models` for `harness.config.json` | which CLI is in use (Claude Code / Codex / other) → map `cheap`/`mid`/`strong` to its model names; unclear → leave `{}` |
+| `repos` for `harness.config.json` | is `harness.config.json` inside the code repo or its own repo? (`git rev-parse --show-toplevel` versus cwd) · `ls ..` to find sibling repos · fill in `[{name,path,layer}]`, `path: "."` if same repo |
+| `layers` for `harness.config.json` | is the repo FE, BE, or a monorepo? (`ls`, where `go.mod`/`package.json`/`pyproject.toml` live) — write into `layers`, e.g. `["frontend"]` or `["frontend","backend"]` |
+| The layer actually exercised when verifying (§7) | is there a UI? is there an existing e2e/integration harness (`e2e/`, `test/integration/`, `*_test.go`, `conftest.py`) |
 
-Repo có `CLAUDE.md`/`AGENTS.md` thì đó là nguồn tốt nhất cho §2 — **link về nó**
-thay vì chép lại, tránh hai bản lệch nhau.
+If the repo has `CLAUDE.md`/`AGENTS.md`, that is the best source for §2 — **link to
+it** instead of copying, so the two copies cannot drift.
 
-## Bước 2 — hỏi user đúng cái không dò được
+## Step 2 — ask the user exactly what you could not probe
 
-Gộp **một lần** bằng AskUserQuestion, chỉ hỏi phần còn trống sau bước 1:
+Batch it into **one** AskUserQuestion, asking only what is still blank after step 1:
 
-1. Công thức tên nhánh (nếu `git branch` không cho ra pattern rõ).
-2. Nhánh đích để tạo nhánh mới (`develop` hay `main`) — nếu cả hai cùng tồn tại.
-3. Lệnh nào là **evidence Gate 4 mặc định** — nếu có nhiều lệnh test và không
-   rõ cái nào chạy giới hạn path.
-4. Repo BE cùng cấp: dò thấy ứng viên thì **xác nhận đúng repo không**; không
-   thấy thì hỏi URL Swagger để điền `services.json` của skill `api-docs-sync`.
+1. The branch naming formula (if `git branch` does not yield a clear pattern).
+2. The target branch to cut new branches from (`develop` or `main`) — if both exist.
+3. Which command is the **default Gate 4 evidence** — if there are several test
+   commands and it is unclear which one runs path-limited.
+4. Sibling BE repo: if you found a candidate, **confirm it is the right repo**; if
+   you found none, ask for the Swagger URL to fill in the `api-docs-sync` skill's
+   `services.json`.
 
-Dò ra rồi thì đừng hỏi lại.
+If you already probed it, do not ask again.
 
-## Bước 3 — viết
+## Step 3 — write
 
-Ghi đè `docs/agents/ProjectRules.md`, giữ nguyên khung 4 mục của template
-(`adapters/ProjectRules.template.md` là bản gốc). Xoá dòng `<!-- CHƯA-ĐIỀN: … -->`.
+Overwrite `docs/agents/ProjectRules.md`, keeping the template's 4-section skeleton
+(`adapters/ProjectRules.template.md` is the original). Delete the `<!-- NOT-FILLED-IN: … -->` lines.
 
-Mục 7 có ràng buộc cứng: **mọi lệnh liệt kê phải khớp `evidenceCommandPattern`
-trong `harness.config.json`**. Lệch là Gate 4 không nhận evidence dù test xanh.
-Nên sau khi viết §7, cập nhật luôn `harness.config.json`:
+Section 7 has a hard constraint: **every command listed must match
+`evidenceCommandPattern` in `harness.config.json`**. A mismatch means Gate 4
+rejects the evidence even when the tests are green. So right after writing §7,
+update `harness.config.json` too:
 
-- `evidenceCommandPattern` — regex phủ đúng bộ lệnh vừa viết
-- `evidenceSampleCommand` — một lệnh thật, phải khớp pattern đó
-- `evidenceNegativeSamples` — ≥2 lệnh **không được** khớp (dev server, watch mode…). Pattern chỉ phải *nhận* sample thì `npm run .*` vẫn xanh; đây là chiều ngược lại
+- `evidenceCommandPattern` — a regex covering exactly the set of commands you just wrote
+- `evidenceSampleCommand` — a real command, must match that pattern
+- `evidenceNegativeSamples` — ≥2 commands that **must not** match (dev server, watch mode…). If the pattern only has to *accept* the sample, `npm run .*` stays green; this is the opposite direction
 
-## Bước 4 — verify (bắt buộc, đừng báo xong khi chưa chạy)
+## Step 4 — verify (required, do not report done before running it)
 
 ```bash
 node scripts/validate-tasks.mjs --preflight
 ```
 
-`--preflight` bao gồm `--self-check`, cộng hai thứ self-check không thấy: CLI có
-đang mở đúng thư mục để nạp `.claude/settings.json` không, và `repos[].path` có
-resolve được không.
+`--preflight` includes `--self-check`, plus two things self-check cannot see:
+whether the CLI is open in the right directory to load `.claude/settings.json`,
+and whether `repos[].path` resolves.
 
-Fail ở `evidenceSampleCommand` = pattern và lệnh lệch nhau → sửa, chạy lại.
-Fail ở `evidenceNegativeSamples` = pattern viết quá rộng → thu hẹp, đừng xoá sample.
-Đây là cái bắt lỗi cấu hình khiến mọi gate sau đó im lặng no-op.
+A failure on `evidenceSampleCommand` = the pattern and the command disagree → fix it, run again.
+A failure on `evidenceNegativeSamples` = the pattern is written too broadly → narrow it, do not delete the sample.
+This is what catches the configuration error that makes every later gate a silent no-op.
 
-Rồi báo user, ngắn:
+Then report to the user, briefly:
 
-- 4 mục: mục nào dò ra, mục nào còn `TODO:`
-- Dòng `evidenceCommandPattern` đã đặt
-- Kết quả `--self-check`
-- Nhắc: §2 sẽ đúng dần sau mỗi lần agent làm sai — không cần viết đủ ngay
+- the 4 sections: which were probed, which still carry `TODO:`
+- the `evidenceCommandPattern` line you set
+- the `--self-check` result
+- a reminder: §2 gets more correct after each time the agent gets something wrong — no need to write it all now

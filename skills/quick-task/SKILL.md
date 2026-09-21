@@ -1,141 +1,146 @@
 ---
 name: quick-task
-description: Use when the user wants to do a ClickUp task directly, without the docs/ FE harness — e.g. "làm task <id> nhưng không chạy harness", "quick task <url>", "fix this task, skip the docs flow", "no harness". Reads the task from ClickUp, implements it in the current tree, and verifies with the repo's one-shot commands. No task folder, no FSD, no gates, no subagents.
+description: Use when the user wants to do a ClickUp task directly, without the docs/ FE harness — e.g. "do task <id> but don't run the harness", "quick task <url>", "fix this task, skip the docs flow", "no harness". Reads the task from ClickUp, implements it in the current tree, and verifies with the repo's one-shot commands. No task folder, no FSD, no gates, no subagents.
 ---
 
-# quick-task — làm task, bỏ qua harness
+# quick-task — do the task, skip the harness
 
-Đối lập với `/start-task`: cùng nguồn truth (ClickUp), cùng guardrail `src/`,
-cùng lệnh kiểm tra — nhưng **không** tạo `docs/tasks/**`, không FSD/review/plan,
-không gate, không dispatch subagent. Bạn tự làm, trong context này.
+The opposite of `/start-task`: same source of truth (ClickUp), same `src/`
+guardrails, same verification commands — but it does **not** create
+`docs/tasks/**`, no FSD/review/plan, no gates, no subagent dispatch. You do the
+work yourself, in this context.
 
-Dùng khi user nói rõ "không chạy harness" / "quick" / "skip docs flow".
-User **chưa** nói vậy mà đưa link ClickUp → dùng `/start-task`.
+Use it when the user explicitly says "no harness" / "quick" / "skip docs flow".
+The user has **not** said that and just hands you a ClickUp link → use `/start-task`.
 
-**"Đủ nhỏ" có định nghĩa, không phải cảm giác.** Chấm vector 8 chiều
-(`docs/Agents.md` §5.1) rồi hỏi:
+**"Small enough" has a definition, it is not a feeling.** Score the 8-dimension
+vector (`docs/Agents.md` §5.1), then ask:
 
 ```bash
 node scripts/validate-tasks.mjs --triage '<vector JSON>' --task-id <taskId>
 ```
 
-Verdict `harness` (exit 10) → **nói với user**, đừng im lặng chạy tiếp. Task một
-file nhưng `blastRadius ≥ 2` là ca điển hình trông như quick-task mà không phải.
-User vẫn muốn bỏ qua → `--force "<lý do>"` để có dấu vết.
+Verdict `harness` (exit 10) → **tell the user**, do not silently keep going. A
+one-file task with `blastRadius ≥ 2` is the classic case that looks like a
+quick-task and is not. The user still wants to skip → `--force "<reason>"` so it
+leaves a trace.
 
 ## Flow
 
-### 1. Đọc task (đừng đoán)
-Tool đọc task của tracker MCP (tự tìm trong tool của phiên — ProjectRules §1) với id (bỏ tiền tố `#`, `CU-`, URL). Đọc description,
-comment, parent. Thiếu thông tin để quyết định → **hỏi user**, đừng bịa AC.
+### 1. Read the task (do not guess)
+The tracker MCP's read-task tool (find it among the session's tools — ProjectRules §1) with the id (strip the `#`, `CU-`, URL prefixes). Read the description,
+comments, parent. Missing the information you need to decide → **ask the user**, do not invent ACs.
 
-Ghi lại trong đầu: AC là gì, màn hình nào, file nào có khả năng đụng.
+Note down: what the ACs are, which screen, which files you are likely to touch.
 
-### 2. Định vị trước khi sửa
-Grep/đọc luồng thật end-to-end trước khi viết dòng đầu tiên. Sửa ở chỗ mọi
-caller đi qua, không vá riêng đường mà ticket nhắc tên.
+### 2. Locate before you change anything
+Grep/read the real flow end-to-end before writing the first line. Fix where every
+caller passes through, do not patch only the path the ticket happens to name.
 
-Nhiều task E-TICKET **đã ship sẵn trên `develop`** — kiểm tra trước, có thể
-deliverable chỉ là một regression test.
+Many E-TICKET tasks **already shipped on `develop`** — check first, the
+deliverable may be just a regression test.
 
-### 3. Guardrail `src/` (bắt buộc, y hệt harness)
-Nguồn chuẩn: `docs/agents/SharedRules.md` §2. Tóm tắt phần hay vi phạm:
+### 3. `src/` guardrails (mandatory, identical to the harness)
+Normative source: `docs/agents/SharedRules.md` §2. Summary of the parts most often violated:
 
-- Request → `src/api/apiClient.ts`. Không axios instance riêng, không hardcode base URL.
-- Server state → `@tanstack/react-query` trong `queries/`. Không `useState`+`useEffect` tự quản.
-- API mới đi theo chuỗi: `interfaces/` → `api/` → `queries/` → `pages/`|`components/`.
-- `try/catch` lỗi BE → `normalizeErrorHelper(error)` (`src/helpers/normalize_errors.helper.ts`).
-- Bảng danh sách / popup / filter → đọc `docs/DESIGN_RULES.md` trước.
-- Không thêm dependency mới.
+- Requests → `src/api/apiClient.ts`. No separate axios instance, no hardcoded base URL.
+- Server state → `@tanstack/react-query` in `queries/`. No hand-rolled `useState`+`useEffect`.
+- A new API follows the chain: `interfaces/` → `api/` → `queries/` → `pages/`|`components/`.
+- `try/catch` on BE errors → `normalizeErrorHelper(error)` (`src/helpers/normalize_errors.helper.ts`).
+- List tables / popups / filters → read `docs/DESIGN_RULES.md` first.
+- No new dependencies.
 
-### 4. Nhánh
-Đang ở nhánh không-protected của user → **giữ nguyên**, không checkout, không tạo nhánh.
-Đang ở `main`/`develop`/`staging`/`release/*` → dừng, hỏi user muốn nhánh nào.
-Không `git stash`, không `git reset --hard`, không `git checkout -- …`.
+### 4. Branch
+Already on the user's non-protected branch → **leave it**, no checkout, no new branch.
+On `main`/`develop`/`staging`/`release/*` → stop, ask the user which branch they want.
+No `git stash`, no `git reset --hard`, no `git checkout -- …`.
 
-### 5. Verify — output thật, không phỏng đoán
+### 5. Verify — real output, not guesswork
 ```bash
-npm run test:scope -- <file test liên quan>
-npx tsc -b            # root --noEmit là no-op, phải dùng cái này
+npm run test:scope -- <related test file>
+npx tsc -b            # root --noEmit is a no-op, you must use this one
 npm run lint
 ```
-Logic không tầm thường → để lại **một** test chạy được (thêm vào file test sẵn có
-cùng feature nếu có; đừng dựng suite mới).
+Non-trivial logic → leave **one** runnable test behind (add it to an existing test
+file for the same feature if there is one; do not stand up a new suite).
 
-Baseline repo hiện có ~164 test fail sẵn trên `develop` — so **tập file fail**,
-đừng so tổng số.
+The repo baseline already has ~164 failing tests on `develop` — compare the **set
+of failing files**, not the total count.
 
-### 5b. E2E API thật — bắt buộc khi task đụng luồng UI/API
+### 5b. Real-API E2E — mandatory when the task touches a UI/API flow
 
-Unit test mock hết BE nên không bắt được lệch contract. Task nào chạm màn hình
-hoặc endpoint thì phải chạy thêm một vòng trên **API thật**.
+Unit tests mock the whole BE, so they cannot catch a contract drift. Any task
+that touches a screen or an endpoint has to run one more round against the
+**real API**.
 
-**Bước 1 — credentials.** `.env` phải có `VITE_E2E_CREDENTIAL_USERNAME` +
-`VITE_E2E_CREDENTIAL_PASSWORD` (login thật; `helpers/auth.ts` mặc định
-`admin` nếu thiếu). Không đọc trực tiếp được (`.env` bị `permissions.deny` +
-`sandbox.filesystem.denyRead`) — kiểm gián tiếp:
-
-```bash
-grep -c VITE_E2E_CREDENTIAL_USERNAME .env   # 0 → dừng, hỏi user
-```
-
-Không có worktree/`.env` → xem §2 của skill `fix-bug` (symlink `.env`).
-
-**Bước 2 — dev server riêng.** Cổng mặc định `3004` có thể đang chạy repo gốc
-(**không** có thay đổi của bạn). Luôn tự dựng một cổng trống:
+**Step 1 — credentials.** `.env` must have `VITE_E2E_CREDENTIAL_USERNAME` +
+`VITE_E2E_CREDENTIAL_PASSWORD` (a real login; `helpers/auth.ts` defaults to
+`admin` when they are missing). You cannot read it directly (`.env` is under
+`permissions.deny` + `sandbox.filesystem.denyRead`) — check indirectly:
 
 ```bash
-npx vite --port 3010 --strictPort > /tmp/dev.log 2>&1   # chạy nền
+grep -c VITE_E2E_CREDENTIAL_USERNAME .env   # 0 → stop, ask the user
 ```
 
-**Bước 3 — hai công cụ, hai pha, không thay thế nhau:**
+No worktree/`.env` → see §2 of the `fix-bug` skill (symlink `.env`).
 
-| | trả lời câu gì | để lại gì |
+**Step 2 — your own dev server.** The default port `3004` may be running the
+original repo (**without** your changes). Always bring up an empty port yourself:
+
+```bash
+npx vite --port 3010 --strictPort > /tmp/dev.log 2>&1   # in the background
+```
+
+**Step 3 — two tools, two phases, not substitutes for each other:**
+
+| | answers which question | leaves behind what |
 | --- | --- | --- |
-| **BrowserOS neo** | "thật sự chạy đúng không?" — thao tác tay trên UI thật, không viết code | không gì |
-| **Playwright** (`test:e2e:run`) | "lần sau còn đúng không?" | test ở lại repo + output dán vào evidence |
+| **BrowserOS neo** | "does it actually work?" — driving the real UI by hand, no code written | nothing |
+| **Playwright** (`test:e2e:run`) | "will it still work next time?" | a test that stays in the repo + output pasted into evidence |
 
-Mặc định: **neo trước** để xác nhận hành vi thật; thấy đúng rồi thì **đóng
-thành Playwright test** nếu luồng đáng giữ. Không chạy cùng một kiểm tra hai
-lần bằng hai trình duyệt — đó là lãng phí, không phải cẩn thận.
+Default: **neo first** to confirm the real behaviour; once it looks right,
+**freeze it into a Playwright test** if the flow is worth keeping. Do not run the
+same check twice in two browsers — that is waste, not diligence.
 
-Chỉ neo: luồng khó dựng state, hoặc chỉ cần nhìn một lần.
-Chỉ Playwright: neo lỗi/không có, hoặc luồng đã có sẵn file e2e.
+neo only: flows whose state is hard to set up, or that you only need to look at once.
+Playwright only: neo is broken/absent, or the flow already has an e2e file.
 
 **neo:**
 
 ```
-<browser-mcp>__name_session   → nhãn 2-3 từ + category (nếu server có)
-<browser-mcp>__run            → mở tab, điều hướng, điền, đọc, khẳng định
+<browser-mcp>__name_session   → a 2-3 word label + category (if the server has one)
+<browser-mcp>__run            → open a tab, navigate, fill, read, assert
 ```
 
-`run` gói cả vòng lặp (`browser.pages.newPage` → `observe().snapshot()` →
-`input().click/fill` → `read`) trong một lời gọi; tool lẻ (`tabs`, `snapshot`,
-`act`, `read`) chỉ dùng khi debug từng bước. Tab của agent khác / của user thì
-**không đụng** — `tabs action="list"` cho biết tab nào là của mình.
+`run` wraps the whole loop (`browser.pages.newPage` → `observe().snapshot()` →
+`input().click/fill` → `read`) in a single call; the individual tools (`tabs`,
+`snapshot`, `act`, `read`) are only for stepping through a debug session. Another
+agent's tabs / the user's tabs are **off limits** — `tabs action="list"` tells you
+which tabs are yours.
 
-⚠️ **Cookie theo origin.** Profile neo đăng nhập sẵn ở host deploy **không**
-dùng được trên `localhost:3010` — vẫn phải login bằng credential `.env` như
-thường. Session sẵn của neo chỉ lợi khi soi trên môi trường deploy.
+⚠️ **Cookies are per origin.** A neo profile already logged in on the deployed
+host does **not** carry over to `localhost:3010` — you still log in with the
+`.env` credentials as usual. neo's existing session only helps when you are
+poking at a deployed environment.
 
 **Playwright:**
 
 ```bash
-set -a; . ./.env; set +a          # vitest không tự nạp .env
+set -a; . ./.env; set +a          # vitest does not load .env by itself
 E2E_BASE_URL=http://localhost:3010 npm run test:e2e:run -- src/test/e2e/<file>.test.ts
 ```
 
-Mẫu live test có sẵn: `src/test/e2e/account-permissions-live.test.ts` (đọc
-credential từ `.env` ngay trong file, không cần export ra shell).
+There is a live-test template: `src/test/e2e/account-permissions-live.test.ts` (it
+reads the credentials from `.env` inside the file, no shell export needed).
 
-Chi tiết cạm bẫy e2e (đọc output bị mangle, node-save validator, stub form…):
-skill `verify`.
+e2e pitfalls in detail (mangled output, node-save validator, form stubs…):
+the `verify` skill.
 
-### 6. Báo cáo, rồi dừng
-Tóm tắt: đã sửa gì, file nào, output test/tsc/lint thật, còn gì chưa làm.
-`git commit` / `git push` / đổi status ClickUp: **chỉ khi user yêu cầu**.
+### 6. Report, then stop
+Summarize: what you changed, which files, the real test/tsc/lint output, what is left undone.
+`git commit` / `git push` / changing ClickUp status: **only when the user asks**.
 
-## Không làm
-- Không tạo `docs/tasks/sprint-*/…`, không `task.agent.json`, không `.agent-memory/`.
-- Không sửa `docs/srs/`, `docs/fsd/`, `docs/api/` (autogen).
-- Không dispatch subagent — quick nghĩa là một context.
+## Do not
+- Do not create `docs/tasks/sprint-*/…`, no `task.agent.json`, no `.agent-memory/`.
+- Do not touch `docs/srs/`, `docs/fsd/`, `docs/api/` (autogen).
+- Do not dispatch subagents — quick means one context.

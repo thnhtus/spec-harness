@@ -1,162 +1,170 @@
 ---
 name: fix-bug
-description: Use when the user wants a ClickUp bug fixed fast, without the docs/ FE harness — e.g. "fix bug <id>", "sửa bug <url>, khỏi harness", "debug ticket này rồi fix". Reads the ticket, isolates a worktree, reproduces the bug with a failing test, fixes the root cause, verifies, and writes ONE evidence file. No FSD, no SRS, no task folder, no gates, no subagents.
+description: Use when the user wants a ClickUp bug fixed fast, without the docs/ FE harness — e.g. "fix bug <id>", "fix bug <url>, skip the harness", "debug this ticket then fix it". Reads the ticket, isolates a worktree, reproduces the bug with a failing test, fixes the root cause, verifies, and writes ONE evidence file. No FSD, no SRS, no task folder, no gates, no subagents.
 ---
 
 # fix-bug — ticket → worktree → repro → fix → evidence
 
-Giữ đúng 3 thứ đáng giá của harness: **worktree cách ly**, **reproduce-first**,
-**evidence thật**. Bỏ hết phần giấy tờ: không FSD, không FSD-Review, không
-technical plan, không `task.agent.json`, không `.agent-memory/`, không gate,
-không subagent. Một context, một file evidence.
+Keeps the 3 things about the harness that are actually worth it: **isolated
+worktree**, **reproduce-first**, **real evidence**. Drops all the paperwork: no
+FSD, no FSD-Review, no technical plan, no `task.agent.json`, no `.agent-memory/`,
+no gates, no subagents. One context, one evidence file.
 
-Feature/task chung (không phải bug) → dùng `quick-task` hoặc `/start-task`.
+A general feature/task (not a bug) → use `quick-task` or `/start-task`.
 
-**Bug "nhỏ" có định nghĩa, không phải cảm giác.** Sau bước 1 (đọc ticket), chấm
-vector 8 chiều (`docs/Agents.md` §5.1) rồi hỏi:
+**A "small" bug has a definition, it is not a feeling.** After step 1 (read the
+ticket), score the 8-dimension vector (`docs/Agents.md` §5.1) and then ask:
 
 ```bash
 node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type bugfix --task-id <taskId>
 ```
 
-Verdict `harness` (exit 10) → **nói với user**, đừng im lặng chạy tiếp. Đúng
-lý do `riskFloor` tồn tại: bug race condition sửa một file nhưng lan cả service
-không phải bug nhỏ. User vẫn muốn bỏ qua → `--force "<lý do>"`.
+Verdict `harness` (exit 10) → **tell the user**, do not silently carry on. This
+is exactly why `riskFloor` exists: a race condition bug that touches one file but
+spreads across a whole service is not a small bug. The user still wants to skip
+it → `--force "<reason>"`.
 
 ## 1. Ticket
 
-Tool đọc task của tracker MCP (tự tìm trong tool của phiên — ProjectRules §1) với id (bỏ tiền tố `#`, `CU-`, phần URL). Đọc description +
-comment: **expected vs actual** và **các bước tái hiện**. Thiếu repro → hỏi
-user, đừng đoán triệu chứng.
+The tracker MCP's read-task tool (find it among the session's tools — ProjectRules §1) with the id (strip the `#`, `CU-`, URL prefixes). Read the description +
+comments: **expected vs actual** and **the steps to reproduce**. No repro → ask
+the user, do not guess the symptom.
 
-Rút ra: `slug` = kebab-case không dấu của tên task.
+Derive: `slug` = kebab-case, diacritics stripped, of the task name.
 
 ## 2. Worktree
 
-Theo đúng Step 0 của [`.claude/commands/start-task.md`](../../commands/start-task.md)
-— đọc file đó, đừng chép lại ở đây. Tóm tắt:
+Follow Step 0 of [`.claude/commands/start-task.md`](../../commands/start-task.md)
+exactly — read that file, do not duplicate it here. In short:
 
 ```bash
 # EnterWorktree name: task-{taskId}-{slug}   → .claude/worktrees/task-{taskId}-{slug}/
-git status --porcelain                        # phải rỗng, không thì DỪNG hỏi user
+git status --porcelain                        # must be empty, otherwise STOP and ask the user
 git fetch origin
-git switch -C {công-thức-nhánh} origin/{nhánh-đích}   # ProjectRules §3; EnterWorktree mọc từ origin/HEAD, phải sửa
+git switch -C {branch-formula} origin/{target-branch}   # ProjectRules §3; EnterWorktree branches off origin/HEAD, so this has to be corrected
 git branch -D worktree-task-{taskId}-{slug}
-cp -c -R <repo-gốc>/node_modules node_modules # CoW ~6s; KHÔNG symlink (tsBuildInfo dùng chung → lỗi type ảo)
+cp -c -R <main-repo>/node_modules node_modules # CoW ~6s; do NOT symlink (shared tsBuildInfo → phantom type errors)
 ```
 
-**Link `.env` ngay — đây là thứ mở khoá e2e API thật ở §5.** Worktree không có
-`.env` thì `VITE_API` rỗng, request đi vào hư không và credential e2e cũng
-không có:
+**Link `.env` right away — this is what unlocks the real e2e API in §5.** Without
+`.env` the worktree has an empty `VITE_API`, requests go nowhere, and the e2e
+credentials are missing too:
 
 ```bash
-ln -sfn <repo-gốc>/.env .env   # symlink; KHÔNG cp — cp phải *đọc* .env nên bị deny
+ln -sfn <main-repo>/.env .env   # symlink; do NOT cp — cp has to *read* .env, so it is denied
 ```
 
-`ln -s` chỉ *tạo* link nên chạy được, `cp` thì không. `.env` là file tĩnh
-chỉ-đọc nên hai worktree dùng chung vô hại (khác `node_modules`), và đã nằm
-trong `.gitignore` nên không bao giờ bị commit. Có symlink thì `npx vite` trong
-worktree tự nạp `VITE_API`.
+`ln -s` only *creates* a link, so it runs; `cp` does not. `.env` is a static
+read-only file, so two worktrees sharing it is harmless (unlike `node_modules`),
+and it is already in `.gitignore` so it can never be committed. With the symlink
+in place, `npx vite` inside the worktree picks up `VITE_API` on its own.
 
-Kiểm nhanh, không cần đọc nội dung:
+Quick check, without reading the contents:
 
 ```bash
-test -e .env && grep -c VITE_E2E_CREDENTIAL_USERNAME .env   # 1 → e2e login thật chạy được
+test -e .env && grep -c VITE_E2E_CREDENTIAL_USERNAME .env   # 1 → real e2e login works
 ```
 
-User nói "làm ngay trên tree hiện tại" → bỏ qua cả mục này.
+The user says "just do it on the current tree" → skip this whole section.
 
-## 3. Reproduce-first — bắt buộc, đây là phần không được bỏ
+## 3. Reproduce-first — mandatory, this is the part you do not get to skip
 
 ```
-Viết Vitest tái hiện bug
-  → npm run test:scope -- <file>   → FAIL đúng triệu chứng
-     (fail sai lý do = test viết sai → sửa test, chưa động vào src/)
-  → sửa code
+Write a Vitest that reproduces the bug
+  → npm run test:scope -- <file>   → FAIL with the right symptom
+     (failing for the wrong reason = the test is wrong → fix the test, do not touch src/ yet)
+  → fix the code
   → npm run test:scope -- <file>   → PASS
 ```
 
-Test này ở lại vĩnh viễn làm regression test. Thêm vào file test sẵn có cùng
-feature nếu có; đừng dựng suite mới.
+That test stays forever as a regression test. Add it to an existing test file for
+the same feature if there is one; do not stand up a new suite.
 
-**Không tái hiện được** → dừng, báo user, đừng "sửa mò" theo mô tả.
+**Cannot reproduce it** → stop, tell the user, do not "fix by guesswork" off the
+description.
 
-Bug chỉ thấy trên trình duyệt → dùng skill `verify`, ghi repro thủ công
-before/after vào evidence.
+Bug only visible in the browser → use the `verify` skill, and record the manual
+before/after repro in the evidence.
 
-## 4. Fix — root cause, diff tối thiểu
+## 4. Fix — root cause, minimal diff
 
-- Grep **mọi caller** của hàm sắp sửa trước khi sửa. Một guard trong hàm dùng
-  chung nhỏ hơn một guard ở từng caller — và vá riêng đường ticket nhắc tên thì
-  các caller anh em vẫn hỏng.
-- Không refactor lân cận, không đổi tên prop, không restyle, không "dọn tiện tay".
-- Không che triệu chứng: không `@ts-ignore`, không nuốt lỗi axios, không
-  skip/tắt test sẵn có đang fail.
-- Guardrail `src/` vẫn áp dụng — `docs/agents/SharedRules.md` §2. Hay vi phạm
-  nhất: request qua `src/api/apiClient.ts`, server state qua `queries/` +
-  react-query, lỗi BE qua `normalizeErrorHelper()`, không thêm dependency.
+- Grep **every caller** of the function you are about to change, before changing
+  it. One guard in the shared function is smaller than a guard at each caller —
+  and patching only the path the ticket names leaves the sibling callers broken.
+- No refactoring nearby, no renaming props, no restyling, no "tidying while I am
+  here".
+- Do not hide the symptom: no `@ts-ignore`, no swallowing axios errors, no
+  skipping/disabling an existing failing test.
+- The `src/` guardrails still apply — `docs/agents/SharedRules.md` §2. Most
+  commonly violated: requests go through `src/api/apiClient.ts`, server state
+  through `queries/` + react-query, BE errors through `normalizeErrorHelper()`,
+  no new dependencies.
 
 ## 5. Verify
 
 ```bash
-npm run test:scope -- <file test của bug>
-npx tsc -b            # root --noEmit là no-op
+npm run test:scope -- <the bug's test file>
+npx tsc -b            # --noEmit at the root is a no-op
 npm run lint
 ```
 
-`npm run test:run` (full suite) **chỉ khi** chạm barrel dùng chung. Baseline
-`develop` có sẵn ~164 test fail — so **tập file fail**, đừng so tổng số.
+`npm run test:run` (full suite) **only if** you touched a shared barrel. The
+`develop` baseline already has ~164 failing tests — compare the **set of failing
+files**, not the total count.
 
-**E2E API thật — setup y hệt §5b của skill `quick-task`**, không chép lại ở đây:
-dev server riêng trên cổng trống, rồi một MCP điều khiển browser nếu phiên có (vd BrowserOS neo, Playwright)
-và **Playwright** (`test:e2e:run`) theo đúng phân vai ở đó. `.env` đã symlink ở
-§2 nên credential có sẵn.
+**Real e2e API — same setup as §5b of the `quick-task` skill**, not duplicated
+here: a dedicated dev server on a free port, then a browser-driving MCP if the
+session has one (e.g. BrowserOS neo, Playwright) and **Playwright**
+(`test:e2e:run`), with the same split of responsibilities described there. `.env`
+was symlinked back in §2, so the credentials are already there.
 
-Với bug, cả hai đều có việc và đi theo trình tự:
+For a bug, both have work to do, and in this order:
 
-1. **neo** — chạy đúng repro của ticket trên UI thật, xác nhận lỗi có thật và
-   quan sát triệu chứng. Đây là before.
-2. sửa xong → **neo** lại lần nữa: after.
-3. **Playwright** — nếu triệu chứng khoá được bằng e2e thì viết một test giữ
-   lại; không thì regression test ở §3 (unit) là đủ.
+1. **neo** — run the ticket's exact repro against the real UI, confirm the bug is
+   real and observe the symptom. This is the before.
+2. after the fix → **neo** again: the after.
+3. **Playwright** — if the symptom can be locked down with an e2e test, write one
+   to keep; if not, the regression test from §3 (unit) is enough.
 
-Smoke ≥ 1 luồng lân cận (test hoặc trình duyệt) — bug hay đẻ bug.
+Smoke ≥ 1 neighbouring flow (test or browser) — bugs tend to breed bugs.
 
-## 6. Evidence — MỘT file
+## 6. Evidence — ONE file
 
-`docs/tasks/fixes/{taskId}-{slug}.md`, tiếng Việt, ngắn:
+`docs/tasks/fixes/{taskId}-{slug}.md`, prose in `harness.config.json → docLanguage`, short:
 
 ```markdown
-# {taskId} — {tên task}
+# {taskId} — {task name}
 
-**Ticket:** {tracker-url} · **Nhánh:** {công-thức-nhánh — ProjectRules §3}
+**Ticket:** {tracker-url} · **Branch:** {branch formula — ProjectRules §3}
 
-## Triệu chứng
-Expected vs actual, các bước tái hiện.
+## Symptom
+Expected vs actual, the steps to reproduce.
 
 ## Root cause
-Vì sao lỗi, ở `file:line` nào.
+Why it broke, at which `file:line`.
 
 ## Fix
-File đã sửa + một dòng lý do mỗi file.
+Files changed + one line of reasoning per file.
 
 ## Evidence
-- Repro FAIL trước fix: <output thật, cắt gọn>
-- Test PASS sau fix: <output thật>
+- Repro FAIL before the fix: <real output, trimmed>
+- Test PASS after the fix: <real output>
 - `npx tsc -b`: <output>
 - `npm run lint`: <output>
-- E2E API thật (BrowserOS neo / Playwright): <repro before/after trên UI thật>
-- Smoke luồng lân cận: <mô tả + kết quả>
+- Real e2e API (BrowserOS neo / Playwright): <before/after repro on the real UI>
+- Neighbouring flow smoke: <description + result>
 
 ## Regression risk
-Rủi ro còn lại + cách giảm (bỏ trống nếu không có).
+What risk is left + how it is reduced (leave empty if none).
 ```
 
-**Không bịa số liệu test** — dán output thật, hoặc ghi rõ chưa chạy.
+**Do not invent test numbers** — paste the real output, or state plainly that you
+did not run it.
 
-## 7. Dừng
+## 7. Stop
 
-Báo user: root cause, file đã sửa, đường dẫn worktree, đường dẫn file evidence.
+Report to the user: root cause, files changed, worktree path, evidence file path.
 `ExitWorktree action: "keep"`.
 
-`git commit` / `git push` / MR / đổi status ClickUp: **chỉ khi user yêu cầu**.
+`git commit` / `git push` / MR / changing the ClickUp status: **only if the user
+asks**.

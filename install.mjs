@@ -17,7 +17,7 @@
 
 import {
   cpSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync,
-  symlinkSync, lstatSync, unlinkSync, chmodSync, mkdtempSync, realpathSync,
+  symlinkSync, lstatSync, statSync, unlinkSync, chmodSync, mkdtempSync, realpathSync,
 } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -404,8 +404,8 @@ if (args[0] === "--self-test") {
       name: "ProjectRules",
       adapter: "adapters/ProjectRules.template.md",
       own: "adapters/example/docs/agents/ProjectRules.md",
-      adapterMustHave: "CHƯA-ĐIỀN",
-      ownMustNot: "CHƯA-ĐIỀN",
+      adapterMustHave: "NOT-FILLED-IN",
+      ownMustNot: "NOT-FILLED-IN",
       why: "template là khung rỗng cho /init-project-rules điền; bản mẫu là ví dụ ĐÃ điền — đổi chỗ thì /init-project-rules không còn gì để điền",
     },
   ]) {
@@ -608,8 +608,54 @@ if (args[0] === "--self-test") {
       if (!existsSync(join(T, ".claude/skills", sk, "SKILL.md")))
         fail(`kernel gọi skill '${sk}' nhưng không cài kèm`);
 
+  // Kernel đã dịch xong (#13) nhưng ĐƯỜNG CHẠY thì chưa: commands/ và skills/
+  // vẫn tiếng Việt, và start-task.md — file điều phối cả 7 stage — là file dài
+  // nhất trong đó. Một team không đọc tiếng Việt cài harness này thì không
+  // audit được logic dispatch, dù kernel toàn tiếng Anh.
+  //
+  // Nhận diện bằng DẤU THANH sau khi tách tổ hợp (NFD): huyền/sắc/hỏi/ngã/nặng
+  // + `đ`. Không quét cả dải \u00C0-\u1EF9 vì `×` (U+00D7) và các ký tự toán
+  // học nằm trong đó — quét rộng thì assert kêu sai chỗ rồi bị gỡ.
+  {
+    const VN = /[\u0300\u0301\u0303\u0309\u0323\u0111\u0110]/;
+    // Allowlist theo THƯ MỤC SKILL, không theo file: skill còn có references/
+    // và các file phụ cùng lý do, liệt kê từng file thì lần thêm file sau lại
+    // đỏ và người ta sẽ nới assert thay vì nới allowlist.
+    const allow = [
+      // Hai skill này SINH ra tài liệu cho một corpus tiếng Việt: chúng ánh xạ
+      // modal 29148 sang `phải`/`nên`/`có thể`, và anchor GitHub phải khớp byte
+      // với heading tiếng Việt có sẵn. Chuỗi tiếng Việt ở đây là DỮ LIỆU đặc
+      // tả — dịch đi là skill sinh ra heading không khớp corpus.
+      "skills/documents-sync/",
+      "skills/document-to-ieee-srs/",
+    ];
+    // `## Cập Nhật` là MARKER cấu trúc validator split trên đó, nhận cả hai
+    // ngôn ngữ (UPDATE_HEADING) — nó là cấu trúc, không phải prose.
+    const marker = /Cập Nhật/;
+    const hits = [];
+    for (const r of ["commands", "skills", "adapters/ProjectRules.template.md"]) {
+      const abs = join(SRC, r);
+      if (!existsSync(abs)) continue;
+      for (const f of statSync(abs).isDirectory() ? walk(abs) : [abs]) {
+        const relp = f.slice(SRC.length + 1);
+        if (allow.some((a) => relp.startsWith(a)) || !/\.md$/.test(f)) continue;
+        read(f).split("\n").forEach((l, i) => {
+          if (VN.test(l.normalize("NFD")) && !marker.test(l))
+            hits.push(`  ${relp}:${i + 1}: ${l.trim().slice(0, 90)}`);
+        });
+      }
+    }
+    if (hits.length)
+      fail(
+        `còn ${hits.length} dòng tiếng Việt trong đường chạy (commands/ + skills/) — kernel dịch rồi mà chỗ THỰC SỰ CHẠY thì chưa:\n` +
+          hits.slice(0, 12).join("\n") +
+          (hits.length > 12 ? `\n  … và ${hits.length - 12} dòng nữa` : "") +
+          `\n  Ngoại lệ có lý do thì thêm vào allowlist ngay trên, kèm lý do`,
+      );
+  }
+
   const pr = read(join(T, "docs/agents/ProjectRules.md"));
-  if (!pr.includes("CHƯA-ĐIỀN")) fail("ProjectRules không phải template rỗng");
+  if (!pr.includes("NOT-FILLED-IN")) fail("ProjectRules không phải template rỗng");
   if (!/^## 7\./m.test(pr)) fail("template mất mục §7 (kernel trỏ chéo bằng số)");
 
   // Một URL không parse được làm CLI chết bằng ERR_INVALID_URL ngay lúc khởi

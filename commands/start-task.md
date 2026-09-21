@@ -8,23 +8,25 @@ You are starting work on a tracker task: **$ARGUMENTS**
 Run the task through the **repo `docs/` harness** (7 roles, 5 gates, defined
 under `docs/`).
 
-**Thứ tự:** preflight (step 0a) → assessment (step 0) → task folder (step 1) → worktree nếu cần
-(step 2) → dispatch từng stage. Đánh giá độ phức tạp đi **trước** vì nó quyết
-định worktree, model, và độ nặng Gate 1/2.
+**Order:** preflight (step 0a) → assessment (step 0) → task folder (step 1) → worktree if needed
+(step 2) → dispatch each stage. Complexity assessment goes **first** because it
+decides the worktree, the model, and how heavy Gate 1/2 run.
 
-Không stage nào bị bỏ vì thay đổi "trông nhỏ" — `taskComplexity = trivial` làm
-Gate 1–2 chạy **ngắn hơn**, không xoá chúng.
+No stage is skipped because a change "looks small" — `taskComplexity = trivial`
+makes Gate 1–2 run **shorter**, it does not delete them.
 
 ## Architecture: you are the COORDINATOR, not the worker
 
-**Mỗi stage chạy như một subagent riêng, context mới.** Bạn — vòng lặp chính —
-**không** tự viết FSD, review, plan, hay code. Chạy hết mọi stage trong một
-context là lỗi đã biết của harness này (cạn context → treo giữa chừng).
+**Every stage runs as its own subagent, fresh context.** You — the main loop —
+do **not** write the FSD, the review, the plan, or the code yourself. Running
+every stage in one context is a known failure of this harness (context runs
+out → it hangs mid-way).
 
-CLI **không** hỗ trợ subagent → chạy tuần tự trong cùng phiên, nhưng giữa hai
-stage phải **xoá ngữ cảnh stage trước** (`/clear`, phiên mới, hoặc tương đương)
-và chỉ mang sang đúng hai thứ: `task.agent.json` và block handoff cuối. Artifact
-trên đĩa là giao diện giữa các stage — không phải lịch sử hội thoại.
+The CLI does **not** support subagents → run sequentially in the same session,
+but between two stages you must **clear the previous stage's context**
+(`/clear`, a new session, or the equivalent) and carry over exactly two things:
+`task.agent.json` and the last handoff block. Artifacts on disk are the
+interface between stages — not the conversation history.
 
 Your responsibilities only:
 
@@ -40,217 +42,232 @@ Your responsibilities only:
    contents into your own context — subagents read them; you route on
    handoffs only.
 
-## Step 0a — Preflight (một lệnh, trước tất cả)
+## Step 0a — Preflight (one command, before everything)
 
 ```bash
 node scripts/validate-tasks.mjs --preflight || exit 1
 ```
 
-Hai hỏng hóc chỉ lộ ra rất muộn nếu không hỏi: CLI mở sai thư mục (mất
-`settings.json` → mất deny `git push` / `reset --hard`, **trong im lặng**), và
-config tự mâu thuẫn (mọi gate no-op, phát hiện sau vài chục task). Cả hai đều
-rẻ hơn nhiều so với chạy một task dưới gate đã chết.
+Two failures only surface very late if you do not ask: the CLI opened in the
+wrong directory (losing `settings.json` → losing the deny on `git push` /
+`reset --hard`, **silently**), and a self-contradicting config (every gate a
+no-op, found out a few dozen tasks later). Both are far cheaper than running a
+task under a dead gate.
 
-Exit `1` → **dừng, sửa, đừng chạy tiếp**. Warning (không git / không hook / không
-CI) thì chạy được, báo user một dòng rồi đi tiếp.
+Exit `1` → **stop, fix, do not run on**. Warnings (no git / no hook / no CI)
+are runnable: tell the user in one line and move on.
 
-## Step 0 — Assessment (trước mọi quyết định khác)
+## Step 0 — Assessment (before every other decision)
 
-Chưa biết task nặng nhẹ ra sao thì chưa quyết được worktree, model, hay độ nặng
-luồng. Nên bước này đi trước — **trước cả worktree**.
+Until you know how heavy the task is, you cannot decide the worktree, the model,
+or how heavy the flow runs. So this step goes first — **before the worktree**.
 
-1. **Đọc task từ tracker** (tool đọc task của server tracker khai ở ProjectRules
-   §1 — tự tìm, đừng hardcode tên; chỉ đọc summary). Lấy `taskId`, `taskName`,
-   suy ra `slug` = kebab-case không dấu.
+1. **Read the task from the tracker** (the task-read tool of the tracker server
+   declared in ProjectRules §1 — find it yourself, do not hardcode the name;
+   read the summary only). Take `taskId`, `taskName`, derive `slug` =
+   kebab-case with no diacritics.
 
-2. **Chọn repo** (`harness.config.json → repos`). Một entry → dùng luôn. Nhiều
-   entry mà user không nói rõ → **hỏi, đừng đoán**. Đó là `repoName`, không sửa
-   lại được sau bootstrap.
+2. **Pick the repo** (`harness.config.json → repos`). One entry → use it.
+   Several entries and the user did not say which → **ask, do not guess**. That
+   is `repoName`, and it cannot be changed after bootstrap.
 
-3. **Khảo sát nhanh để trích vector** — Glob/Grep đủ để trả lời 8 chiều của
-   [`docs/Agents.md` §5.1](../../docs/Agents.md), **không** đọc code sâu, không
-   sửa gì. Mục tiêu là biết task chạm đâu, không phải hiểu hết.
+3. **A quick survey to extract the vector** — Glob/Grep, just enough to answer
+   the 8 dimensions of [`docs/Agents.md` §5.1](../../docs/Agents.md), do **not**
+   read code deeply, do not change anything. The goal is to know what the task
+   touches, not to understand all of it.
 
-   Ba chiều phải ra từ **số đo**, không từ mô tả task — ghi lại để điền
-   `complexity.counts` / `complexity.questions` ở step 1 (validator đối chiếu
-   chúng với vector và chặn nếu mâu thuẫn):
+   Three dimensions must come from a **measurement**, not from the task
+   description — write them down so you can fill `complexity.counts` /
+   `complexity.questions` in step 1 (the validator cross-checks them against
+   the vector and blocks on a contradiction):
 
    ```bash
-   rg -l '<symbol chính>' <src> | wc -l      # → counts.filesTouched  (1 ⇒ scope 0 · >5 ⇒ scope 2)
-   rg -l '<symbol chính>' <src> -g '*test*'  # → counts.existingTests (0 ⇒ testing ≥ 1)
+   rg -l '<main-symbol>' <src> | wc -l      # → counts.filesTouched  (1 ⇒ scope 0 · >5 ⇒ scope 2)
+   rg -l '<main-symbol>' <src> -g '*test*'  # → counts.existingTests (0 ⇒ testing ≥ 1)
    ```
 
-   Ghi luôn `counts.symbol` = symbol đã grep (validator bắt buộc): chọn symbol
-   là chọn luôn `scope`, nên lựa chọn đó phải nằm trên giấy. Ra `0` file thì
-   ghi `complexity.note`: file mới hay grep trượt — hai chuyện khác hẳn.
+   Record `counts.symbol` = the symbol you grepped (the validator requires it):
+   choosing the symbol is choosing the `scope`, so that choice has to be on
+   paper. `0` files → write `complexity.note`: a new file or a missed grep —
+   two very different things.
 
-   Chiều thứ ba không có lệnh: viết ra danh sách *"không làm được nếu không biết
-   X"* → `questions[]`. Rỗng ⇒ `uncertainty 0`, có mục ⇒ `≥ 1`. **Chưa đi tìm
-   thì chưa được kết luận rỗng** — đây là chiều bị chấm thấp nhiều nhất, và nó
-   chính là thứ sinh ra `fsd_review` chạy lại.
+   The third dimension has no command: write out the list of *"cannot be done
+   without knowing X"* → `questions[]`. Empty ⇒ `uncertainty 0`, any entry ⇒
+   `≥ 1`. **You may not conclude "empty" before you went looking** — this is the
+   most under-scored dimension, and it is exactly what makes `fsd_review` run
+   again.
 
-4. **Tính `taskComplexity`** bằng công thức §5.1.1 (`max(base, riskFloor)`).
-   Đừng tự phán nhãn — điền vector, để công thức ra nhãn. Validator kiểm lại.
+4. **Compute `taskComplexity`** with the §5.1.1 formula (`max(base, riskFloor)`).
+   Do not pronounce the label yourself — fill in the vector, let the formula
+   produce the label. The validator recomputes it.
 
-   `effort ≥ 9`, hoặc `scope 2` kèm `uncertainty 2` → **dừng, hỏi user: tách
-   được thành 2 task ship riêng không?** ([§5.1.4](../../docs/Agents.md)). Tách
-   thì chạy lại step 0 cho từng task con. Không tách được thì ghi lý do vào
-   `complexity.splitEvaluated` — validator chặn nếu để trống. Hỏi ở đây rẻ; hỏi
-   sau khi hết `retryBudget` thì tiền đã đốt xong.
+   `effort ≥ 9`, or `scope 2` together with `uncertainty 2` → **stop and ask the
+   user: can this be split into 2 separately shippable tasks?**
+   ([§5.1.4](../../docs/Agents.md)). If it splits, re-run step 0 for each
+   sub-task. If it does not, write the reason into `complexity.splitEvaluated` —
+   the validator blocks if it is empty. Asking here is cheap; asking after
+   `retryBudget` is spent means the money is already burned.
 
-5. **Triage** — task này có cần harness không:
+5. **Triage** — does this task need the harness at all:
 
    ```bash
    node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type <feature|bugfix|hotfix> --task-id <taskId>
    ```
 
-   `--task-id` bắt buộc (exit `2` nếu thiếu): không có nó thì không ghi
-   `_triage.log`, và vector chấm ở đây không đối chiếu được với vector bootstrap.
-   Vector cũng phải đủ **8 chiều, integer, đúng range** — `{}` hay `{"scope":"2"}`
-   bị từ chối (exit `2`), không được coi là `trivial`.
+   `--task-id` is required (exit `2` if missing): without it nothing is written
+   to `_triage.log`, and the vector scored here cannot be cross-checked against
+   the bootstrap vector. The vector must also be complete — **8 dimensions,
+   integer, in range** — `{}` or `{"scope":"2"}` is rejected (exit `2`), not
+   treated as `trivial`.
 
-   | Exit | Verdict | Làm gì |
+   | Exit | Verdict | What to do |
    | --- | --- | --- |
-   | `10` | `harness` | đi tiếp step 0b |
-   | `0` | `quick-task` / `fix-bug` | **hỏi user trước**: dùng skill đó, hay vẫn chạy đủ 7 stage? |
+   | `10` | `harness` | on to step 0b |
+   | `0` | `quick-task` / `fix-bug` | **ask the user first**: use that skill, or still run all 7 stages? |
 
-   Nó dùng lại đúng vector + `riskFloor` ở trên, không phát minh ngưỡng thứ hai:
-   task không `trivial`, hoặc bất kỳ chiều rủi ro nào ≥ 2, là ra harness — dù diff
-   trông nhỏ cỡ nào.
+   It reuses the exact vector + `riskFloor` from above, it does not invent a
+   second threshold: a task that is not `trivial`, or any risk dimension ≥ 2,
+   goes to the harness — however small the diff looks.
 
-   User muốn chạy harness dù verdict là escape hatch → cứ chạy, không cần gì thêm.
-   Ngược lại (verdict `harness` mà user muốn bỏ qua) → `--force "<lý do>"`. Bỏ qua
-   harness là quyết định hợp lệ; bỏ qua mà không để lại dấu vết thì không.
+   The user wants the harness even though the verdict is an escape hatch → just
+   run it, nothing else needed. The other direction (verdict `harness` but the
+   user wants to skip) → `--force "<reason>"`. Skipping the harness is a valid
+   decision; skipping it without leaving a trace is not.
 
-   **Chấm thật, đừng chấm để ra kết quả mong muốn.** Mọi lần triage đều vào
-   `_triage.log`, và validator đối chiếu với vector đã lưu ở **cả hai hướng**:
-   chấm nhẹ ở đây rồi chấm nặng ở bootstrap → warning (điều chỉnh lên sau khảo
-   sát là bình thường, §5.1.3 — warning chỉ nói rõ con số thấp hơn là con số đã
-   quyết task này có cần harness); ngược lại, **hạ** một chiều xuống dưới mức
-   triage là **error** — đó là hướng §5.1.3 cấm.
+   **Score honestly, do not score toward the answer you want.** Every triage
+   goes into `_triage.log`, and the validator cross-checks it against the stored
+   vector in **both directions**: scoring low here then high at bootstrap →
+   warning (adjusting upward after the survey is normal, §5.1.3 — the warning
+   only makes it explicit that the lower number is the one that decided whether
+   this task needed the harness); the reverse, **lowering** a dimension below its
+   triage value, is an **error** — that is the direction §5.1.3 forbids.
 
-Kết quả bước 0 quyết định ba thứ ở bước 1–2 dưới đây.
+The result of step 0 decides three things in steps 1–2 below.
 
-## Step 0b — Lease: task này có ai đang chạy không?
+## Step 0b — Lease: is anyone else running this task?
 
-Worktree cách ly **file của repo code**. Nó không cách ly `docs/tasks/` — ở bố cục C, mọi task dùng chung một repo harness. Hai `/start-task` cùng một task (hoặc hai máy cùng một repo harness) sẽ ghi đè handoff của nhau mà không ai biết.
+A worktree isolates **the code repo's files**. It does not isolate `docs/tasks/` — in layout C every task shares one harness repo. Two `/start-task` runs on the same task (or two machines on the same harness repo) will overwrite each other's handoffs without anyone noticing.
 
-Trước khi bootstrap, đặt lease vào task folder:
+Before bootstrap, put a lease on the task folder:
 
 ```bash
 TASK={tasksDir}/{groupPrefix}{n}/{taskId}-{slug}
-node scripts/lease.mjs acquire "$TASK" || exit 1    # ← exit 1 là bắt buộc
+node scripts/lease.mjs acquire "$TASK" || exit 1    # ← the exit 1 is mandatory
 ```
 
-Exit `1` = phiên khác đang giữ (nó in owner ra stderr). **Chạy tiếp là cướp lease**, và bạn có hai phiên cùng tin mình giữ chỗ — tệ hơn là không có lease. Xong task (`reviewing`) hoặc gate fail:
+Exit `1` = another session holds it (it prints the owner to stderr). **Running on is stealing the lease**, and you get two sessions both believing they hold the slot — worse than having no lease at all. Task done (`reviewing`) or gate fail:
 
 ```bash
 node scripts/lease.mjs release "$TASK"
 ```
 
-Kẹt vì một lease mồ côi mà không muốn chờ 30 phút: xoá thẳng thư mục `.agent-memory/.lease.d` của task đó là an toàn.
+Stuck on an orphaned lease and unwilling to wait 30 minutes: deleting that task's `.agent-memory/.lease.d` directory outright is safe.
 
-**Viết bằng Node, không phải bash** — `mkdir -p`, `find -mmin`, `hostname`, `$$` không có trên PowerShell/cmd, mà step 0b chạy **trước** mọi thứ khác: hỏng nó là hỏng cả lệnh. `node` thì đã bắt buộc sẵn vì validator cần.
+**Written in Node, not bash** — `mkdir -p`, `find -mmin`, `hostname`, `$$` do not exist on PowerShell/cmd, and step 0b runs **before** everything else: breaking it breaks the whole command. `node` is already mandatory anyway, because the validator needs it.
 
-Ba điểm thiết kế, ghi lại để đừng "tối ưu" mất:
+Three design points, written down so nobody "optimizes" them away:
 
-- **`mkdir` chứ không phải kiểm-rồi-ghi.** Khe giữa "kiểm" và "ghi" đúng là cái race mà lease sinh ra để chống; `mkdir` thất bại-nếu-đã-tồn-tại trong **một** syscall. (`recursive: true` **không** ném khi đã tồn tại → mất sạch tác dụng.)
-- **Thiếu file `owner` mặc định là *còn sống*.** Giữa `mkdir` và lúc ghi `owner` có khe vài ms mà thư mục đã có còn `owner` thì chưa. Đọc "chưa có owner" là "chết" thì mọi phiên rơi vào khe đó sẽ cướp lease của một phiên đang sống — đo trên bản bash cũ: 20 phiên song song, 7 phiên cướp được. Chỉ khi **thư mục** cũng quá 30 phút mới là mồ côi thật.
-- **Lease cũ hơn 30 phút = chết**, tiếp quản được (phiên trước treo hoặc bị Ctrl-C).
+- **`mkdir`, not check-then-write.** The gap between "check" and "write" is exactly the race the lease exists to prevent; `mkdir` fails-if-exists in **one** syscall. (`recursive: true` does **not** throw when it already exists → the whole effect is gone.)
+- **A missing `owner` file defaults to *alive*.** Between `mkdir` and writing `owner` there is a few-ms window where the directory exists but `owner` does not. Reading "no owner yet" as "dead" means every session landing in that window steals a live session's lease — measured on the old bash version: 20 parallel sessions, 7 of them stole it. Only when the **directory** is also past 30 minutes is it a genuine orphan.
+- **A lease older than 30 minutes = dead**, takeable (the previous session hung or was Ctrl-C'd).
 
-Kiểm chứng: `node scripts/lease.mjs --self-check` (assert cả bốn ca, gồm hai ca khe `mkdir`→ghi). Đo song song thật: 30 vòng × 20 phiên → đúng 30 phiên thắng.
+Verify: `node scripts/lease.mjs --self-check` (asserts all four cases, including the two `mkdir`→write window cases). Real parallel measurement: 30 rounds × 20 sessions → exactly 30 winners.
 
-Đây là lease lạc quan, không phải lock phân tán: nó bắt trường hợp thường gặp (hai phiên, một task) bằng một `mkdir` nguyên tử, không xử lý được NFS hay đồng hồ lệch giữa hai máy. Đủ cho quy mô này.
+This is an optimistic lease, not a distributed lock: it catches the common case (two sessions, one task) with one atomic `mkdir`, and does not handle NFS or clock skew between two machines. Enough at this scale.
 
-## Step 1 — Task folder (LUÔN tạo, không phụ thuộc độ phức tạp)
+## Step 1 — Task folder (ALWAYS created, independent of complexity)
 
-Task folder là nơi ghi evidence. Task `trivial` vẫn cần nó: đó là chỗ duy nhất
-trả lời được "đã kiểm gì" sau khi phiên kết thúc.
+The task folder is where evidence is written. A `trivial` task still needs it:
+it is the only place that can answer "what was checked" after the session ends.
 
-Folder nằm tại `{tasksDir}/{groupPrefix}{n}/{taskId}-{slug}/` **trong repo
-harness** (repo chứa `harness.config.json`) — kể cả khi code nằm repo khác.
-`orchestrator` tạo nó ở stage bootstrap; bạn chỉ cần đảm bảo nó được tạo trước
-khi bất kỳ stage nào ghi file.
+The folder lives at `{tasksDir}/{groupPrefix}{n}/{taskId}-{slug}/` **in the
+harness repo** (the repo holding `harness.config.json`) — even when the code
+lives in another repo. `orchestrator` creates it at the bootstrap stage; you
+only have to make sure it exists before any stage writes a file.
 
-Không có ngoại lệ "task nhỏ khỏi cần folder". Không ghi evidence thì Gate 4/5
-không có gì để kiểm, và validator chặn ở `reviewing`.
+There is no "small task, no folder needed" exception. With no evidence written,
+Gate 4/5 have nothing to check, and the validator blocks at `reviewing`.
 
-## Step 2 — Worktree (CÓ ĐIỀU KIỆN)
+## Step 2 — Worktree (CONDITIONAL)
 
-Worktree giải quyết đúng một vấn đề: hai session cùng ghi một tree. (Đã từng
-mất một stage hoàn chỉnh vì `git stash push -u` của session khác quét luôn task
-folder chưa commit.) Task không chạm code thì không có vấn đề đó.
+A worktree solves exactly one problem: two sessions writing the same tree. (One
+complete stage was lost once because another session's `git stash push -u` swept
+away the uncommitted task folder.) A task that does not touch code does not have
+that problem.
 
-| Điều kiện | Worktree? |
+| Condition | Worktree? |
 | --- | --- |
-| `taskComplexity = trivial` **và** `blastRadius ≤ 1` **và** không có session khác đang chạy trên repo đó | **không** — làm thẳng trên nhánh hiện tại |
-| Còn lại (`normal`/`high`, hoặc blast rộng, hoặc có session song song) | **có** |
-| User nói rõ "làm ngay trên tree hiện tại" | **không** |
-| User nói rõ "tạo worktree" | **có** |
+| `taskComplexity = trivial` **and** `blastRadius ≤ 1` **and** no other session running on that repo | **no** — work directly on the current branch |
+| Everything else (`normal`/`high`, or a wide blast, or a parallel session) | **yes** |
+| User explicitly says "work on the current tree" | **no** |
+| User explicitly says "create a worktree" | **yes** |
 
-Không chắc có session khác hay không → **tạo worktree**. Sai hướng đó chỉ tốn
-vài giây; sai hướng kia mất một stage.
+Not sure whether another session exists → **create the worktree**. Being wrong
+in that direction costs a few seconds; being wrong in the other one costs a stage.
 
-Bỏ worktree thì `git status --porcelain` **phải** sạch trước khi bắt đầu — có
-thay đổi chưa lưu của user thì dừng, hỏi. Ghi `"worktree": false` vào
-`.agent-memory/orchestrator.md` để người đọc sau biết vì sao không có.
+Skipping the worktree means `git status --porcelain` **must** be clean before you
+start — unsaved user changes → stop and ask. Write `"worktree": false` into
+`.agent-memory/orchestrator.md` so a later reader knows why there is none.
 
-### Khi có worktree
+### When there is a worktree
 
-Worktree luôn tạo **trong repo sẽ bị sửa** (`repoName`), không phải repo chứa
-config ([`docs/Agents.md` §0](../../docs/Agents.md)):
+The worktree is always created **in the repo that will be modified**
+(`repoName`), not the repo holding the config
+([`docs/Agents.md` §0](../../docs/Agents.md)):
 
-| `repos` | Worktree ở | Task docs |
+| `repos` | Worktree in | Task docs |
 | --- | --- | --- |
-| một entry `path: "."` | repo này | đi theo worktree |
-| nhiều entry, `repoName` là `"."` | repo này | đi theo worktree |
-| `repoName` trỏ repo khác | repo đó | **ở lại repo harness** |
+| one entry `path: "."` | this repo | follows the worktree |
+| several entries, `repoName` is `"."` | this repo | follows the worktree |
+| `repoName` points at another repo | that repo | **stays in the harness repo** |
 
-1. Tạo worktree tên `task-{taskId}-{slug}` (`slug` cắt để cả tên ≤ 64 ký tự).
-   CLI có tool worktree riêng (Claude Code: `EnterWorktree`) thì dùng nó; không
-   thì `git -C <repo-path> worktree add .claude/worktrees/task-{taskId}-{slug}`
-   rồi `cd` vào đó.
+1. Create a worktree named `task-{taskId}-{slug}` (truncate `slug` so the whole
+   name is ≤ 64 characters). If the CLI has its own worktree tool (Claude Code:
+   `EnterWorktree`), use it; otherwise
+   `git -C <repo-path> worktree add .claude/worktrees/task-{taskId}-{slug}`
+   then `cd` into it.
 
-2. **Sửa nhánh ngay** — tool tự đặt tên `worktree-{name}` mọc từ `origin/HEAD`,
-   thường lệch ProjectRules §3:
+2. **Fix the branch immediately** — the tool names it `worktree-{name}` branched
+   off `origin/HEAD`, which usually does not match ProjectRules §3:
 
    ```bash
-   git status --porcelain          # phải rỗng — worktree vừa tạo
+   git status --porcelain          # must be empty — the worktree was just created
    git fetch origin
-   git switch -C <công-thức-nhánh ProjectRules §3> origin/<nhánh-đích>
+   git switch -C <branch-formula ProjectRules §3> origin/<target-branch>
    git branch -D worktree-task-{taskId}-{slug}
    ```
 
-   `switch -C` an toàn ở đây và **chỉ** ở đây: tree vừa sinh, rỗng. Có output ở
-   `git status --porcelain` → **dừng, hỏi user**.
+   `switch -C` is safe here and **only** here: the tree is freshly created and
+   empty. Any output from `git status --porcelain` → **stop, ask the user**.
 
-3. **Dựng thứ không nằm trong git mà worktree cần** (dependency đã cài, file
-   env) — cách làm theo ProjectRules §7. Hai luật chung:
+3. **Set up what the worktree needs that is not in git** (installed
+   dependencies, env files) — follow ProjectRules §7 for how. Two general rules:
 
-   - **Đừng symlink thư mục dependency** nếu toolchain ghi state build tăng
-     tiến vào trong đó: hai worktree dùng chung state → lỗi ảo. Clone
-     copy-on-write (`cp -c` trên APFS, `cp --reflink=auto` trên Linux) rẻ
-     tương đương mà không chia sẻ file.
-   - **File env**: symlink được (tĩnh, đã trong `.gitignore`). **Cảnh báo bảo
-     mật:** nội dung env tới được mọi tiến trình agent khởi động.
+   - **Do not symlink the dependency directory** if the toolchain writes
+     incremental build state into it: two worktrees sharing state → phantom
+     errors. A copy-on-write clone (`cp -c` on APFS, `cp --reflink=auto` on
+     Linux) is just as cheap and shares no files.
+   - **Env files**: symlinkable (static, already in `.gitignore`). **Security
+     warning:** the env contents reach every process the agent starts.
 
-   Gate tĩnh (type-check, lint, unit scope) thường **không** cần env.
+   Static gates (type-check, lint, scoped unit tests) usually do **not** need the env.
 
-4. Xong task (`status = reviewing`) → rời worktree nhưng **giữ nguyên** nó
-   (Claude Code: `ExitWorktree action: "keep"`; CLI khác: `cd` về, đừng
-   `worktree remove`), báo user đường dẫn. Code ở worktree, task doc ở repo
-   harness (bố cục C) = **hai lần commit, hai repo**.
+4. Task done (`status = reviewing`) → leave the worktree but **keep** it
+   (Claude Code: `ExitWorktree action: "keep"`; other CLIs: `cd` back, do not
+   `worktree remove`), and tell the user the path. Code in the worktree, task
+   docs in the harness repo (layout C) = **two commits, two repos**.
 
-> **Lock test dùng chung máy, không dùng chung worktree.** Project chặn chạy
-> song song bằng lock toàn máy (chống OOM) thì worktree **không** gỡ được lock
-> đó — worktree cách ly *file*, không cách ly CPU/RAM. Đúng hành vi, đừng "sửa".
+> **A test lock is per-machine, not per-worktree.** If the project blocks
+> parallel runs with a machine-wide lock (to avoid OOM), a worktree does **not**
+> lift that lock — a worktree isolates *files*, not CPU/RAM. That is correct
+> behaviour, do not "fix" it.
 
 ## Stage dispatch table
 
-Dispatch mỗi stage bằng cơ chế subagent của CLI (Claude Code: tool `Agent`,
-`subagent_type` = tên role đã đăng ký ở `.claude/agents/`). CLI khác: đọc file
-role tương ứng rồi chạy trong context sạch. Prompt của mọi subagent **phải** mở
-đầu bằng preamble này:
+Dispatch each stage through the CLI's subagent mechanism (Claude Code: the
+`Agent` tool, `subagent_type` = the role name registered in `.claude/agents/`).
+Other CLIs: read the matching role file and run it in a clean context. Every
+subagent prompt **must** begin with this preamble:
 
 > Read, in order: `docs/Instructions.md`, then `docs/agents/SharedRules.md`
 > **§4 §5 §6 §8** (add **§9** unless you are `orchestrator` — it owns no AC),
@@ -263,12 +280,12 @@ role tương ứng rồi chạy trong context sạch. Prompt của mọi subagen
 > and update `task.agent.json`. End your final message with: gate verdict
 > (PASS/FAIL), status set, and the one-line reason.
 
-Preamble nêu **mục**, không nêu cả file: sàn luật mỗi subagent đọc được nhân lên theo từng stage của từng task, nên một mục thừa là chi phí trả sáu lần. Đây là chỗ rẻ nhất để cắt — sửa một dòng, không đụng kernel, giữ nguyên "một normative home". Số thật thì khiêm tốn: chỉ `orchestrator` bỏ được §9 (~580 tok), sáu role còn lại đều dùng nó. Đừng cắt sâu hơn bằng cảm tính — §8 là mục dài nhất nhưng mọi role đều cần.
+The preamble names **sections**, not whole files: the floor of rules every subagent reads is multiplied by every stage of every task, so one surplus section is a cost paid six times. This is the cheapest place to cut — one line changed, the kernel untouched, "one normative home" preserved. The real number is modest: only `orchestrator` can drop §9 (~580 tok), the other six roles all use it. Do not cut deeper on instinct — §8 is the longest section but every role needs it.
 
-**Chọn model theo `taskComplexity`.** Sau khi orchestrator xong, đọc
-`taskComplexity` trong `task.agent.json` rồi truyền `model` khi dispatch từng
-stage theo bảng [`docs/Agents.md` §5.3](../../docs/Agents.md). Rẻ cho việc
-đọc-và-chép, mạnh cho việc phán đoán:
+**Pick the model from `taskComplexity`.** After orchestrator finishes, read
+`taskComplexity` from `task.agent.json` and pass `model` when dispatching each
+stage, per the table in [`docs/Agents.md` §5.3](../../docs/Agents.md). Cheap for
+read-and-copy work, strong for judgement:
 
 | Role | trivial | normal | high |
 | --- | --- | --- | --- |
@@ -279,66 +296,72 @@ stage theo bảng [`docs/Agents.md` §5.3](../../docs/Agents.md). Rẻ cho việ
 | implementer | mid | mid | strong |
 | `adversary` | mid | mid | strong |
 
-Tier → tên model thật tra ở `harness.config.json → models`
-(`{ "cheap": …, "mid": …, "strong": … }`). Kernel không biết bạn chạy CLI nào,
-nên nó chỉ nói tier — đổi Claude ↔ Codex ↔ Gemini thì sửa ba dòng đó, bảng này
-không đổi.
+Tier → real model name is looked up in `harness.config.json → models`
+(`{ "cheap": …, "mid": …, "strong": … }`). The kernel does not know which CLI
+you run, so it only speaks in tiers — switching Claude ↔ Codex ↔ Gemini means
+editing those three lines, this table does not change.
 
-`models` rỗng `{}`, hoặc CLI không cho chọn model per-subagent → **bỏ qua bước
-này**, mọi stage chạy model của phiên. Harness vẫn đúng, chỉ không tiết kiệm. **Đừng** hạ model của `fsd-reviewer` hay
-`adversary` dưới bảng này: một AC rơi hoặc một bug lọt tốn hơn toàn bộ tiền
-model của task.
+`models` empty `{}`, or the CLI cannot pick a model per subagent → **skip this
+step**, every stage runs the session's model. The harness is still correct, just
+not cheaper. Do **not** drop the model for `fsd-reviewer` or
+`adversary` below this table: one dropped AC or one escaped bug costs more than
+the entire model bill for the task.
 
 | # | Stage | subagent_type | Role file | Prompt adds |
 | --- | --- | --- | --- | --- |
-| 1 | bootstrap | `orchestrator` | `docs/agents/Orchestrator.md` | task URL/id; `repoName` + nhánh hiện tại; **vector + `taskComplexity` từ step 0** (nó ghi vào `task.agent.json` + `00-Metadata.md`, không chấm lại từ đầu) |
+| 1 | bootstrap | `orchestrator` | `docs/agents/Orchestrator.md` | task URL/id; `repoName` + current branch; **vector + `taskComplexity` from step 0** (it writes them into `task.agent.json` + `00-Metadata.md`, it does not re-score from scratch) |
 | 2 | fsd_write → Gate 1 | `fsd-writer` | `docs/agents/FSDWriter.md` | `docsPath` from step 1 |
 | 3 | fsd_review → Gate 2 | `fsd-reviewer` | `docs/agents/FSDReviewer.md` | `docsPath` |
 | 4 | technical_plan → Gate 3 | `technical-planner` | `docs/agents/TechnicalPlanner.md` | `docsPath` |
 | 5 | implementation → Gate 4 | `implementer` (branchType feature/hotfix) or `fixer` (bugfix) | `docs/agents/Implementer.md` / `docs/agents/Fixer.md` | `docsPath`; remind: only files in the Gate-3 list; one-shot commands only |
-| 6 | adversarial_review → Gate 5 | `adversary` | `docs/agents/Adversary.md` | `docsPath`; remind: mặc định FAIL, **tự chạy lại** lệnh ProjectRules §7 chứ không tin `08`, không sửa `src/` |
+| 6 | adversarial_review → Gate 5 | `adversary` | `docs/agents/Adversary.md` | `docsPath`; remind: default FAIL, **re-run** the ProjectRules §7 commands yourself instead of trusting `08`, do not touch `src/` |
 | 7 | reviewing | — (you) | — | see below |
 
-Gate 5 FAIL → re-dispatch implementer (step 5) **một lần** với finding từ `09`;
-vẫn FAIL lần hai → dừng, báo user (Gate-fail handling). Không lặp vô hạn.
+Gate 5 FAIL → re-dispatch implementer (step 5) **once** with the findings from
+`09`; still FAIL the second time → stop, report to the user (Gate-fail handling).
+No infinite loop.
 
-**Sau MỖI stage, chạy validator trên đúng task này — trước khi dispatch stage kế:**
+**After EVERY stage, run the validator on this exact task — before dispatching the next stage:**
 
 ```bash
 node scripts/validate-tasks.mjs --quiet --task "$TASK"    # exit 1 = gate FAIL
 ```
 
-Không có bước này thì Gate 1–3 là **bạn tự đọc doc rồi tự phán** — cùng loại
-self-report mà harness không tin ở `attempts` và `telemetry`. Hệ quả thật: AC rơi
-khỏi `03` chỉ lộ ra ở step 7, tức là **sau khi implementer đã viết code** — đúng
-lúc sửa đắt nhất, và đó là nguồn chính của `attempts.implementation ≥ 2`.
+Without this step, Gate 1–3 are **you reading the doc and judging it yourself** —
+the same kind of self-report the harness does not trust in `attempts` and
+`telemetry`. The real consequence: an AC dropped from `03` only surfaces at
+step 7, that is **after the implementer already wrote the code** — exactly when
+fixing is most expensive, and that is the main source of `attempts.implementation ≥ 2`.
 
-Exit code phân biệt sẵn: `0` pass · `1` gate FAIL (xử lý theo Gate-fail handling)
-· `2` sai tham số `--task` (gõ sai đường dẫn — sửa lệnh, đừng coi là gate fail).
+The exit codes already distinguish: `0` pass · `1` gate FAIL (handle per Gate-fail
+handling) · `2` bad `--task` argument (a mistyped path — fix the command, do not
+treat it as a gate fail).
 
-`--task` thay vì quét cả repo là có chủ đích: một task **khác** đang `blocked`
-chờ BA là trạng thái hợp lệ, không được làm đỏ gate của task này.
+`--task` instead of scanning the whole repo is deliberate: a **different** task
+sitting `blocked` waiting on the BA is a valid state, and must not turn this
+task's gate red.
 
-**Mỗi lần dispatch một stage, tăng `task.agent.json → attempts[<stage>]`** (chưa
-có thì đặt `1`). Đó là số đo duy nhất về rework mà harness có — `attempts` ≥ 3
-validator sẽ cảnh báo ([`docs/Agents.md` §5.5](../../docs/Agents.md)).
+**Every time you dispatch a stage, increment `task.agent.json → attempts[<stage>]`**
+(set `1` if absent). That is the only measurement of rework the harness has — at
+`attempts` ≥ 3 the validator warns ([`docs/Agents.md` §5.5](../../docs/Agents.md)).
 
-**Và gia hạn lease — cùng chỗ đó, cùng lúc đó:**
+**And renew the lease — same place, same moment:**
 
 ```bash
 node scripts/lease.mjs renew "$TASK"
 ```
 
-Lease TTL 30 phút được thiết kế để phát hiện *phiên đã chết*, nhưng `acquire`
-chỉ đóng dấu một lần — nên nếu không renew, nó áp cho **cả vòng đời task**. Một
-task `high` chạy 6 stage với model `strong` vượt 30 phút là bình thường, và lúc
-đó lease *đang sống* bị coi là mồ côi: phiên thứ hai acquire được, hai phiên
-cùng ghi `.agent-memory/` — đúng cái race lease sinh ra để chống.
+The 30-minute lease TTL is designed to detect a *dead session*, but `acquire`
+stamps it only once — so without a renew it applies to the **whole task
+lifetime**. A `high` task running 6 stages on the `strong` model taking over 30
+minutes is normal, and at that point a *live* lease is treated as an orphan: a
+second session acquires it, two sessions write `.agent-memory/` — exactly the
+race the lease exists to prevent.
 
-Mỗi lần dispatch là một nhịp tim tự nhiên, không cần timer hay tiến trình nền.
+Each dispatch is a natural heartbeat — no timer and no background process needed.
 
-**Và append một dòng `telemetry`** — bạn là actor duy nhất biết stage vừa rồi
-chạy tier nào:
+**And append one `telemetry` line** — you are the only actor that knows which
+tier the stage just ran on:
 
 ```json
 { "stage": "implementation", "tier": "strong", "model": "opus", "attempt": 2,
@@ -346,12 +369,12 @@ chạy tier nào:
   "inputTokens": 21400 }
 ```
 
-`inputTokens` = số CLI báo sau lượt dispatch đó (bỏ qua nếu CLI không báo). Đây là thứ duy nhất cho thấy **trọng lượng của chính harness**: sàn luật mỗi subagent phải đọc được nhân lên theo từng stage, từng task — kernel phình lên thì hiện ở đây, hoặc không hiện ở đâu cả.
+`inputTokens` = the number the CLI reports after that dispatch (omit it if the CLI reports nothing). This is the only thing that shows **the weight of the harness itself**: the floor of rules every subagent must read is multiplied by every stage, every task — if the kernel bloats, it shows up here, or it shows up nowhere.
 
-CLI không cho chọn model per-subagent → `"tier": "session-default"`, `model` bỏ
-trống. **Không** ghi token/usage (SharedRules §5 cấm — đó là dữ liệu vendor); tên
-model + wall-clock là đủ để `--calibrate` trả lời "tier `strong` có mua được gì
-không", câu mà `outcome` một mình không trả lời được.
+The CLI cannot pick a model per subagent → `"tier": "session-default"`, leave
+`model` empty. Do **not** record token/usage (SharedRules §5 forbids it — that is
+vendor data); the model name + wall-clock is enough for `--calibrate` to answer
+"did tier `strong` buy anything", the question `outcome` alone cannot answer.
 
 Step 7 (you, no subagent): `node scripts/lease.mjs release "$TASK"` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
@@ -382,7 +405,7 @@ When any gate fails (`status = blocked` or `needs_clarification`,
   2. why (from the handoff block),
   3. which file holds the blocker details,
   4. exactly what the user/BA must do to unblock.
-- `node scripts/lease.mjs release "$TASK"` (step 0b) — task dừng thì không giữ chỗ nữa.
+- `node scripts/lease.mjs release "$TASK"` (step 0b) — the task stopped, so stop holding the slot.
 - Stop. Resume later via `docs/HarnessSetup.md` §7 (re-dispatch the stage
   recorded in `currentStage`).
 
@@ -394,42 +417,43 @@ When any gate fails (`status = blocked` or `needs_clarification`,
   invented. If an MCP call fails with an auth error: stop and tell the user
   to re-login via `/mcp`.
 - Never modify `docs/srs/`, `docs/fsd/`, `docs/api/` content, the
-  `docs/tasks/_templates/` originals, hay file cấu hình của CLI.
-- Watch-mode commands (dev server, test watch, preview — liệt kê ở
+  `docs/tasks/_templates/` originals, or the CLI's config files.
+- Watch-mode commands (dev server, test watch, preview — listed in
   ProjectRules §7) are never run by you or any subagent.
 - No working-tree-destroying git command, ever — no `git stash` (incl.
   `push -u`), `git checkout -- …`, `git restore`, `git reset --hard`,
   `git clean`. That is the exact command that lost a stage. Need a clean tree
   for a baseline? You already have one: step 0 gave you a fresh worktree.
 
-## Step 7 — dọn worktree đã merge (sau khi báo user, trước khi dừng)
+## Step 7 — clean up merged worktrees (after reporting to the user, before stopping)
 
-Rời worktree mà giữ lại thì không có gì dọn, nên chúng tích lại — một máy đã
-từng tích **108 worktree / 65 GB**, trong đó 79 nhánh đã merge (việc xong, giữ
-vô nghĩa). Mỗi worktree mới clone lại dependency trên nền đó → càng lúc càng chậm.
+Leaving a worktree but keeping it means nothing gets cleaned up, so they pile
+up — one machine once accumulated **108 worktrees / 65 GB**, 79 of them on
+already-merged branches (work done, keeping them pointless). Every new worktree
+re-clones dependencies on top of that → slower and slower.
 
-Chạy dry-run rồi báo user con số, **không tự xoá**. Với mỗi repo trong
-`harness.config.json → repos`:
+Run the dry-run and report the number to the user, **do not delete anything
+yourself**. For each repo in `harness.config.json → repos`:
 
 ```bash
-TARGET=origin/<nhánh-đích ProjectRules §3>
+TARGET=origin/<target-branch ProjectRules §3>
 git -C <repo-path> fetch origin -q
 for w in $(git -C <repo-path> worktree list --porcelain | awk '/^worktree /{print $2}'); do
   b=$(git -C "$w" branch --show-current 2>/dev/null) || continue
   [ -z "$b" ] && continue
-  # đã merge nhánh đích + tree sạch = an toàn để xoá
+  # merged into the target + clean tree = safe to remove
   git -C <repo-path> merge-base --is-ancestor "$b" "$TARGET" 2>/dev/null \
     && [ -z "$(git -C "$w" status --porcelain)" ] \
     && echo "$w  [$b]"
 done
 ```
 
-Danh sách in ra là **ứng viên** — commit đã nằm trong nhánh đích *và* tree sạch.
-User tự quyết xoá:
+The printed list is **candidates** — commits already in the target branch *and* a
+clean tree. The user decides to delete:
 
 ```bash
-git worktree remove <path> && git branch -d <branch>   # -d, KHÔNG -D: -d từ chối nếu chưa merge
+git worktree remove <path> && git branch -d <branch>   # -d, NOT -D: -d refuses if not merged
 ```
 
-Worktree của task **này** không bao giờ nằm trong danh sách (chưa merge) — nên
-step 7 không đụng việc bạn vừa làm.
+**This** task's worktree is never in the list (not merged yet) — so step 7 never
+touches what you just did.
