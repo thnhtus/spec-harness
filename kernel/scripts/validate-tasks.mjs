@@ -481,6 +481,29 @@ if (args.has("--self-check")) {
     EVIDENCE_RE.test(sample),
     `config.evidenceSampleCommand ("${sample}") does not match evidenceCommandPattern — one of the two is wrong`,
   );
+  // The other direction. A pattern only had to ACCEPT the sample, so `npm run .*`
+  // passed self-check green while Gate 4 took `npm run dev` as proof a test ran.
+  // A gate that accepts everything is a gate with no teeth, and this is exactly
+  // the silent no-op --self-check exists to catch.
+  const negatives = CFG.evidenceNegativeSamples ?? [];
+  assert.ok(
+    negatives.length >= 2,
+    "config.evidenceNegativeSamples needs >= 2 commands that must NOT count as evidence (e.g. [\"npm run dev\", \"npm run start\"]) — without them a too-broad pattern passes",
+  );
+  for (const neg of negatives)
+    assert.equal(
+      EVIDENCE_RE.test(neg),
+      false,
+      `config.evidenceCommandPattern matches "${neg}", which is declared a non-evidence command — the pattern is too broad`,
+    );
+  // Backstop for a config that declares narrow negatives but a wide pattern:
+  // no real test/lint/build command is called `dev` or `start`.
+  for (const neg of ["npm run dev", "npm run start", "yarn dev", "pnpm dev"])
+    assert.equal(
+      EVIDENCE_RE.test(neg),
+      false,
+      `config.evidenceCommandPattern matches "${neg}" — a dev server is not test evidence`,
+    );
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nexit 0\n```"), true, "fenced command + exit 0");
   assert.equal(
     hasRealEvidenceIn("```\n$ npm run test:scope -- src/test/4/5\n```"),

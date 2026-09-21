@@ -13,7 +13,7 @@ project dùng stack gì, tracker nào, nhánh đặt tên ra sao. Chưa chạy l
 | File | Mục |
 | --- | --- |
 | `docs/agents/ProjectRules.md` | §1 nguồn truth MCP · §2 guardrail source · §3 quy tắc nhánh · §7 lệnh kiểm tra |
-| `harness.config.json` | `repos` · `layers` · `models` · `evidenceCommandPattern` + `evidenceSampleCommand` |
+| `harness.config.json` | `repos` · `layers` · `models` · `evidenceCommandPattern` + `evidenceSampleCommand` + `evidenceNegativeSamples` |
 
 **Nhận biết bố cục trước tiên** — nó quyết định `repos`:
 
@@ -83,6 +83,7 @@ Nên sau khi viết §7, cập nhật luôn `harness.config.json`:
 
 - `evidenceCommandPattern` — regex phủ đúng bộ lệnh vừa viết
 - `evidenceSampleCommand` — một lệnh thật, phải khớp pattern đó
+- `evidenceNegativeSamples` — ≥2 lệnh **không được** khớp (dev server, watch mode…). Pattern chỉ phải *nhận* sample thì `npm run .*` vẫn xanh; đây là chiều ngược lại
 
 ## Bước 4 — verify (bắt buộc, đừng báo xong khi chưa chạy)
 
@@ -91,6 +92,7 @@ node scripts/validate-tasks.mjs --self-check
 ```
 
 Fail ở `evidenceSampleCommand` = pattern và lệnh lệch nhau → sửa, chạy lại.
+Fail ở `evidenceNegativeSamples` = pattern viết quá rộng → thu hẹp, đừng xoá sample.
 Đây là cái bắt lỗi cấu hình khiến mọi gate sau đó im lặng no-op.
 
 Rồi báo user, ngắn:

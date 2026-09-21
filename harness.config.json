@@ -111,6 +111,7 @@
   },
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",
+  "evidenceNegativeSamples": ["npm run dev", "npm run start", "npm run preview"],
   "tracker": {
     "urlPattern": "^https://app\\.clickup\\.com/t/.+"
   },
