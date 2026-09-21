@@ -194,8 +194,20 @@ function installInto(P) {
   cpSync(join(SRC, "commands/init-project-rules.md"), join(P, ".claude/commands/init-project-rules.md"));
 
   // CI: hook ở máy dev bypass được bằng --no-verify. Workflow thì không.
-  mkdirSync(join(P, ".github/workflows"), { recursive: true });
-  keep(join(SRC, "adapters/ci/validate-tasks.yml"), join(P, ".github/workflows/spec-harness.yml"));
+  //
+  // Cài theo remote, không cài cả hai: một .github/workflows/ nằm trong repo
+  // GitLab là lưới GIẢ — preflight thấy file nên im lặng, còn CI thì không
+  // bao giờ chạy nó. Không đọc được remote thì mặc định GitHub và nói ra.
+  const remote = spawnSync("git", ["remote", "get-url", "origin"], { cwd: P, encoding: "utf8" });
+  const isGitlab = remote.status === 0 && /gitlab/i.test(remote.stdout);
+  if (isGitlab) {
+    keep(join(SRC, "adapters/ci/.gitlab-ci.yml"), join(P, ".gitlab-ci.yml"));
+  } else {
+    mkdirSync(join(P, ".github/workflows"), { recursive: true });
+    keep(join(SRC, "adapters/ci/validate-tasks.yml"), join(P, ".github/workflows/spec-harness.yml"));
+    if (remote.status !== 0)
+      console.log("ℹ chưa có remote origin — cài CI cho GitHub. Repo GitLab thì: cp adapters/ci/.gitlab-ci.yml .");
+  }
 
   // Dấu phiên bản. Installer ghi ĐÈ mọi lần, nên nếu không ghi lại số thì sau
   // khi nâng kernel không ai biết project đang chạy bản nào: không debug được
@@ -326,6 +338,45 @@ if (args[0] === "--self-test") {
 
   if (!existsSync(join(T, ".github/workflows/spec-harness.yml")))
     fail("thiếu CI workflow — gate chỉ tồn tại ở máy dev");
+
+  // Repo GitLab phải nhận file GitLab. Cài nhầm .github/workflows/ vào đó là
+  // lưới GIẢ: preflight thấy file nên xanh, CI không bao giờ chạy nó — tệ hơn
+  // là không có CI, vì không có CI thì ít nhất preflight còn báo đỏ.
+  {
+    const G = mkrepo("gl");
+    git(G, "remote", "add", "origin", "https://gitlab.example.com/x/y.git");
+    spawnSync(process.execPath, [join(SRC, "install.mjs"), "--yes", G], { stdio: "ignore" });
+    if (!existsSync(join(G, ".gitlab-ci.yml")))
+      fail("cài vào repo có remote GitLab mà không sinh .gitlab-ci.yml — CI không chạy gate nào");
+    if (existsSync(join(G, ".github/workflows")))
+      fail("cài vào repo GitLab mà vẫn sinh .github/workflows/ — preflight xanh nhờ file không bao giờ chạy");
+    rmSync(G, { recursive: true, force: true });
+  }
+
+  // Mặc định của harness là MCP GitLab + skill build-and-mr viết cho MR, nên
+  // chỉ ship file GitHub nghĩa là đúng nhóm người dùng harness nhắm tới lại
+  // không có lưới cuối. Preflight phải nhận CẢ HAI, và bài kiểm rẻ nhất là
+  // chạy nó trên một cây chỉ có .gitlab-ci.yml.
+  {
+    const gl = join(SRC, "adapters/ci/.gitlab-ci.yml");
+    if (!existsSync(gl)) fail("thiếu adapters/ci/.gitlab-ci.yml — team GitLab cài xong mất lưới CI mà không biết");
+    const wf = join(T, ".github/workflows");
+    const saved = readdirSync(wf).map((f) => [f, read(join(wf, f))]);
+    rmSync(wf, { recursive: true, force: true });
+    cpSync(gl, join(T, ".gitlab-ci.yml"));
+    const r = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight", "--json"],
+      { cwd: T, encoding: "utf8" });
+    // Parse, không regex trên stdout: `--json` mà lẫn một dòng cho người đọc
+    // thì output hỏng với MỌI tool tiêu thụ nó, và grep sẽ không thấy điều đó.
+    let errs;
+    try { errs = JSON.parse(r.stdout).errors ?? []; }
+    catch { fail("`--preflight --json` không trả JSON parse được:", r.stdout.trim().slice(0, 300)); }
+    if (errs.some((e) => /no CI workflow/.test(e)))
+      fail("preflight báo 'no CI workflow' trên cây có .gitlab-ci.yml chạy validator — nó chỉ nhìn .github/workflows");
+    rmSync(join(T, ".gitlab-ci.yml"));
+    mkdirSync(wf, { recursive: true });
+    for (const [f, c] of saved) writeFileSync(join(wf, f), c);
+  }
 
   // Kernel/adapter chia đôi mọi thứ, và hai nửa trông GIỐNG NHAU — nên `cp` từ
   // bên này sang bên kia luôn trông như đồng bộ hoá. Một lần như vậy đã làm

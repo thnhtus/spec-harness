@@ -1,0 +1,14 @@
+# spec-harness gate ở CI — chỗ `git commit --no-verify` không với tới được.
+# Cài: cp adapters/ci/.gitlab-ci.yml .   (đã có .gitlab-ci.yml thì chèn job này vào)
+#
+# Bản GitHub Actions nằm cạnh: adapters/ci/validate-tasks.yml. Mặc định của
+# harness là MCP GitLab + skill build-and-mr viết cho MR, nên team GitLab mà
+# chỉ có file GitHub là mất hẳn lưới cuối mà không nhận ra.
+
+spec-harness:
+  image: node:20-alpine
+  script:
+    # --preflight trước: config tự mâu thuẫn (hoặc repos[].path sai) thì mọi
+    # check sau im lặng no-op. Bao gồm --self-check.
+    - node scripts/validate-tasks.mjs --preflight
+    - node scripts/validate-tasks.mjs

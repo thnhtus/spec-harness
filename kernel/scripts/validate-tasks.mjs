@@ -1708,7 +1708,11 @@ if (args.has("--preflight")) {
       /* the source repo IS the kernel; nothing to stamp */
     } else if (!existsSync(stamp))
       warns.push("docs/.kernel-version missing — installed before stamping, or hand-copied. Re-run the installer so upgrades are traceable");
-    else if (!QUIET) console.log(`ℹ kernel ${readFileSync(stamp, "utf8").split("\n")[0].trim()}`);
+    // Not under --json: this line is for a human reading the terminal, and
+    // printing it before the JSON body makes the whole output unparseable --
+    // which is exactly how a tool consuming --preflight --json finds out, at
+    // the worst moment.
+    else if (!QUIET && !AS_JSON) console.log(`ℹ kernel ${readFileSync(stamp, "utf8").split("\n")[0].trim()}`);
   }
 
   if (!existsSync(TASKS_DIR)) errs.push(`tasksDir "${CFG.tasksDir}" does not exist (resolved: ${TASKS_DIR})`);
@@ -1730,16 +1734,25 @@ if (args.has("--preflight")) {
     // broken task this commit does not touch, and `--no-verify` bypasses it
     // entirely. CI is the backstop both of those rely on; with no CI the
     // designed hole has nothing behind it.
+    // Look for the validator in either CI system. The default MCP config points
+    // at GitLab and build-and-mr is written for merge requests, so checking only
+    // .github/workflows would report "no CI" to exactly the teams the harness
+    // ships configured for -- and they would learn to ignore the error.
     const wfDir = join(REPO_ROOT, ".github/workflows");
-    const runsValidator =
-      existsSync(wfDir) &&
-      readdirSync(wfDir)
-        .filter((f) => /\.ya?ml$/.test(f))
-        .some((f) => readFileSync(join(wfDir, f), "utf8").includes("validate-tasks.mjs"));
+    const ciFiles = [
+      ...(existsSync(wfDir)
+        ? readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f)).map((f) => join(wfDir, f))
+        : []),
+      join(REPO_ROOT, ".gitlab-ci.yml"),
+    ];
+    const runsValidator = ciFiles.some(
+      (f) => existsSync(f) && readFileSync(f, "utf8").includes("validate-tasks.mjs"),
+    );
     if (!runsValidator)
       errs.push(
-        "no CI workflow runs validate-tasks.mjs — the pre-commit hook is --staged (blind to tasks this commit does not touch) and `--no-verify` skips it, so CI is the only gate left.\n" +
-          "    Install it: cp adapters/ci/validate-tasks.yml .github/workflows/  (or re-run the installer)",
+        "no CI workflow runs validate-tasks.mjs \u2014 the pre-commit hook is --staged (blind to tasks this commit does not touch) and `--no-verify` skips it, so CI is the only gate left.\n" +
+          "    GitHub: cp adapters/ci/validate-tasks.yml .github/workflows/\n" +
+          "    GitLab: cp adapters/ci/.gitlab-ci.yml .",
       );
   }
 

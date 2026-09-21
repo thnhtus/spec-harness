@@ -320,7 +320,7 @@ Installer viết bằng **Node**, không phải bash — chạy y hệt nhau t�
 
 `npx` tải tarball từ npm vào cache rồi chạy `install.mjs` (khai báo ở `bin`) — không để lại bản clone trong project. Chạy `install.mjs` đơn lẻ (không qua npm) thì nó tự tải tarball từ GitHub, ref ghim bằng `SPEC_HARNESS_REF=v0.1.0`.
 
-**Sinh ra:** `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, `.github/workflows/`, `.mcp.json`, `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè), và `docs/.kernel-version` (bản kernel đang chạy — `--preflight` in ra, để nâng xong còn biết mình đang ở đâu).
+**Sinh ra:** `docs/`, `scripts/`, `hooks/`, `.claude/agents/` (7 subagent), `.claude/commands/`, `.claude/skills/`, CI workflow (`.github/workflows/` hoặc `.gitlab-ci.yml`, theo remote), `.mcp.json`, `.claude/settings.json` (deny-list lệnh phá working tree — cài một lần, không đè), và `docs/.kernel-version` (bản kernel đang chạy — `--preflight` in ra, để nâng xong còn biết mình đang ở đâu).
 
 **Ghi đè.** Harness cài đè lên repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Thư mục đích không rỗng thì installer **liệt kê đúng những file sắp đè và hỏi `[y/N]` trước khi ghi byte nào** — trả lời khác `y` là thoát, không đụng gì. Không có TTY (CI, pipe) thì nó dừng hẳn thay vì tự đồng ý; thêm `--yes` để bỏ qua. Bản cũ còn trong git (`git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
 
@@ -336,7 +336,7 @@ Installer viết bằng **Node**, không phải bash — chạy y hệt nhau t�
 
 Trường hợp A luôn có git sẵn. Trường hợp B thì `git init` là khuyến nghị mạnh — task doc và evidence gần như là toàn bộ nội dung của repo đó.
 
-**Gate chạy ở hai chỗ, pre-commit là tuỳ chọn.** CI (`.github/workflows/spec-harness.yml`) là chỗ `git commit --no-verify` không với tới. Hook pre-commit chỉ để biết sớm hơn: repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook); project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú.
+**Gate chạy ở hai chỗ, pre-commit là tuỳ chọn.** CI là chỗ `git commit --no-verify` không với tới — installer đọc `git remote get-url origin` để cài đúng loại: remote GitLab → `.gitlab-ci.yml`, còn lại → `.github/workflows/spec-harness.yml`. Nó **không** cài cả hai, vì một `.github/workflows/` nằm trong repo GitLab là lưới giả: preflight thấy file nên im lặng, còn CI thì không bao giờ chạy nó. Preflight nhận cả hai loại file khi kiểm. Hook pre-commit chỉ để biết sớm hơn: repo sạch thì installer tự cắm (tôn trọng `core.hooksPath` của husky/lefthook); project đã có hook riêng, hoặc thư mục không phải git repo → vẫn cài bình thường, chỉ in một dòng ghi chú.
 
 `.claude/commands/start-task.md` là adapter, không phải kernel: step 2 dựng worktree theo công thức nhánh của ProjectRules §3 — đọc lại nếu project bạn khác quy ước.
 
