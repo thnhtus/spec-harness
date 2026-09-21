@@ -1,16 +1,16 @@
 # 02 — FSD Review: {taskName}
 
-> Sinh bởi `fsd-reviewer` (stage `fsd_review`, **Gate 2**). Đọc `01-FSD.md` (do `fsd-writer` soạn) + tracker + thiết kế qua MCP; trích ID `FR-`/`NFR-`/`FSD-` từ `srs/` + `fsd/`. Append-only; văn xuôi theo `harness.config.json → docLanguage`. Trường MCP thiếu → ghi "unavailable", không bịa.
+> Written by `fsd-reviewer` (stage `fsd_review`, **Gate 2**). Read `01-FSD.md` (from `fsd-writer`) + the tracker + the design via MCP; quote `FR-`/`NFR-`/`FSD-` IDs from `srs/` + `fsd/`. Append-only; prose in `harness.config.json → docLanguage`. A missing MCP field is recorded as "unavailable", never invented.
 
-## Tiêu chí nghiệm thu (AC)
+## Acceptance criteria (AC)
 
-> Đánh số thật (`AC-01`, `AC-02`, …). `AC-nn` là **placeholder** — validator bỏ qua, nên dòng chưa điền không bị tính là AC.
+> Use real numbers (`AC-01`, `AC-02`, …). `AC-nn` is a **placeholder** — the validator skips it, so an unfilled row does not count as an AC.
 
 | AC ID | Acceptance Criteria | Source | Status | Test Case |
 | --- | --- | --- | --- | --- |
 | AC-nn |  | FSD §… / FR-… | open | TC-… |
 
-## Câu hỏi BA
+## BA questions
 
 | Question ID | Question | Type | Status | Owner | Created At | Resolved At |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -24,15 +24,15 @@
 
 ## Amendment log
 
-> Append khi stage sau (plan / implement) phát hiện AC hoặc requirement **sai / thiếu / bất khả thi**. Spec là source of truth — sửa spec, đừng để code âm thầm lệch. Quy tắc: [`../../agents/SharedRules.md` §9](../../agents/SharedRules.md).
+> Append when a later stage (plan / implement) finds an AC or requirement that is **wrong / missing / impossible**. The spec is the source of truth — amend the spec rather than letting the code drift silently. Rules: [`../../agents/SharedRules.md` §9](../../agents/SharedRules.md).
 
-| Date | Phát hiện bởi | AC / FSD ID | Nội dung cũ → mới | Lý do |
+| Date | Found by | AC / FSD ID | Old → new | Reason |
 | --- | --- | --- | --- | --- |
 
 ## Gate 2 — checklist
 
-- [ ] Business intent rõ ràng
-- [ ] AC đầy đủ, đo được, có nguồn (`FR-`/`FSD-` hoặc `FSD-<MOD>-nnn` trong `01-FSD.md`)
-- [ ] Không còn câu hỏi BA dạng blocking (chưa resolved)
+- [ ] Business intent is clear
+- [ ] ACs are complete, measurable, and sourced (`FR-`/`FSD-`, or an `FSD-<MOD>-nnn` in `01-FSD.md`)
+- [ ] No blocking BA question left unresolved
 
-> Gate 2 fail → `status = needs_clarification`, ghi blocker vào đây + `.agent-memory/fsd-reviewer.md`, dừng automation.
+> Gate 2 fails → `status = needs_clarification`, record the blocker here + in `.agent-memory/fsd-reviewer.md`, stop automation.

@@ -1,62 +1,62 @@
 # 00 — Metadata: {taskName}
 
-> Sinh bởi `orchestrator` ở stage bootstrap. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
+> Written by `orchestrator` at the bootstrap stage. Append-only; prose in `harness.config.json → docLanguage`.
 
-## Thông tin task
+## Task information
 
-| Field | Giá trị |
+| Field | Value |
 | --- | --- |
 | Task ID | `{taskId}` |
 | Task URL | {clickupUrl} |
-| Tên task | {taskName} |
+| Task name | {taskName} |
 | Sprint | {sprintNumber} |
 | Repo | <repo> |
 | Developer | {developer} |
 | branchType | {branchType} (`feature` / `bugfix` / `hotfix`) |
-| layer | {layer} (theo `repos[].layer` của repo đã chọn) |
+| layer | {layer} (from `repos[].layer` of the selected repo) |
 | taskComplexity | {taskComplexity} (`trivial` / `normal` / `high`) |
-| Nhánh | `<theo ProjectRules §3>` |
+| Branch | `<per ProjectRules §3>` |
 | Target branch | develop |
 
-## Liên kết nguồn (MCP)
+## Source links (MCP)
 
-| Nguồn | Link / ID | Ghi chú |
+| Source | Link / ID | Note |
 | --- | --- | --- |
-| Tracker task | {clickupUrl} | nguồn yêu cầu |
-| Design tool | unavailable | điền nếu có thiết kế |
-| SRS liên quan | `../../../srs/…` | điền module liên quan |
-| FSD liên quan | `../../../fsd/…` | điền màn hình / node liên quan |
+| Tracker task | {clickupUrl} | the requirement source |
+| Design tool | unavailable | fill in if a design exists |
+| Related SRS | `../../../srs/…` | the relevant module |
+| Related FSD | `../../../fsd/…` | the relevant screen / node |
 
 ## Pre-flight (orchestrator)
 
-- [ ] MCP sẵn sàng — đủ server khai ở ProjectRules §1 (`claude mcp list`)
-- [ ] `cwd` đúng repo của `repoName` (config `repos`), nhánh hiện tại không phải protected
-- [ ] git user đã cấu hình
-- [ ] Suy ra đủ metadata (taskId, sprint, branchType)
-- [ ] Chấm độ phức tạp (bảng dưới)
+- [ ] MCP ready — every server declared in ProjectRules §1 (`claude mcp list`)
+- [ ] `cwd` is the repo named by `repoName` (config `repos`), current branch is not protected
+- [ ] git user configured
+- [ ] Enough metadata derived (taskId, sprint, branchType)
+- [ ] Complexity scored (table below)
 
-## Độ phức tạp (Agents.md §5.1)
+## Complexity (Agents.md §5.1)
 
-> Điền **vector**, đừng tự phán điểm. `taskComplexity` do công thức §5.1.1 tính ra — validator kiểm lại, lệch là error.
+> Fill in the **vector**; do not judge the score freehand. `taskComplexity` comes from the §5.1.1 formula — the validator recomputes it, and a mismatch is an error.
 
-| Chiều | 0 | 1 | 2 | Chấm |
+| Dimension | 0 | 1 | 2 | Score |
 | --- | --- | --- | --- | --- |
-| scope | 1 file | vài file, 1 module | nhiều module/tầng | |
-| uncertainty | rõ hết | suy ra được | phải hỏi BA | |
-| dependency | không | module có sẵn | service/repo khác | |
-| dataImpact | không chạm | đọc/ghi qua API sẵn | schema · migration · shape dùng chung | |
-| integration | không | API sẵn có | thêm/đổi contract · hệ thống ngoài | |
-| testing | test sẵn phủ | thêm test thường | khó tái hiện · e2e/thủ công | |
+| scope | 1 file | a few files, 1 module | several modules/layers | |
+| uncertainty | fully clear | derivable | must ask the BA | |
+| dependency | none | an existing module | another service/repo | |
+| dataImpact | untouched | read/write via an existing API | schema · migration · shared shape | |
+| integration | none | an existing API | new/changed contract · external system | |
+| testing | covered by existing tests | ordinary new tests | hard to reproduce · e2e/manual | |
 
-**effort = tổng (0–12):** {n}
+**effort = total (0–12):** {n}
 
-**Số đo đã chấm từ đó** (validator đối chiếu, thiếu là error): `counts.symbol` = `{symbol đã grep}` · `counts.filesTouched` = {n} · `counts.existingTests` = {n} · `questions[]` = {danh sách "không làm được nếu không biết X", rỗng chỉ khi đã đi tìm}
+**The measurements behind that score** (the validator cross-checks them; missing is an error): `counts.symbol` = `{the symbol you grepped}` · `counts.filesTouched` = {n} · `counts.existingTests` = {n} · `questions[]` = {the list of "cannot proceed without knowing X"; empty only if you actually went looking}
 
-| Chiều rủi ro | Thang | Chấm |
+| Risk dimension | Scale | Score |
 | --- | --- | --- |
-| blastRadius | 0 một chỗ · 1 module · 2 feature · 3 service · 4 toàn hệ thống | |
-| reversibility | 0 sửa lại xong · 1 revert · 2 deploy lại · 3 sửa dữ liệu · 4 không lùi được | |
+| blastRadius | 0 one spot · 1 module · 2 feature · 3 service · 4 whole system | |
+| reversibility | 0 just edit again · 1 revert · 2 redeploy · 3 data repair · 4 irreversible | |
 
-> Hai chiều này không có số đo nào đối chiếu, mà chúng một mình kéo `trivial → high`. Đây là chỗ duy nhất còn dựa hoàn toàn vào phán đoán — đừng chấm cho qua.
+> These two have no measurement to check them against, and on their own they can drag a task from `trivial` to `high`. This is the one place still resting entirely on judgement — do not score it to get it over with.
 
-**→ `taskComplexity` = {trivial\|normal\|high}** · ghi vector vào `task.agent.json → complexity`
+**→ `taskComplexity` = {trivial\|normal\|high}** · write the vector into `task.agent.json → complexity`

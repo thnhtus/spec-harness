@@ -1,16 +1,16 @@
 # 03 — Technical Plan: {taskName}
 
-> Sinh bởi `technical-planner` (stage `technical_plan`, **Gate 3**). Trỏ màn hình trong `fsd/` + contract trong `api/`. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
+> Written by `technical-planner` (stage `technical_plan`, **Gate 3**). Point at the screens in `fsd/` and the contracts in `api/`. Append-only; prose in `harness.config.json → docLanguage`.
 
-## File sẽ đổi
+## Files to change
 
-| File (dưới `src/`) | Change Type | Reason | Related AC / Req |
+| File (under `src/`) | Change Type | Reason | Related AC / Req |
 | --- | --- | --- | --- |
 | `src/pages/…` | new / edit | … | AC-nn |
 
-## Contract API phụ thuộc (góc nhìn client)
+## API contracts depended on (client's view)
 
-> Contract mà repo này **tiêu thụ**, không phải hiện thực server. Nguồn theo thang bậc TechnicalPlanner §3.2: `docs/api/` → source BE trong `repos` (read-only) → Swagger → `unavailable`.
+> Contracts this repo **consumes**, not a server implementation. Sources follow the TechnicalPlanner §3.2 ladder: `docs/api/` → BE source in `repos` (read-only) → Swagger → `unavailable`.
 
 | Endpoint | Method | Request | Response | Status Codes | Source (`docs/api/`) |
 | --- | --- | --- | --- | --- | --- |
@@ -18,23 +18,23 @@
 
 ## Test plan
 
-> Mỗi dòng test phải ghi **AC nào được phủ** — AC không có dòng test = Gate 3 FAIL.
+> Every test row must record **which AC it covers** — an AC with no test row = Gate 3 FAIL.
 
 | Test Type | Command | Covers AC | Expected | Notes |
 | --- | --- | --- | --- | --- |
-| Unit (scope) | `<lệnh unit phạm vi task — ProjectRules §7>` | AC-nn, AC-nn | pass | evidence Gate 4 mặc định |
-| Unit (full) | `<lệnh full-suite>` | — | không regress | **chỉ** khi §7 yêu cầu |
-| Type-check | `<lệnh type-check>` | — | 0 lỗi | |
-| Lint | `<lệnh lint>` | — | 0 error | |
-| E2E (nếu cần) | `<lệnh e2e>` | AC-nn | pass | chỉ khi luồng UI quan trọng |
-| Build | `<lệnh build>` | — | success | |
+| Unit (scope) | `<scoped unit command — ProjectRules §7>` | AC-nn, AC-nn | pass | the default Gate 4 evidence |
+| Unit (full) | `<full-suite command>` | — | no regression | **only** when §7 requires it |
+| Type-check | `<type-check command>` | — | 0 errors | |
+| Lint | `<lint command>` | — | 0 errors | |
+| E2E (if needed) | `<e2e command>` | AC-nn | pass | only for important UI flows |
+| Build | `<build command>` | — | success | |
 
-**AC không phủ được bằng test tự động** (chỉ verify tay / cosmetic) → liệt kê ở đây kèm lý do; đó là danh sách hợp lệ để `08` đánh dấu `manual`:
+**ACs that cannot be covered by an automated test** (manual verification only / cosmetic) → list them here with the reason; this is the valid list from which `08` may mark something `manual`:
 
-| AC ID | Lý do không tự động hoá được | Cách verify thay thế |
+| AC ID | Why it cannot be automated | Alternative verification |
 | --- | --- | --- |
 
-## Checklist hiện thực
+## Implementation checklist
 
 - [ ] …
 
@@ -46,9 +46,7 @@
 
 ## Gate 3 — checklist
 
-- [ ] Danh sách file sẽ đổi đầy đủ
-- [ ] Test plan có lệnh one-shot cụ thể + kỳ vọng
-- [ ] **Mọi AC trong `02-FSD-Review.md` xuất hiện ở cột "Covers AC" hoặc ở bảng AC-manual** (không AC nào rơi)
-- [ ] Risk đã nêu + mitigation
-
-> Gate 3 fail → `status = blocked`, ghi blocker + `.agent-memory/technical-planner.md`.
+- [ ] The list of files to change is complete
+- [ ] The test plan has concrete one-shot commands + expectations
+- [ ] **Every AC in `02-FSD-Review.md` appears in the "Covers AC" column or in the AC-manual table** (no AC dropped)
+- [ ] Risks stated + mitigations

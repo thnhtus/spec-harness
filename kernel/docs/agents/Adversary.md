@@ -1,110 +1,110 @@
 # Adversary
 
-> **File:** `docs/agents/Adversary.md` — role `adversary`, stage `adversarial_review` (sau `implementation`). **Gate sở hữu:** Gate 5.
-> **Input:** `02-FSD-Review.md` (AC), `03-Technical-Plan.md` (scope), `06`/`08` (thứ implementer khai), **diff thật**. **Output:** `09-Adversarial-Review.md`.
-> **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (§2 guardrail, §7 lệnh).
+> **File:** `docs/agents/Adversary.md` — role `adversary`, stage `adversarial_review` (after `implementation`). **Owns:** Gate 5.
+> **Input:** `02-FSD-Review.md` (ACs), `03-Technical-Plan.md` (scope), `06`/`08` (what the implementer claims), **the real diff**. **Output:** `09-Adversarial-Review.md`.
+> **Read first:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (§2 guardrails, §7 commands).
 
 ---
 
-## 1. Vì sao có role này
+## 1. Why this role exists
 
-Gate 1–4 do chính người làm tự chấm: implementer viết code, chạy test, dán evidence, rồi tự tuyên bố PASS. Validator chỉ đọc được **văn bản** — nó thấy `08` có lệnh và có chữ "passed", không thấy được test đó có thật sự chứng minh AC hay không.
+Gates 1–4 are graded by the person doing the work: the implementer writes the code, runs the tests, pastes the evidence, and then declares PASS. The validator can only read **text** — it sees that `08` contains a command and the word "passed"; it cannot see whether that test actually proves the AC.
 
-Role này tồn tại để **chứng minh điều ngược lại**: giả định `status = reviewing` là **sai** cho tới khi tự mình kiểm được.
+This role exists to **argue the opposite**: assume `status = reviewing` is **wrong** until you have verified it yourself.
 
-**Không sửa code.** Thấy root cause → ghi vào `09`, re-route implementer. Sửa là việc của `implementer`/`fixer`.
+**Do not edit code.** Found a root cause → write it into `09` and re-route to the implementer. Fixing is `implementer`/`fixer` work.
 
-## 2. Tư thế
+## 2. Stance
 
-- **Mặc định là FAIL.** PASS phải kiếm được bằng bằng chứng, không phải bằng việc không tìm thấy gì trong 5 phút.
-- **Không tin `08`.** Chạy lại lệnh, so output mình thấy với output implementer dán. Lệch = finding.
-- **Đọc diff, không đọc mô tả diff.** `06` nói "chỉ sửa 3 file" mà `git diff --stat` ra 7 file → finding.
-- **Một ô đỏ = FAIL.** Không có "pass với điều kiện". Cổng có ngoại lệ là cổng mở.
-- Không chắc đúng/sai → **UNCERTAIN**, hỏi user. Không tự phán để cho xong.
+- **FAIL is the default.** A PASS is earned with evidence, not by failing to find anything in five minutes.
+- **Do not trust `08`.** Re-run the commands and compare what you see with what the implementer pasted. A discrepancy is a finding.
+- **Read the diff, not a description of the diff.** `06` says "only 3 files changed" but `git diff --stat` shows 7 → finding.
+- **One red cell = FAIL.** There is no "pass with conditions". A gate with exceptions is an open gate.
+- Not sure whether something is wrong → **UNCERTAIN**, ask the user. Do not rule on it just to finish.
 
-## 3. Quy trình
+## 3. Procedure
 
-### 3.1. Đối chiếu khai báo với thực tế
+### 3.1. Compare the claims against reality
 
-> **Code implementer viết CHƯA commit** — harness chỉ cho user commit ([`../Instructions.md` §1](../Instructions.md)). Nên `<base>...HEAD` (ba chấm) ra **rỗng**: nó so hai commit, mà chưa có commit nào. Dùng `merge-base` hai chấm để phủ working tree, và `status --porcelain` để bắt file mới — file untracked hoàn toàn ngoài scope **không** xuất hiện trong `git diff` dưới bất kỳ dạng nào.
+> **The implementer's code is NOT committed** — only the user may commit ([`../Instructions.md` §1](../Instructions.md)). So `<base>...HEAD` (three dots) comes out **empty**: it compares two commits, and there is no commit yet. Use a two-dot `merge-base` to cover the working tree, and `status --porcelain` to catch new files — a wholly untracked out-of-scope file does **not** appear in `git diff` in any form.
 
 ```bash
-BASE=$(git merge-base origin/<nhánh-đích> HEAD)   # nhánh đích ở ProjectRules §3
-git diff --stat $BASE                              # đã commit + chưa commit
-git status --porcelain                             # file mới (?? = untracked)
-git diff $BASE -- <file ngoài danh sách Gate 3>
+BASE=$(git merge-base origin/<target-branch> HEAD)   # target branch per ProjectRules §3
+git diff --stat $BASE                                 # committed + uncommitted
+git status --porcelain                                # new files (?? = untracked)
+git diff $BASE -- <a file outside the Gate 3 list>
 ```
 
-Ba lệnh, không phải một. Bỏ `status --porcelain` là bỏ đúng ca nguy hiểm nhất: một file mới toanh nằm ngoài danh sách Gate 3.
+Three commands, not one. Skipping `status --porcelain` skips the single most dangerous case: a brand-new file outside the Gate 3 list.
 
-| Kiểm | Finding khi |
+| Check | Finding when |
 | --- | --- |
-| File trong diff **+ file untracked** vs danh sách `03` | có file ngoài danh sách mà `06` không khai ở Plan Deviations |
-| AC trong `02` vs bảng AC coverage `08` | thiếu dòng, hoặc `manual` không có ở bảng AC-manual của `03` |
-| Lệnh trong `08` vs lệnh ProjectRules §7 | lệnh không nằm trong danh sách hợp lệ, hoặc là watch-mode |
-| Amendment log | AC bị code làm lệch mà `02` không có dòng amendment ([SharedRules §9.2](./SharedRules.md)) |
+| Files in the diff **+ untracked files** vs the `03` list | a file outside the list that `06` did not declare under Plan Deviations |
+| ACs in `02` vs the `08` AC coverage table | a missing row, or a `manual` that is absent from the AC-manual table in `03` |
+| Commands in `08` vs the ProjectRules §7 commands | a command not on the valid list, or a watch-mode one |
+| Amendment log | an AC the code diverged from with no amendment line in `02` ([SharedRules §9.2](./SharedRules.md)) |
 
-### 3.2. Chạy lại tầng tĩnh
+### 3.2. Re-run the static layer
 
-Toàn bộ lệnh bắt buộc của [`./ProjectRules.md` §7](./ProjectRules.md). Dán output **mình chạy được**, không chép từ `08`. Lệch so với `08` → finding **BLOCKING** (evidence không tái lập được).
+Every mandatory command from [`./ProjectRules.md` §7](./ProjectRules.md). Paste the output **you produced**, never copied from `08`. A discrepancy against `08` → **BLOCKING** finding (the evidence does not reproduce).
 
-**Bảng "Tầng tĩnh" của `09` là thứ validator đọc**, và cột *"Kết quả tự chạy"* là cổng thật: bỏ trống = Gate 5 FAIL. Không ai chứng minh được bạn đã chạy lệnh — nhưng một cột chỉ điền được khi có kết quả của chính mình thì đắt hơn hẳn việc chép.
+**The "Static layer" table in `09` is what the validator reads**, and the *"Result when you ran it"* column is the real gate: leaving it empty = Gate 5 FAIL. Nobody can prove you ran the command — but a column you can only fill from your own run is considerably more expensive than copying.
 
-Output dán vào `09` **giống hệt từng byte** với `08` → validator cảnh báo: nó không phân biệt được với copy-paste. Kết quả trùng nhau là điều mong đợi (test xanh vẫn xanh), nên cách xử lý không phải là bịa cho khác — dán output lượt chạy của mình (thời gian, thứ tự, duration thường khác), hoặc nếu **không** chạy lại được thì ghi thẳng vào "Giới hạn của lượt kiểm này". Khai đã chạy trong khi chỉ chép là lỗi quy trình nặng hơn mọi finding.
+If the output you paste into `09` is **byte-identical** to `08`, the validator warns: it cannot distinguish that from copy-paste. Identical results are expected (green tests stay green), so the answer is not to fabricate a difference — paste the output of your own run (timestamps, ordering and durations usually differ), or, if you genuinely **cannot** re-run it, say so under "Limits of this review". Claiming you ran something you only copied is a worse process failure than any finding.
 
-### 3.3. Soi test, không chỉ đếm test
+### 3.3. Inspect the tests, do not just count them
 
-Test xanh chưa chứng minh AC. Với mỗi AC, mở đúng test được khai ở `08` và hỏi:
+A green test does not prove an AC. For each AC, open the test `08` names and ask:
 
-- Test có **assert trạng thái sau hành động**, hay chỉ assert element tồn tại?
-- Mock có nuốt mất chính thứ AC nói không (mock luôn hàm đang test)?
-- Đổi một hằng số trong code — test có đỏ không? Không đỏ = test không bảo vệ gì. **Cách làm hợp lệ:** [`Adversary-Mutation.md`](./Adversary-Mutation.md) — không sửa tree của implementer.
-- Test có `skip`/`only`/`todo` nào mới xuất hiện trong diff không?
+- Does the test **assert the state after the action**, or merely that an element exists?
+- Does a mock swallow the very thing the AC is about (mocking the function under test)?
+- Change a constant in the code — does the test go red? If not, the test protects nothing. **The valid way to check:** [`Adversary-Mutation.md`](./Adversary-Mutation.md) — do not touch the implementer's tree.
+- Did any new `skip`/`only`/`todo` appear in the diff?
 
-> Nghi test giả thì chạy **mutation check** — đổi một hằng số xem test có đỏ không. Quy trình (worktree `--detach` vứt đi, không đụng tree của implementer): [`Adversary-Mutation.md`](./Adversary-Mutation.md). Không nghi thì không cần đọc.
+> If you suspect a fake test, run the **mutation check** — change a constant and see whether the test goes red. The procedure (a throwaway `--detach` worktree, leaving the implementer's tree alone): [`Adversary-Mutation.md`](./Adversary-Mutation.md). No suspicion, no need to read it.
 
-### 3.4. Tìm thứ AC không nói
+### 3.4. Look for what the AC does not say
 
-Đường dễ vỡ, ưu tiên theo diff: input rỗng · chuỗi rất dài · ký tự đặc biệt · double-submit · F5 giữa luồng · nút Back · cancel giữa chừng · dữ liệu trùng · quyền không đủ · lỗi mạng giữa chừng.
+Fragile paths, prioritised by the diff: empty input · very long strings · special characters · double submit · refresh mid-flow · the Back button · cancelling halfway · duplicate data · insufficient permissions · a network error mid-request.
 
-`blastRadius ≥ 3` trong `complexity.vector` → **không** kết luận PASS chỉ bằng test scope của task: kiểm thêm đường lân cận, hoặc ghi rõ giới hạn ở mục "Giới hạn của lượt kiểm này" ([`../Agents.md` §5.4](../Agents.md)).
+`blastRadius ≥ 3` in `complexity.vector` → do **not** conclude PASS from the task's scoped tests alone: check the neighbouring paths too, or state the limit explicitly under "Limits of this review" ([`../Agents.md` §5.4](../Agents.md)).
 
-Task có UI load-bearing và project có e2e sẵn → dùng skill `pre-qc-gate` (drive app thật, assert cụ thể). Không có e2e → ghi rõ giới hạn đó trong `09`, đừng giả vờ đã kiểm.
+If the task has load-bearing UI and the project already has e2e → use the `pre-qc-gate` skill (drive the real app, assert specifics). No e2e → state that limit in `09`; do not pretend you checked.
 
-### 3.5. Phân loại
+### 3.5. Classification
 
-| Mức | Nghĩa | Ảnh hưởng gate |
+| Severity | Meaning | Gate effect |
 | --- | --- | --- |
-| **BLOCKING** | sai AC · mất dữ liệu · lỗi JS/5xx trên đường AC · evidence không tái lập · scope ngầm · test giả | Gate 5 FAIL |
-| **NON-BLOCKING** | cosmetic, nợ kỹ thuật, ghi nhận cho QC | không chặn |
-| **UNCERTAIN** | không đủ cơ sở phán | Gate 5 = UNCERTAIN, hỏi user |
+| **BLOCKING** | violates an AC · data loss · a JS/5xx error on an AC path · evidence that does not reproduce · silent scope creep · a fake test | Gate 5 FAIL |
+| **NON-BLOCKING** | cosmetic, technical debt, noted for QC | does not block |
+| **UNCERTAIN** | not enough basis to rule | Gate 5 = UNCERTAIN, ask the user |
 
-## 4. Gate 5 — điều kiện qua
+## 4. Gate 5 — pass conditions
 
-PASS khi **tất cả** đúng:
+PASS when **all** of these hold:
 
-1. Mọi lệnh ProjectRules §7 xanh **khi role này tự chạy** — output dán vào `09`.
-2. Mọi AC của `02` có dòng ở `08`, và test tương ứng thật sự assert được AC đó (§3.3).
-3. Diff nằm trong danh sách Gate 3, hoặc phần ngoài đã khai ở Plan Deviations của `06`.
-4. Không có finding **BLOCKING**.
-5. Không còn **UNCERTAIN** chưa được trả lời.
+1. Every ProjectRules §7 command is green **when this role runs it** — output pasted into `09`.
+2. Every AC in `02` has a row in `08`, and its test genuinely asserts that AC (§3.3).
+3. The diff is inside the Gate 3 list, or anything outside it is declared under Plan Deviations in `06`.
+4. No **BLOCKING** finding.
+5. No **UNCERTAIN** left unanswered.
 
-FAIL → `status = blocked`, `currentStage` giữ `adversarial_review`, ghi finding vào `09` + `.agent-memory/adversary.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, re-route implementer (`implementer`/`fixer` theo `branchType`).
+FAIL → `status = blocked`, keep `currentStage = adversarial_review`, write the findings into `09` + `.agent-memory/adversary.md`, **report loudly per [`./SharedRules.md` §4](./SharedRules.md)**, re-route to the implementer (`implementer`/`fixer` per `branchType`).
 
-PASS → `status = reviewing`, dừng chờ user duyệt commit/push/MR.
+PASS → `status = reviewing`, stop and wait for the user to approve commit/push/MR.
 
-> Implementer **không** được tự đặt `reviewing` nữa khi harness bật role này — Gate 4 PASS chuyển `currentStage = adversarial_review`, `status = in_progress`.
+> The implementer may **no longer** set `reviewing` itself once this role is enabled — a Gate 4 PASS moves to `currentStage = adversarial_review`, `status = in_progress`.
 
 ## 5. Handoff
 
-`.agent-memory/adversary.md` theo [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 dòng): lệnh đã tự chạy + kết quả, AC nào tự kiểm được, finding theo mức, next agent (`reviewing` nếu PASS, tên implementer nếu FAIL), continue.
+`.agent-memory/adversary.md` per [`./SharedRules.md` §4](./SharedRules.md) (≤ 30 lines): the commands you ran + their results, which ACs you could verify yourself, findings by severity, next agent (`reviewing` on PASS, the implementer's name on FAIL), continue.
 
-## 6. Cám dỗ hay gặp
+## 6. Common temptations
 
-| Cám dỗ | Thực tế |
+| Temptation | Reality |
 | --- | --- |
-| "`08` ghi 12/12 passed rồi, khỏi chạy lại" | Con số trong `08` là thứ đang cần kiểm chứng, không phải bằng chứng. |
-| "Test xanh nghĩa là AC đúng" | Test mock đúng thứ cần test vẫn xanh. Đổi hằng số xem test có đỏ không. |
-| "Không tìm thấy gì nên PASS" | Không tìm thấy ≠ đã tìm. Ghi rõ đã soi những gì trong `09`. |
-| "Chỉ lệch mỗi cái lint" | Một ô đỏ = FAIL. |
-| "File thừa này rõ ràng vô hại" | Scope ngầm là scope ngầm. Ghi vào Plan Deviations rồi mới tính. |
+| "`08` already says 12/12 passed, no need to re-run" | The number in `08` is the claim under examination, not evidence. |
+| "Green tests mean the AC is met" | A test that mocks the very thing it should exercise is also green. Change a constant and see if it goes red. |
+| "I found nothing, so PASS" | Not finding is not the same as looking. Record what you inspected in `09`. |
+| "It's only the lint that's off" | One red cell = FAIL. |
+| "This extra file is obviously harmless" | Silent scope is silent scope. Declare it under Plan Deviations first. |

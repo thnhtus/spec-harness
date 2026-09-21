@@ -1,56 +1,56 @@
 # 09 — Adversarial Review: {taskName}
 
-> Sinh bởi `adversary` (stage `adversarial_review`, **Gate 5**). Mặc định FAIL — PASS phải kiếm được bằng bằng chứng tự thu. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
-> **Output ở đây phải là thứ role này TỰ chạy**, không chép từ `08-Test-Evidence.md`.
+> Written by `adversary` (stage `adversarial_review`, **Gate 5**). FAIL is the default — a PASS has to be earned with evidence this role gathered itself. Append-only; prose in `harness.config.json → docLanguage`.
+> **The output here must be what this role ran ITSELF**, never copied from `08-Test-Evidence.md`.
 
-**Kết quả: PASS | FAIL | UNCERTAIN** · {ngày}
+**Result: PASS | FAIL | UNCERTAIN** · {date}
 
-## Tầng tĩnh — tự chạy lại
+## Static layer — re-run it yourself
 
-| Lệnh (ProjectRules §7) | Kết quả `08` khai | Kết quả tự chạy | Khớp? |
+| Command (ProjectRules §7) | Result claimed in `08` | Result when you ran it | Match? |
 | --- | --- | --- | --- |
-| `<lệnh>` |  |  | ✔ / ✘ |
+| `<command>` |  |  | ✔ / ✘ |
 
-## Scope — diff vs danh sách Gate 3
+## Scope — diff vs the Gate 3 list
 
 ```
 # git diff --stat <base>...HEAD
 ```
 
-| File trong diff | Có ở `03`? | Khai ở Plan Deviations `06`? | Finding |
+| File in the diff | In `03`? | Declared under Plan Deviations in `06`? | Finding |
 | --- | --- | --- | --- |
 
-## AC — test có thật sự assert không
+## AC — does the test actually assert it
 
-| AC | Test khai ở `08` | Assert trạng thái sau hành động? | Đổi hằng số → test đỏ? | Kết luận |
+| AC | Test claimed in `08` | Asserts the state after the action? | Change a constant → does the test go red? | Conclusion |
 | --- | --- | --- | --- | --- |
-| AC-nn |  | yes / no | yes / no / chưa thử | đạt / không đạt |
+| AC-nn |  | yes / no | yes / no / not tried | met / not met |
 
-## Finding
+## Findings
 
-| # | Mức | Mô tả | Expected | Actual | Nguồn (file:line / log / ảnh) |
+| # | Severity | Description | Expected | Actual | Source (file:line / log / screenshot) |
 | --- | --- | --- | --- | --- | --- |
 | F-01 | BLOCKING / NON-BLOCKING / UNCERTAIN |  |  |  |  |
 
-## Đã soi những gì
+## What was inspected
 
-> "Không tìm thấy" chỉ có giá trị khi nói rõ đã tìm ở đâu. Liệt kê đường đã đi.
+> "Found nothing" only means something when you say where you looked. List the paths you walked.
 
 - …
 
-## Giới hạn của lượt kiểm này
+## Limits of this review
 
-> Cái gì **không** kiểm được (không có e2e, không có tài khoản, phụ thuộc hệ thống ngoài) — ghi thẳng, đừng để trống.
+> What you could **not** check (no e2e, no account, depends on an external system) — state it plainly, do not leave it empty.
 
 - …
 
 ## Gate 5 — checklist
 
-- [ ] Mọi lệnh ProjectRules §7 xanh **khi tự chạy**, output thật dán ở trên
-- [ ] Mọi AC của `02` có dòng ở `08` **và** test tương ứng thật sự assert được AC
-- [ ] Diff nằm trong scope Gate 3, phần ngoài đã khai ở Plan Deviations
-- [ ] Không có finding BLOCKING
-- [ ] Không còn UNCERTAIN chưa được user trả lời
+- [ ] Every ProjectRules §7 command is green **when you run it**, with the real output pasted above
+- [ ] Every AC in `02` has a row in `08` **and** its test genuinely asserts the AC
+- [ ] The diff is within the Gate 3 scope; anything outside it is declared under Plan Deviations
+- [ ] No BLOCKING finding
+- [ ] No UNCERTAIN left unanswered by the user
 
-> FAIL → `status = blocked`, ghi finding vào đây + `.agent-memory/adversary.md`, báo to, re-route implementer.
-> PASS → `status = reviewing`, dừng chờ user.
+> FAIL → `status = blocked`, record the findings here + in `.agent-memory/adversary.md`, report loudly, re-route to the implementer.
+> PASS → `status = reviewing`, stop and wait for the user.

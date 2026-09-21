@@ -1,58 +1,58 @@
 # Fixer
 
-> **File:** `docs/agents/Fixer.md` — role `fixer`, stage `implementation` cho `branchType = bugfix`. **Gate sở hữu:** Gate 4.
-> Cùng hình dạng [`./Implementer.md`](./Implementer.md) nhưng định hướng **sửa lỗi**: reproduce-first, diff tối thiểu, bám root-cause. File này chỉ ghi phần **khác** so với Implementer — phần còn lại (input, nhánh, lệnh, output, forbidden) theo Implementer + [`./SharedRules.md`](./SharedRules.md).
+> **File:** `docs/agents/Fixer.md` — role `fixer`, stage `implementation` for `branchType = bugfix`. **Owns:** Gate 4.
+> Same shape as [`./Implementer.md`](./Implementer.md) but aimed at **fixing defects**: reproduce first, minimal diff, stay on the root cause. This file records only what **differs** from Implementer — everything else (input, branch, commands, output, forbidden) follows Implementer + [`./SharedRules.md`](./SharedRules.md).
 
 ---
 
-## 1. Input bổ sung
+## 1. Additional input
 
-- `02-FSD-Review.md`: **expected vs actual** + các bước tái hiện (repro). Nếu `fsd-reviewer.status = skipped` → đọc repro/AC trực tiếp từ tracker (MCP, summary-first).
-- `03-Technical-Plan.md`: **root-cause analysis** + fix plan — nguồn ràng buộc scope chính.
-- design tool chỉ khi lỗi là lệch UI so thiết kế.
+- `02-FSD-Review.md`: **expected vs actual** plus the reproduction steps. If `fsd-reviewer.status = skipped` → read the repro/ACs straight from the tracker (MCP, summary-first).
+- `03-Technical-Plan.md`: **root-cause analysis** + fix plan — the main scope constraint.
+- The design tool only when the defect is a UI deviation from the design.
 
-## 2. Reproduce-first (TDD cho bug — bắt buộc)
+## 2. Reproduce first (TDD for bugs — mandatory)
 
 ```
-Đọc repro + root-cause từ 03
-  → Viết test tái hiện bug (framework theo [`./ProjectRules.md` §7](./ProjectRules.md))
-  → chạy test đó → FAIL đúng triệu chứng   (fail sai lý do = test viết sai, sửa test)
-  → Sửa code: diff tối thiểu, bám root-cause
-  → chạy lại → PASS (test tái hiện thành regression test vĩnh viễn)
-  → lint + type-check + phần còn lại của ProjectRules §7
-  → Ghi 06 + 08, Gate 4
+Read repro + root cause from 03
+  → Write a test that reproduces the bug (framework per [`./ProjectRules.md` §7](./ProjectRules.md))
+  → run that test → it FAILs with the right symptom   (failing for the wrong reason = the test is wrong, fix the test)
+  → Fix the code: minimal diff, on the root cause
+  → run again → PASS (the repro test becomes a permanent regression test)
+  → lint + type-check + the rest of ProjectRules §7
+  → Write 06 + 08, Gate 4
 ```
 
-- **Không tái hiện được** hoặc **root-cause thực tế khác plan** → STOP, `status = blocked`, ghi `.agent-memory/fixer.md`, báo to, re-route `technical-planner`.
-- Bug chỉ thấy trên trình duyệt → bổ sung repro thủ công ngắn (before/after) trong `08`.
+- **Cannot reproduce it**, or **the real root cause differs from the plan** → STOP, `status = blocked`, record it in `.agent-memory/fixer.md`, report loudly, re-route to `technical-planner`.
+- A bug only visible in the browser → add a short manual repro (before/after) in `08`.
 
-## 3. Kỷ luật bugfix
+## 3. Bugfix discipline
 
-- **Minimal-diff:** không refactor lân cận, không đổi tên prop, không restyle, không nâng version, không "dọn dẹp tiện tay".
-- **Không che triệu chứng:** không `@ts-ignore` giấu lỗi type, không nuốt lỗi axios, không ẩn state UI, không tắt/skip test sẵn có đang fail.
-- Bug do lệch contract giữa hai layer → không vá bên gọi "chịu đựng" âm thầm: log quyết định vào `06` (API Integration Notes) + làm tươi `docs/api/` theo cách project quy định (ProjectRules §1).
+- **Minimal diff:** no refactoring nearby, no renaming props, no restyling, no version bumps, no "while I'm here" tidying.
+- **Do not mask the symptom:** no `@ts-ignore` hiding a type error, no swallowing an axios error, no hiding UI state, no disabling or skipping an existing failing test.
+- A bug caused by a contract mismatch between two layers → do not silently patch the caller into "tolerating" it: log the decision in `06` (API Integration Notes) and refresh `docs/api/` the way the project prescribes (ProjectRules §1).
 
-## 4. Output bổ sung (so với Implementer)
+## 4. Additional output (on top of Implementer)
 
-- `06-Implementation-Notes.md` thêm mục: **Root Cause** · **Reproduction Test** (test mới + file) · **Regression Risk**.
-- `08-Test-Evidence.md` phần `## Kết quả lệnh`: **Reproduction Before Fix** (log test fail trước khi sửa) · Kết quả từng lệnh của ProjectRules §7 · **Adjacent Flow Smoke Checks** (≥ 1 luồng lân cận, before/after khi UI thấy được) · bảng **AC coverage** như Implementer ([`./SharedRules.md` §9.1](./SharedRules.md)) — bug thường ít AC, nhưng AC nào có trong `02` cũng phải có dòng.
+- `06-Implementation-Notes.md` gains: **Root Cause** · **Reproduction Test** (the new test + its file) · **Regression Risk**.
+- `08-Test-Evidence.md` under `## Command output`: **Reproduction Before Fix** (the failing test log from before the fix) · the result of each ProjectRules §7 command · **Adjacent Flow Smoke Checks** (≥ 1 neighbouring flow, before/after when the UI is visible) · the **AC coverage** table as for Implementer ([`./SharedRules.md` §9.1](./SharedRules.md)) — bugs usually have few ACs, but every AC in `02` still needs a row.
 
-## 5. Gate 4 — tiêu chí bugfix
+## 5. Gate 4 — bugfix criteria
 
-| # | Tiêu chí |
+| # | Criterion |
 | --- | --- |
-| 1 | Root-cause được document, liên kết tới Changed Files |
-| 2 | Có evidence test tái hiện **fail-trước-fix** |
-| 3 | Test của bug (gồm regression test mới) pass; không skip/tắt test sẵn có |
-| 4 | Các lệnh còn lại của [`./ProjectRules.md` §7](./ProjectRules.md) xanh |
-| 5 | Smoke check ≥ 1 luồng lân cận |
-| 6 | Diff chỉ trong fix scope của plan |
-| 7 | Regression Risk có mitigation nếu ≥ medium |
-| 8 | Bảng **AC coverage** đủ mọi AC của `02`; root-cause thật khác AC → Amendment log ([`./SharedRules.md` §9](./SharedRules.md)) |
+| 1 | The root cause is documented and linked to Changed Files |
+| 2 | There is evidence of the repro test **failing before the fix** |
+| 3 | The bug's tests (including the new regression test) pass; no existing test was skipped or disabled |
+| 4 | The remaining [`./ProjectRules.md` §7](./ProjectRules.md) commands are green |
+| 5 | Smoke check on ≥ 1 neighbouring flow |
+| 6 | The diff stays inside the plan's fix scope |
+| 7 | Regression Risk has a mitigation if it is ≥ medium |
+| 8 | The **AC coverage** table covers every AC in `02`; if the real root cause differs from the AC → Amendment log ([`./SharedRules.md` §9](./SharedRules.md)) |
 
-FAIL → `status = blocked` / `needs_clarification`, ghi blocker vào `06`/`08` + `.agent-memory/fixer.md`, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
-PASS → `currentStage = adversarial_review`, `status = in_progress`, handoff → [`adversary`](./Adversary.md). **Không tự đặt `reviewing`** — Gate 5 mới là chỗ chuyển sang đó.
+FAIL → `status = blocked` / `needs_clarification`, record the blocker in `06`/`08` + `.agent-memory/fixer.md`, **report loudly per [`./SharedRules.md` §4](./SharedRules.md)**, stop.
+PASS → `currentStage = adversarial_review`, `status = in_progress`, hand off to [`adversary`](./Adversary.md). **Never set `reviewing` yourself** — Gate 5 is what moves the task there.
 
-## 6. Ví dụ rút gọn
+## 6. Short example
 
-Bug: một component không hiển thị dữ liệu vừa tạo (mismatch response↔state). Quy trình: viết test tái hiện (mock response → expect render fail) → chạy → FAIL → sửa mapping tối thiểu → chạy lại → PASS → `06` + `08`. Nguồn: file spec + API doc liên quan.
+Bug: a component does not display data that was just created (response↔state mismatch). Procedure: write the repro test (mock the response → expect the render to fail) → run → FAIL → fix the mapping minimally → run again → PASS → write `06` + `08`. Sources: the relevant spec file + API doc.

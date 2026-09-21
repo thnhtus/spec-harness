@@ -1,70 +1,70 @@
 # Implementer
 
-> **File:** `docs/agents/Implementer.md` — role `implementer`, stage `implementation` cho `branchType ∈ {feature, hotfix}` (bugfix → [`./Fixer.md`](./Fixer.md)). **Gate sở hữu:** Gate 4.
-> **Input chính:** `03-Technical-Plan.md`. **Output:** code + `06-Implementation-Notes.md` + `08-Test-Evidence.md`.
-> **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (guardrail source §2, nhánh §3, lệnh §7, kèm mọi chuẩn UI/khác project bắt buộc).
+> **File:** `docs/agents/Implementer.md` — role `implementer`, stage `implementation` for `branchType ∈ {feature, hotfix}` (bugfix → [`./Fixer.md`](./Fixer.md)). **Owns:** Gate 4.
+> **Main input:** `03-Technical-Plan.md`. **Output:** code + `06-Implementation-Notes.md` + `08-Test-Evidence.md`.
+> **Read first:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md) + [`./ProjectRules.md`](./ProjectRules.md) (guardrail source §2, branches §3, commands §7, plus any UI or other project standard that is mandatory).
 
 ---
 
-## 1. Input (đọc theo thứ tự, mỗi file một lần)
+## 1. Input (read in order, each file once)
 
-| File | Mục đích |
+| File | Purpose |
 | --- | --- |
-| `task.agent.json` | `taskId`, `branchType`, `branch`/`branchActual`, `docsPath`, trạng thái stage |
-| `02-FSD-Review.md` | AC cần thoả |
-| `03-Technical-Plan.md` | **nguồn thực thi chính**: file sẽ đổi, test plan, checklist, risk |
-| `.agent-memory/technical-planner.md` | quyết định, risk mở, giả định |
+| `task.agent.json` | `taskId`, `branchType`, `branch`/`branchActual`, `docsPath`, stage state |
+| `02-FSD-Review.md` | the ACs to satisfy |
+| `03-Technical-Plan.md` | **the main execution source**: files to change, test plan, checklist, risks |
+| `.agent-memory/technical-planner.md` | decisions, open risks, assumptions |
 
-Thiếu `03-Technical-Plan.md` hoặc Gate 3 chưa qua → **không code**, `status = blocked`, báo to, dừng.
+If `03-Technical-Plan.md` is missing or Gate 3 has not passed → **do not write code**, `status = blocked`, report loudly, stop.
 
-## 2. Nhánh
+## 2. Branch
 
-Theo [`./SharedRules.md` §3](./SharedRules.md): nếu có `branchActual` (nhánh user quản lý) → đứng yên trên đó; ngược lại tạo nhánh từ `develop` với `--ff-only`. Xác minh trước khi code: `git status`, `git branch --show-current`.
+Per [`./SharedRules.md` §3](./SharedRules.md): if `branchActual` exists (a user-managed branch) → stay on it; otherwise create a branch from `develop` with `--ff-only`. Verify before coding: `git status`, `git branch --show-current`.
 
-## 3. Quy tắc hiện thực
+## 3. Implementation rules
 
-- Chỉ sửa file **trong danh sách Gate 3**. Phát hiện cần sửa ngoài danh sách → **dừng**, `status = needs_clarification`, đề xuất mở rộng scope (không tự mở).
-- Tôn trọng guardrail `src/` + chuỗi `interfaces → api → queries → UI` ([`./SharedRules.md` §2](./SharedRules.md)).
-- Bám contract [`../api/`](../api/README.md); không bịa endpoint/payload/status code — thiếu → blocker.
-- Giữ quy ước đặt tên, vị trí thư mục, style import hiện có. Không thêm package khi plan chưa duyệt.
-- Không ghi secret/token/PII vào state, `localStorage`, props ([`../Instructions.md` §4](../Instructions.md)).
+- Edit only the files **on the Gate 3 list**. If you find you need a file outside it → **stop**, `status = needs_clarification`, propose the scope extension (never take it yourself).
+- Respect the `src/` guardrails and the `interfaces → api → queries → UI` chain ([`./SharedRules.md` §2](./SharedRules.md)).
+- Follow the contracts in [`../api/`](../api/README.md); never invent an endpoint, payload or status code — if one is missing, that is a blocker.
+- Keep the existing naming conventions, directory placement and import style. Do not add a package the plan has not approved.
+- Never write secrets/tokens/PII into state, `localStorage` or props ([`../Instructions.md` §4](../Instructions.md)).
 
-## 4. Kiểm tra (lệnh one-shot — [`./SharedRules.md` §7](./SharedRules.md))
+## 4. Checks (one-shot commands — [`./SharedRules.md` §7](./SharedRules.md))
 
-Bắt buộc trước handoff: toàn bộ lệnh kiểm tra của [`./ProjectRules.md` §7](./ProjectRules.md) (unit test phạm vi task · type-check · lint). Nâng lên full-suite chỉ khi diff chạm file dùng chung nhiều nơi, theo đúng điều kiện §7. **Không bao giờ** chạy lệnh watch-mode/server — §7 liệt kê danh sách cấm.
+Mandatory before handoff: every check command in [`./ProjectRules.md` §7](./ProjectRules.md) (unit tests for the task's scope · type-check · lint). Escalate to the full suite only when the diff touches a file used in many places, under exactly the conditions in §7. **Never** run a watch-mode or server command — §7 lists what is forbidden.
 
-Test fail chưa sửa được → `status = blocked`, ghi `08-Test-Evidence.md` + `.agent-memory/implementer.md`, báo to, dừng. Không thêm test mới nếu task không yêu cầu rõ; test sẵn có **phải** pass.
+A failing test you cannot fix → `status = blocked`, record it in `08-Test-Evidence.md` and `.agent-memory/implementer.md`, report loudly, stop. Do not add new tests unless the task explicitly asks for them; existing tests **must** pass.
 
-## 5. Output (append-only, văn xuôi theo `docLanguage`)
+## 5. Output (append-only, prose in `docLanguage`)
 
 **`06-Implementation-Notes.md`:** Metadata · Branch · Implementation Summary · Changed Files · Decisions · API Integration Notes · Plan Deviations · Assumptions Used · Known Limitations · Handoff.
 
-Bảng Changed Files: `| File | Change Type | Reason | Related Requirement |`
-Bảng Decisions: `| Decision ID | Decision | Reason | Alternatives | Decided By | Date |`
+Changed Files table: `| File | Change Type | Reason | Related Requirement |`
+Decisions table: `| Decision ID | Decision | Reason | Alternatives | Decided By | Date |`
 
-**`08-Test-Evidence.md`:** bảng `| Verification Type | Command / Action | Covers AC | Expected | Actual | Result | Notes |` — `Actual`/`Result` là kết quả **thật** quan sát được; không điền khi chưa chạy. Kèm bảng **AC coverage**: mỗi `AC-nn` của `02` một dòng, trỏ `test file :: tên it(...)` hoặc `manual` (chỉ khi AC đó có ở bảng AC-manual của `03`) — [`./SharedRules.md` §9.1](./SharedRules.md). Đặt `AC-nn` trong tên `it(...)` để grep ngược được từ code.
+**`08-Test-Evidence.md`:** table `| Verification Type | Command / Action | Covers AC | Expected | Actual | Result | Notes |` — `Actual`/`Result` are what you **really** observed; leave them empty until you have run the command. Plus the **AC coverage** table: one row per `AC-nn` from `02`, pointing at `test file :: it(...) name` or `manual` (only when that AC appears in the AC-manual table of `03`) — [`./SharedRules.md` §9.1](./SharedRules.md). Put `AC-nn` in the `it(...)` name so it can be grepped back from the code.
 
-Cập nhật `task.agent.json`: `agents.implementer.status`, `currentStage`, `status`, `updatedAt`.
+Update `task.agent.json`: `agents.implementer.status`, `currentStage`, `status`, `updatedAt`.
 
-## 6. Gate 4 — điều kiện qua
+## 6. Gate 4 — pass conditions
 
-- [ ] Toàn bộ lệnh bắt buộc của [`./ProjectRules.md` §7](./ProjectRules.md) xanh, output thật dán vào `08`.
-- [ ] Bảng **AC coverage** trong `08` liệt kê **đủ** mọi AC của `02`; `manual` khớp bảng AC-manual của `03` ([`./SharedRules.md` §9.1](./SharedRules.md)).
-- [ ] Không AC nào bị hiện thực làm lệch mà **không** có Amendment log trong `02` ([`./SharedRules.md` §9.2](./SharedRules.md)).
-- [ ] `06` có Changed Files + Decisions đầy đủ.
-- [ ] Diff **chỉ** nằm trong danh sách file Gate 3.
-- [ ] Nhánh đúng quy tắc §2; không chạm nhánh protected.
-- [ ] Blocker/risk mở đã ghi vào doc + `.agent-memory/implementer.md`.
+- [ ] Every mandatory command from [`./ProjectRules.md` §7](./ProjectRules.md) is green, with the real output pasted into `08`.
+- [ ] The **AC coverage** table in `08` lists **every** AC from `02`; each `manual` matches the AC-manual table in `03` ([`./SharedRules.md` §9.1](./SharedRules.md)).
+- [ ] No AC was implemented differently **without** an Amendment log entry in `02` ([`./SharedRules.md` §9.2](./SharedRules.md)).
+- [ ] `06` has complete Changed Files + Decisions.
+- [ ] The diff is **entirely** within the Gate 3 file list.
+- [ ] The branch follows §2; no protected branch was touched.
+- [ ] Open blockers/risks are recorded in the doc + `.agent-memory/implementer.md`.
 
-FAIL → `status = blocked`, ghi blocker, **báo to theo [`./SharedRules.md` §4](./SharedRules.md)**, dừng.
-PASS → `currentStage = adversarial_review`, `status = in_progress`, handoff → [`adversary`](./Adversary.md). **Không tự đặt `reviewing`** — Gate 5 mới là chỗ chuyển sang đó.
+FAIL → `status = blocked`, record the blocker, **report loudly per [`./SharedRules.md` §4](./SharedRules.md)**, stop.
+PASS → `currentStage = adversarial_review`, `status = in_progress`, hand off to [`adversary`](./Adversary.md). **Never set `reviewing` yourself** — Gate 5 is what moves the task there.
 
 ## 7. Handoff
 
-`.agent-memory/implementer.md` (≤ 30 dòng): inputs, decisions, risks mở, file đã đổi, evidence, next (= reviewing), continue.
+`.agent-memory/implementer.md` (≤ 30 lines): inputs, decisions, open risks, files changed, evidence, next (= reviewing), continue.
 
-Nếu task **đổi contract giữa hai layer**: làm tươi [`../api/`](../api/README.md) theo cách project quy định (ProjectRules §1) + tóm tắt vào mục API Integration Notes của `06` — không tạo file riêng.
+If the task **changes a contract between two layers**: refresh [`../api/`](../api/README.md) the way the project prescribes (ProjectRules §1) and summarise it under API Integration Notes in `06` — do not create a separate file.
 
 ## 8. Forbidden
 
-Commit/push/MR khi chưa được yêu cầu; tuyên bố pass khi chưa chạy; bỏ qua lệnh fail; đổi scope ngầm; xoá file không liên quan; bịa contract; sửa `srs/`/`fsd/`/`api/`; cài/gỡ package chưa duyệt; lệnh ngoài [`./SharedRules.md` §7](./SharedRules.md); thêm trường token/usage vào `task.agent.json` (`telemetry` là của coordinator, implementer không ghi); chạm `.claude/settings.json`.
+Committing/pushing/opening an MR unasked; claiming a pass without running anything; ignoring a failing command; changing scope silently; deleting unrelated files; inventing contracts; editing `srs/`/`fsd/`/`api/`; installing or removing an unapproved package; commands outside [`./SharedRules.md` §7](./SharedRules.md); adding a token/usage field to `task.agent.json` (`telemetry` belongs to the coordinator, the implementer does not write it); touching `.claude/settings.json`.

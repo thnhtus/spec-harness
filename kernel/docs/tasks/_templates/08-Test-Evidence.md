@@ -1,59 +1,59 @@
 # 08 — Test Evidence: {taskName}
 
-> Sinh bởi implementer (`implementer` / `fixer`), stage `implementation`, **Gate 4**. Dán **output thật** của lệnh; không claim pass khi chưa chạy. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
-> **Evidence mặc định = unit test giới hạn đúng test file của task** (nhanh, ít RAM); full-suite chỉ khi §7 yêu cầu. Danh sách lệnh one-shot hợp lệ: [`../../agents/ProjectRules.md` §7](../../agents/ProjectRules.md).
+> Written by the implementer (`implementer` / `fixer`), stage `implementation`, **Gate 4**. Paste the **real output** of each command; never claim a pass you have not run. Append-only; prose in `harness.config.json → docLanguage`.
+> **The default evidence is a unit run scoped to this task's test files** (fast, low memory); the full suite only when §7 requires it. The list of valid one-shot commands: [`../../agents/ProjectRules.md` §7](../../agents/ProjectRules.md).
 
-## Kết quả lệnh
+## Command output
 
 | Verification Type | Command / Action | Covers AC | Expected | Actual | Result | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| Unit (scope) | `<lệnh unit phạm vi task>` | AC-nn, AC-nn | …/… passed | | | evidence Gate 4 mặc định |
-| Unit (full) | `<lệnh full-suite>` | — | không regress | | | **chỉ khi** §7 yêu cầu — bỏ trống nếu không cần |
-| Type-check | `<lệnh type-check>` | — | 0 lỗi từ diff | | | |
-| Lint | `<lệnh lint>` | — | 0 lỗi mới ở file scope | | | |
-| Build | `<lệnh build>` | — | success | | | khi plan yêu cầu |
-| E2E (nếu áp dụng) | `<lệnh e2e>` | AC-nn | …/… passed | | | |
+| Unit (scope) | `<scoped unit command>` | AC-nn, AC-nn | …/… passed | | | the default Gate 4 evidence |
+| Unit (full) | `<full-suite command>` | — | no regression | | | **only when** §7 requires it — leave blank otherwise |
+| Type-check | `<type-check command>` | — | 0 errors from the diff | | | |
+| Lint | `<lint command>` | — | 0 new errors in scoped files | | | |
+| Build | `<build command>` | — | success | | | when the plan requires it |
+| E2E (if applicable) | `<e2e command>` | AC-nn | …/… passed | | | |
 
 ### AC coverage
 
-Mọi `AC-nn` của `02-FSD-Review.md` phải có **đúng một** dòng ở đây. `manual` chỉ hợp lệ khi AC đó đã nằm ở bảng **AC-manual** của `03-Technical-Plan.md`.
+Every `AC-nn` in `02-FSD-Review.md` must have **exactly one** row here. `manual` is only valid when that AC is already in the **AC-manual** table of `03-Technical-Plan.md`.
 
-| AC ID | Phủ bởi (test file :: tên `it(...)`) hoặc `manual` | Result |
+| AC ID | Covered by (test file :: `it(...)` name) or `manual` | Result |
 | --- | --- | --- |
-| AC-nn | `src/test/…::<tên test>` | PASS |
+| AC-nn | `src/test/…::<test name>` | PASS |
 
-### Reproduction Before Fix *(chỉ `fixer`)*
+### Reproduction Before Fix *(`fixer` only)*
 
-Output cho thấy test tái hiện **fail** trước khi sửa.
+Output showing the repro test **failing** before the fix.
 
-Test đỏ ở đây là **có chủ đích**, nhưng Gate 4 chặn mọi output thất bại — nên phải khai, đặt dòng này ngay trên block:
+A red test here is **deliberate**, but Gate 4 blocks any failing output — so declare it by putting this line immediately above the block:
 
 ```
-<!-- known-failure: AC-nn reproduce trước khi sửa -->
+<!-- known-failure: AC-nn reproduction before the fix -->
 ```
 
-Không khai thì gate đỏ; mà nếu vì thế bạn xoá luôn output đỏ đi thì mất đúng bằng chứng reproduce-first cần có.
+Without the declaration the gate goes red; and if that pushes you to delete the red output, you have deleted exactly the reproduce-first evidence the gate wanted.
 
 ### Output / Log
 
-Chạy qua wrapper để block tự có attestation (`exitCode`/`durationMs`/`gitRev`/`startedAt`):
+Run through the wrapper so the block carries its own attestation (`exitCode`/`durationMs`/`gitRev`/`startedAt`):
 
 ```bash
-node scripts/run-evidence.mjs --append <task-folder>/08-Test-Evidence.md -- <lệnh ProjectRules §7>
+node scripts/run-evidence.mjs --append <task-folder>/08-Test-Evidence.md -- <a ProjectRules §7 command>
 ```
 
 ```
-# output thật + khối attestation sẽ được append vào đây
+# the real output + the attestation block get appended here
 ```
 
 ## Gate 4 — checklist
 
-- [ ] Unit test phạm vi task pass — kèm test mới / regression
-- [ ] Full-suite — **chỉ** khi §7 yêu cầu (nếu không, đánh dấu N/A)
-- [ ] Type-check không lỗi (từ diff)
-- [ ] Lint sạch (0 lỗi mới ở file scope)
-- [ ] **Bảng AC coverage liệt kê đủ mọi AC của `02`; `manual` khớp bảng AC-manual của `03`**
-- [ ] **Không có AC bị hiện thực làm sai lệch** — nếu có, đã append block *Amendment* vào `01`/`02` (SharedRules §9)
-- [ ] Diff chỉ trong scope của plan (không đổi ngoài scope)
+- [ ] Scoped unit tests pass — including new / regression tests
+- [ ] Full suite — **only** when §7 requires it (otherwise mark N/A)
+- [ ] Type-check clean (for the diff)
+- [ ] Lint clean (0 new errors in scoped files)
+- [ ] **The AC coverage table lists every AC from `02`; each `manual` matches the AC-manual table in `03`**
+- [ ] **No AC was implemented differently** — if one was, an *Amendment* block was appended to `01`/`02` (SharedRules §9)
+- [ ] The diff stays inside the plan's scope (nothing out of scope changed)
 
-> Gate 4 fail → `status = blocked`, ghi blocker + `.agent-memory/{role}.md`.
+> Gate 4 fails → `status = blocked`, record the blocker + `.agent-memory/{role}.md`.

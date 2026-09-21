@@ -1,20 +1,20 @@
 # 06 — Implementation Notes: {taskName}
 
-> Sinh bởi `implementer` (feature/hotfix) hoặc `fixer` (bugfix), stage `implementation`, **Gate 4**. Append-only; văn xuôi theo `harness.config.json → docLanguage`.
-> **≤ 250 dòng** ([`../../agents/SharedRules.md` §8](../../agents/SharedRules.md)) — đây là văn xuôi (Decisions, Deviations, Known Limitations), cắt được. Output lệnh thì dán vào `08`, nơi không có trần.
+> Written by `implementer` (feature/hotfix) or `fixer` (bugfix), stage `implementation`, **Gate 4**. Append-only; prose in `harness.config.json → docLanguage`.
+> **≤ 250 lines** ([`../../agents/SharedRules.md` §8](../../agents/SharedRules.md)) — this is prose (Decisions, Deviations, Known Limitations) and can be cut. Command output goes in `08`, which has no cap.
 
 ## Metadata
 
-- Nhánh: `<theo ProjectRules §3>` (`branchActual` nếu dùng nhánh user quản lý)
+- Branch: `<per ProjectRules §3>` (`branchActual` when on a user-managed branch)
 - Implementer: `implementer` | `fixer`
 
-## Root Cause *(chỉ `fixer`)*
+## Root Cause *(`fixer` only)*
 
 …
 
 ## Changed files
 
-| File (dưới `src/`) | Change Type | Reason | Related AC / Req |
+| File (under `src/`) | Change Type | Reason | Related AC / Req |
 | --- | --- | --- | --- |
 | `src/…` | added / modified | … | AC-… |
 
@@ -26,22 +26,22 @@
 
 ## API Integration Notes
 
-Endpoint task chạm tới + file client/handler tương ứng (đường dẫn cụ thể theo ProjectRules §2). Nếu đổi contract giữa hai layer → làm tươi `docs/api/` theo cách project quy định (ProjectRules §1) và tóm tắt contract mà task phụ thuộc ngay tại mục này.
+The endpoints this task touches plus the corresponding client/handler files (exact paths per ProjectRules §2). If a contract between two layers changed → refresh `docs/api/` the way the project prescribes (ProjectRules §1) and summarise the contract this task depends on right here.
 
 ## Routing / State / UI Notes
 
 - Routing: …
-- React Query: …
-- Ant Design / SCSS Modules: …
+- Data fetching / caching: …
+- Component library / styling: …
 
 ## Plan Deviations / Assumptions / Known Limitations
 
 …
 
-## Regression Risk *(chỉ `fixer`)*
+## Regression Risk *(`fixer` only)*
 
 …
 
 ## Handoff
 
-→ Khi Gate 4 pass → `status = reviewing` (user duyệt push + MR). Đây là stage hiện thực cuối — không còn stage `api_docs`.
+→ When Gate 4 passes → `status = reviewing` (the user approves push + MR). This is the last implementation stage — there is no `api_docs` stage.
