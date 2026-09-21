@@ -172,7 +172,7 @@ Xong hết thì `--preflight` phải xanh **trước task đầu tiên**. Chưa 
 | Kiểm | Mức | Vì sao |
 | --- | --- | --- |
 | `.claude/settings.json` có được nạp từ cwd hiện tại không | error | bẫy bố cục B ở trên |
-| …và có **còn đủ deny rule** không (`git push`, `reset --hard`, `stash`, `clean`) | error | file tồn tại mà rỗng thì guardrail biến mất trong im lặng — nêu đích danh rule thiếu |
+| …và có **còn đủ deny rule** không (`git push`, `reset --hard`, `stash`, `clean`, `cat .env`, `env`, `printenv`, `Read(.env)`) | error | file tồn tại mà rỗng thì guardrail biến mất trong im lặng — nêu đích danh rule thiếu |
 | `.mcp.json` còn trỏ placeholder (`example.com`, `<host>`) | error | Gate 1 mất nguồn AC, cả chuỗi truy vết thành tự bịa |
 | `.mcp.json` có field trông như credential | error | file này được commit |
 | CI có chạy `validate-tasks.mjs` không | error | hook là `--staged` và `--no-verify` bỏ qua được; CI là lưới cuối mà cả hai lỗ đó dựa vào |
@@ -300,7 +300,9 @@ Validator dependency-free (Node 20+), chạy từ pre-commit, CI, hoặc tay. Ch
 
 CI **không** tuỳ chọn: preflight báo đỏ nếu không workflow nào chạy validator. Pre-commit chạy `--staged`: chỉ kiểm task folder mà commit đó chạm tới — nên nó **không** thấy task hỏng mà commit này không đụng vào (đo thật: hỏng task A, commit file B → đi qua; CI cùng cây báo 5 error). Đó là đánh đổi có chủ ý, và CI là lưới cuối. Một task đang `blocked` chờ BA là trạng thái hợp lệ — để nó chặn mọi commit không liên quan chỉ dạy cả team gõ `--no-verify`, và gate bị bypass theo phản xạ là gate đã chết. CI vẫn quét toàn repo.
 
-Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny sẵn `git push`, `git reset --hard`, `git stash`, `git clean`. Luật "đừng phá working tree" viết trong prompt là luật model **chọn** tuân thủ; deny ở tầng permission thì không có chỗ để chọn — cùng lý do đã chọn exit code thay vì lời nhắc.
+Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny sẵn `git push`, `git reset --hard`, `git stash`, `git clean`, cùng `cat .env` / `env` / `printenv` / `Read(.env)`. Luật "đừng phá working tree" viết trong prompt là luật model **chọn** tuân thủ; deny ở tầng permission thì không có chỗ để chọn — cùng lý do đã chọn exit code thay vì lời nhắc. Preflight nêu đích danh rule nào thiếu.
+
+> **Trần của lớp này — đừng nhầm nó với sandbox.** Deny khớp theo **tool + tiền tố lệnh**. `Read(.env)` một mình từng là cái biển cấm treo nhầm cửa: nó chặn tool Read, nhưng agent còn Bash, và `cat .env` đi thẳng qua. Thêm bốn rule trên hạ **xác suất tai nạn**, không đóng được cửa: `python3 -c "print(open('.env').read())"` vẫn lọt, và không danh sách deny nào đuổi kịp số cách đọc một file. Lớp bảo vệ thật là **không để secret trong repo** — deny-list chỉ mua thêm thời gian.
 
 ## Ghi chú cài đặt
 

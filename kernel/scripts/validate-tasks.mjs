@@ -693,14 +693,31 @@ export // The resume heading is a STRUCTURAL MARKER the validator splits on, so 
 // either spelling; the docs use whichever matches their prose.
 const UPDATE_HEADING = /^## (?:Cập Nhật|Update) — /m;
 
-const REQUIRED_DENY = ["git push", "git reset --hard", "git stash", "git clean"];
+// Two classes, one list. The git rules stop a destroyed working tree; the .env
+// rules stop the most common secret exfiltration path.
+//
+// `Read(.env)` alone was a hole with a sign on the wrong door: it denies the
+// Read tool, but the agent also has Bash, and the Bash deny list only named
+// git. `cat .env` walked straight through.
+//
+// CEILING, stated so nobody mistakes this for a sandbox: deny matches
+// tool + command prefix, so `python3 -c "print(open('.env').read())"` is still
+// wide open. This lowers the probability of an accident; it does not stop an
+// agent that means it. The real control is not keeping secrets in the repo.
+// Matched as a WHOLE RULE, not a substring. `deny.some(d => d.includes(r))` with
+// r="env" is satisfied by the unrelated rule `Read(.env)` -- the check would
+// report a guardrail that is not there. Each entry is the exact rule text.
+const REQUIRED_DENY = [
+  "Bash(git push:*)", "Bash(git reset --hard:*)", "Bash(git stash:*)", "Bash(git clean:*)",
+  "Bash(cat .env:*)", "Bash(env:*)", "Bash(printenv:*)", "Read(.env)",
+];
 
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
   const deny = parsed?.permissions?.deny ?? [];
-  return REQUIRED_DENY.filter((r) => !deny.some((d) => d.includes(r))).map(
-    (r) => `.claude/settings.json has no deny rule for \`${r}\` \u2014 the guardrail is back to being prose the model may ignore`,
+  return REQUIRED_DENY.filter((r) => !deny.includes(r)).map(
+    (r) => `.claude/settings.json has no deny rule \`${r}\` \u2014 the guardrail is back to being prose the model may ignore`,
   );
 }
 
@@ -1475,6 +1492,26 @@ if (args.has("--self-check")) {
     denyGaps('{"permissions":{"deny":["Bash(git push:*)","Bash(git reset --hard:*)","Bash(git stash:*)"]}}')
       .some((d) => /git clean/.test(d)),
     "a partial deny list must name the rule that is missing, not just fail",
+  );
+  // This list used to hold fragments ("git push") matched with
+  // `d.includes(r)`, and the moment `env` joined it the check started lying:
+  // the unrelated rule `Read(.env)` satisfied the requirement for `Bash(env:*)`,
+  // so a settings.json with no Bash guard at all reported zero gaps.
+  //
+  // The fix is not a smarter matcher, it is the shape of the entries: every one
+  // must be a WHOLE rule, so `deny.includes()` is exact and nothing can nest
+  // inside anything else. Assert the shape, because that is the invariant a
+  // future edit would break.
+  for (const r of REQUIRED_DENY)
+    assert.ok(/^(Bash|Read|Write|Edit|WebFetch)\(.+\)$/.test(r),
+      `REQUIRED_DENY entry ${JSON.stringify(r)} is not a whole rule — a fragment makes the match ambiguous and the check silently passes on rules that are not there`);
+  assert.equal(new Set(REQUIRED_DENY).size, REQUIRED_DENY.length, "REQUIRED_DENY has a duplicate");
+  // The reason those four .env rules are in the list at all: `Read(.env)` denies
+  // the Read tool, and the agent still has Bash.
+  assert.ok(
+    denyGaps(JSON.stringify({ permissions: { deny: REQUIRED_DENY.filter((r) => !r.startsWith("Bash(cat")) } }))
+      .some((d) => /cat \.env/.test(d)),
+    "denying Read(.env) while leaving `cat .env` open is a sign on the wrong door",
   );
 
   // mcpGaps: a placeholder URL kills the CLI at startup; a credential is committed.
