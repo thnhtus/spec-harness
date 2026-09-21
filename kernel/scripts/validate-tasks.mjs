@@ -680,7 +680,13 @@ const acsMissingFrom = (f, acs) =>
 // empty -- every deny rule gone, preflight still green. These are the rules the
 // harness relies on: Instructions.md forbids them in prose, and prose is what
 // a model chooses to follow.
-export const REQUIRED_DENY = ["git push", "git reset --hard", "git stash", "git clean"];
+export // The resume heading is a STRUCTURAL MARKER the validator splits on, so it must
+// not follow config.docLanguage: a team setting docLanguage="English" would
+// otherwise turn off newest-block cap enforcement without any warning. Accept
+// either spelling; the docs use whichever matches their prose.
+const UPDATE_HEADING = /^## (?:Cập Nhật|Update) — /m;
+
+const REQUIRED_DENY = ["git push", "git reset --hard", "git stash", "git clean"];
 
 export function denyGaps(settingsText) {
   let parsed;
@@ -1027,6 +1033,14 @@ if (args.has("--self-check")) {
     const body = (n) => Array.from({ length: n }, (_, i) => `l${i}`).join("\n");
     const oneBlock = body(12);
     const twoRounds = `${body(12)}\n## Cập Nhật — 2026-01-02\n${body(3)}`;
+  // Same doc, English heading: the cap must behave identically, or docLanguage
+  // silently disables it.
+  const twoRoundsEn = `${body(12)}\n## Update — 2026-01-02\n${body(3)}`;
+  assert.equal(
+    twoRoundsEn.split(UPDATE_HEADING).length,
+    twoRounds.split(UPDATE_HEADING).length,
+    "the update marker must be language-independent — it is structure, not prose",
+  );
     assert.equal(countLinesIn(oneBlock), 12, "plain count");
     assert.equal(
       countLinesIn("## Cập Nhật — " + twoRounds.split(/^## Cập Nhật — /m).pop()),
@@ -2034,7 +2048,7 @@ for (const { sprint, task, path } of folders) {
   }
 
   // 4. Line caps. Docs are append-only (SharedRules §5) and a bounced task must
-  // append "## Cập Nhật — …" on resume (HarnessSetup §7.5) — so a whole-file cap
+  // append an update heading on resume (HarnessSetup §7.5) — so a whole-file cap
   // becomes unsatisfiable after two rounds: over the cap, and forbidden to trim.
   // Cap the newest block instead; that is the part the current role writes and
   // the only part it may lawfully shorten.
@@ -2042,12 +2056,12 @@ for (const { sprint, task, path } of folders) {
     const fp = join(path, f);
     if (!existsSync(fp)) continue;
     const text = readFileSync(fp, "utf8");
-    const updates = text.split(/^## Cập Nhật — /m);
+    const updates = text.split(UPDATE_HEADING);
     if (updates.length > 1) {
-      const newest = countLinesIn("## Cập Nhật — " + updates[updates.length - 1]);
+      const newest = countLinesIn("## Update — " + updates[updates.length - 1]);
       if (newest > cap)
         errors.push(
-          `${f}: newest "## Cập Nhật" block is ${newest} lines, exceeds cap ${cap} (SharedRules §8)`,
+          `${f}: newest update block is ${newest} lines, exceeds cap ${cap} (SharedRules §8)`,
         );
       else if (countLinesIn(text) > cap)
         warnings.push(

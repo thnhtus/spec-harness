@@ -1,179 +1,179 @@
-# SharedRules — Quy tắc chung cho mọi agent (kernel, nguồn chuẩn duy nhất)
+# SharedRules — Shared rules for every agent (kernel, single source of truth)
 
-> **Tài liệu:** `docs/agents/SharedRules.md` — **nơi định nghĩa duy nhất** (normative home) cho: format handoff (§4), quy ước task doc (§5), giá trị `status` (§6), ngân sách ngữ cảnh/artifact (§8), và truy vết AC + amendment spec (§9). Tài liệu khác **link về đây**, không chép lại.
-> **Phần thuộc về project** — nguồn truth/tracker, guardrail source, quy tắc nhánh, lệnh kiểm tra — định nghĩa tại [`ProjectRules.md`](./ProjectRules.md). Kernel không biết project dùng stack nào.
-> **Thứ tự ưu tiên khi xung đột:** [`../Instructions.md`](../Instructions.md) > SharedRules > ProjectRules > role file (trừ khi role file ghi rõ "override").
-> **Ngôn ngữ:** văn xuôi viết bằng `harness.config.json → docLanguage`; token kỹ thuật (ENUM, ID, lệnh, đường dẫn) giữ nguyên gốc bất kể giá trị đó. Kernel không chọn hộ — một team nói tiếng Anh đặt `"English"`.
+> **Document:** `docs/agents/SharedRules.md` — the **normative home** for: handoff format (§4), task doc conventions (§5), `status` values (§6), context/artifact budget (§8), and AC traceability + spec amendments (§9). Other documents **link here**; they never copy the content.
+> **The project-owned parts** — sources of truth/tracker, guardrail source, branch rules, check commands — are defined in [`ProjectRules.md`](./ProjectRules.md). The kernel does not know which stack the project uses.
+> **Precedence on conflict:** [`../Instructions.md`](../Instructions.md) > SharedRules > ProjectRules > role file (unless the role file says "override" explicitly).
+> **Language:** write prose in `harness.config.json → docLanguage`; technical tokens (ENUMs, IDs, commands, paths) stay as they are regardless of that value. The kernel does not choose for you — an English-speaking team sets `"English"`.
 
 ---
 
-## 1–3, 7 — xem `ProjectRules.md`
+## 1–3, 7 — see `ProjectRules.md`
 
-Bốn mục dưới đây phụ thuộc project, nằm ở [`ProjectRules.md`](./ProjectRules.md):
+The four sections below are project-dependent and live in [`ProjectRules.md`](./ProjectRules.md):
 
-| Mục | Nội dung |
+| Section | Contents |
 | --- | --- |
-| §1 | Nguồn sự thật qua tracker/design MCP — không đoán |
-| §2 | Architecture guardrails cho source |
-| §3 | Quy tắc nhánh + worktree |
-| §7 | Lệnh kiểm tra hợp lệ (one-shot vs watch-mode) |
+| §1 | Sources of truth via tracker/design MCP — never guess |
+| §2 | Architecture guardrails for the source |
+| §3 | Branch + worktree rules |
+| §7 | Valid check commands (one-shot vs watch mode) |
 
-Tham chiếu chéo trong kernel ghi `SharedRules §1/§2/§3/§7` vẫn đúng — đọc ở `ProjectRules.md`.
+Cross-references inside the kernel that say `SharedRules §1/§2/§3/§7` are still correct — read them in `ProjectRules.md`.
 
 ---
 
-## 4. Định dạng handoff — `.agent-memory/{role}.md`
+## 4. Handoff format — `.agent-memory/{role}.md`
 
-Mỗi role kết thúc stage phải append một block (bắt đầu bằng `### YYYY-MM-DD — {role}`), **tối đa 30 dòng**:
+Every role that finishes a stage must append a block (starting with `### YYYY-MM-DD — {role}`), **30 lines maximum**:
 
 ```markdown
 ## Next Handoff
-- **Inputs**: nguồn đã dùng (URL task tracker, node thiết kế, ID FR-/FSD-, file đã đọc)
-- **Decisions**: quyết định đã chốt + lý do ngắn
-- **Risks**: rủi ro / giả định / "unavailable"
-- **Changed Files**: path tương đối (rỗng nếu chưa đụng code)
-- **Evidence**: bằng chứng (output test, trích AC, node thiết kế)
-- **Next agent**: role kế tiếp (hoặc "skipped: <reason>")
-- **Continue automation**: yes | no (no ⇒ kèm lý do + status)
+- **Inputs**: sources used (tracker task URL, design node, FR-/FSD- IDs, files read)
+- **Decisions**: decisions taken + short reason
+- **Risks**: risks / assumptions / "unavailable"
+- **Changed Files**: relative paths (empty if no code was touched)
+- **Evidence**: evidence (test output, AC quotes, design nodes)
+- **Next agent**: the next role (or "skipped: <reason>")
+- **Continue automation**: yes | no (no ⇒ include the reason + status)
 ```
 
-Quy tắc:
+Rules:
 
-- `Continue automation: no` khi gate fail hoặc cần BA/user → đặt `status` tương ứng và ghi blocker rõ.
-- **Dừng phải kêu to:** khi dừng vì gate fail / blocker, **message cuối cùng gửi user** phải nêu đủ 4 ý: (1) gate nào fail, (2) lý do, (3) file đã ghi blocker, (4) user/BA cần làm gì để mở khoá. Dừng im lặng = lỗi quy trình.
-- Append-only — không xoá block cũ.
+- `Continue automation: no` when a gate fails or a BA/user is needed → set the matching `status` and write the blocker explicitly.
+- **A stop must be loud:** when stopping for a failed gate or a blocker, the **final message to the user** must carry all four: (1) which gate failed, (2) why, (3) which file records the blocker, (4) what the user/BA must do to unblock. Stopping silently is a process failure.
+- Append-only — never delete an older block.
 
 ---
 
-## 5. Quy ước task doc
+## 5. Task doc conventions
 
-Task doc nằm tại `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + template: [`../tasks/README.md`](../tasks/README.md)).
+Task docs live in `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + templates: [`../tasks/README.md`](../tasks/README.md)).
 
-| File | Người ghi | Nội dung |
+| File | Written by | Contents |
 | --- | --- | --- |
-| `task.agent.json` | orchestrator tạo; mọi role cập nhật | Metadata máy đọc (§6) |
-| `00-Metadata.md` | orchestrator | Tóm tắt task, link tracker/thiết kế, sprint, branchType |
-| `01-FSD.md` | fsd-writer | FSD IEEE cấp task (skill `document-to-ieee-srs`) |
-| `02-FSD-Review.md` | fsd-reviewer | AC, câu hỏi BA, risk |
-| `03-Technical-Plan.md` | technical-planner | File sẽ đổi, test plan, checklist, risk |
-| `06-Implementation-Notes.md` | implementer / fixer | Quyết định khi code, file đã sửa |
-| `08-Test-Evidence.md` | implementer / fixer | Output thật của lệnh ProjectRules §7 |
-| `09-Adversarial-Review.md` | adversary | Kiểm đối kháng: tự chạy lại lệnh, soi diff + test, finding (Gate 5) |
-| `.agent-memory/{role}.md` | từng role | Handoff (§4) |
+| `task.agent.json` | created by orchestrator; updated by every role | machine-readable metadata (§6) |
+| `00-Metadata.md` | orchestrator | task summary, tracker/design links, sprint, branchType |
+| `01-FSD.md` | fsd-writer | task-level IEEE FSD (skill `document-to-ieee-srs`) |
+| `02-FSD-Review.md` | fsd-reviewer | ACs, BA questions, risks |
+| `03-Technical-Plan.md` | technical-planner | files to change, test plan, checklist, risks |
+| `06-Implementation-Notes.md` | implementer / fixer | decisions taken while coding, files changed |
+| `08-Test-Evidence.md` | implementer / fixer | real output of the ProjectRules §7 commands |
+| `09-Adversarial-Review.md` | adversary | adversarial check: re-run the commands, inspect diff + tests, findings (Gate 5) |
+| `.agent-memory/{role}.md` | each role | handoff (§4) |
 
-- **Append-only**, văn xuôi theo `docLanguage`, ID kỹ thuật giữ nguyên (`FR-…`, `FSD-<MOD>-nnn`, ENUM, path, lệnh).
+- **Append-only**, prose in `docLanguage`, technical IDs unchanged (`FR-…`, `FSD-<MOD>-nnn`, ENUMs, paths, commands).
 
-**Văn xuôi phải đọc được — dùng skill `humanizer`.** Task doc có người đọc: BA đọc `02`, dev khác đọc `06`, reviewer đọc `09`. Trước khi đóng stage, chạy `humanizer` trên **phần văn xuôi** mình vừa viết:
+**Prose has to be readable — use the `humanizer` skill.** Task docs have human readers: the BA reads `02`, another dev reads `06`, a reviewer reads `09`. Before closing a stage, run `humanizer` over **the prose you just wrote**:
 
-| Áp cho | Không áp cho |
+| Apply to | Do not apply to |
 | --- | --- |
-| `02` §3.1 business intent · cột lý do trong các bảng | `01` requirement — `shall`/`phải` là **construct bắt buộc** của IEEE 29148, formulaic có chủ đích |
-| `06` Decisions · Plan Deviations · Known Limitations | ID, path, lệnh, output test dán nguyên văn |
-| `09` mô tả finding · mục "đã soi những gì" | Bảng thuần dữ liệu (AC coverage, Changed Files) |
-| Block handoff `.agent-memory/` · message báo gate fail | |
+| `02` §3.1 business intent · the reason column in tables | `01` requirements — `shall` is a **mandatory construct** of IEEE 29148, deliberately formulaic |
+| `06` Decisions · Plan Deviations · Known Limitations | IDs, paths, commands, verbatim test output |
+| `09` finding descriptions · the "what was inspected" section | pure data tables (AC coverage, Changed Files) |
+| `.agent-memory/` handoff blocks · gate-failure messages | |
 
-Hay gặp nhất trong doc của agent: câu chốt một dòng lặp lại ý vừa nói, "không phải X mà là Y", bộ ba gượng, bold trang trí ở mọi đầu mục, và mở bài dàn cảnh trước khi vào việc. Cắt chúng làm doc ngắn lại — ngắn thì đỡ chạm trần §8.
-- **Không sửa** nội dung `srs/`, `fsd/`, `api/` — chỉ tham chiếu. `docs/api/` sinh tự động nếu project có pipeline riêng (ProjectRules §1).
-- **Không bịa** số liệu test (§7).
-- `task.agent.json` **không** có trường token/usage (dữ liệu vendor). Trường `telemetry` (stage · tier · model · thời gian) thì **có** — coordinator ghi khi dispatch, `--calibrate` đọc để đối chiếu chi phí với kết quả ([`../Agents.md` §5.6](../Agents.md)).
+The most common tells in agent-written docs: a one-line closing sentence that restates what was just said, "not X but Y", forced tricolons, decorative bold on every heading, and a scene-setting intro before getting to the point. Cutting those shortens the doc — and shorter means less pressure on the §8 caps.
+- **Never edit** the contents of `srs/`, `fsd/`, `api/` — reference them only. `docs/api/` is generated automatically if the project has its own pipeline (ProjectRules §1).
+- **Never invent** test numbers (§7).
+- `task.agent.json` has **no** token/usage field (vendor data). It does have `telemetry` (stage · tier · model · timestamps) — the coordinator writes it at dispatch and `--calibrate` reads it to weigh cost against outcome ([`../Agents.md` §5.6](../Agents.md)).
 
 ---
 
-## 6. Giá trị `status` trong `task.agent.json`
+## 6. `status` values in `task.agent.json`
 
-Trường chính: `taskId, taskName, clickupUrl, repoName, sprintNumber, developer, branchType, layer, taskComplexity, currentStage, status, branch, docsPath, agents.{role}.status, createdAt, updatedAt`. Trường **tuỳ chọn**: `branchActual` (nhánh thật khi khác `branch` quy ước — §3), `parentTaskId` (task cha trên tracker nếu có), `complexity` (vector + `counts`/`questions`/`splitEvaluated` — [`../Agents.md` §5.1](../Agents.md)), `attempts` (số lần mỗi stage chạy lại — §5.5), `outcome` (kết quả sau khi ship — §5.6, **người điền khi đóng task**).
+Main fields: `taskId, taskName, clickupUrl, repoName, sprintNumber, developer, branchType, layer, taskComplexity, currentStage, status, branch, docsPath, agents.{role}.status, createdAt, updatedAt`. **Optional** fields: `branchActual` (the real branch when it differs from the conventional `branch` — §3), `parentTaskId` (parent task on the tracker, if any), `complexity` (the vector + `counts`/`questions`/`splitEvaluated` — [`../Agents.md` §5.1](../Agents.md)), `attempts` (how many times each stage re-ran — §5.5), `outcome` (the result after shipping — §5.6, **filled in by a human when closing the task**).
 
-`taskComplexity ∈ {trivial, normal, high}` — **dẫn xuất** từ `complexity.vector` bằng công thức [`../Agents.md` §5.1.1](../Agents.md), không tự phán; validator tính lại và chặn nếu lệch. Quyết định độ nặng Gate 1/2 (§5.2), model mỗi stage (§5.3), và điểm dừng hỏi người (§5.4). Role sau chỉ được **nâng**, không được hạ.
+`taskComplexity ∈ {trivial, normal, high}` is **derived** from `complexity.vector` by the formula in [`../Agents.md` §5.1.1](../Agents.md), never judged freehand; the validator recomputes it and blocks on a mismatch. It decides how heavy Gates 1/2 are (§5.2), which model each stage gets (§5.3), and where the workflow stops to ask a human (§5.4). A later role may only **raise** it, never lower it.
 
-| `status` | Khi nào | Hành động |
+| `status` | When | Action |
 | --- | --- | --- |
-| `DRAFT` | bootstrap chưa đủ metadata | bổ sung trước khi chạy tiếp |
-| `in_progress` | stage đang chạy bình thường | tiếp tục workflow |
-| `blocked` | gate fail vì lý do kỹ thuật | ghi blocker, dừng, báo to (§4) |
-| `needs_clarification` | thiếu dữ liệu MCP / AC mơ hồ | ghi câu hỏi, chờ BA/user, báo to (§4) |
-| `reviewing` | mọi gate pass **kể cả Gate 5**, diff sạch | chờ user duyệt commit/push + MR |
-| `mr_created` | user đã push, MR đã tạo | theo dõi review/CI |
-| `done` | MR merged | đóng task |
+| `DRAFT` | bootstrap has incomplete metadata | complete it before continuing |
+| `in_progress` | a stage is running normally | continue the workflow |
+| `blocked` | a gate failed for a technical reason | record the blocker, stop, report loudly (§4) |
+| `needs_clarification` | missing MCP data / ambiguous AC | record the question, wait for BA/user, report loudly (§4) |
+| `reviewing` | every gate passed **including Gate 5**, diff is clean | wait for the user to approve commit/push + MR |
+| `mr_created` | the user pushed, the MR exists | follow review/CI |
+| `done` | MR merged | close the task |
 
-Chỉ user chuyển `reviewing → mr_created` (push + MR thật).
+Only the user moves `reviewing → mr_created` (a real push + MR).
 
-**Ghi `task.agent.json` nguyên tử** — ghi `.tmp` **cùng thư mục** rồi `mv`, đừng ghi đè trực tiếp (crash giữa chừng để lại JSON hỏng, resume mù):
+**Write `task.agent.json` atomically** — write a `.tmp` **in the same directory** then `mv`; do not overwrite in place (a crash mid-write leaves broken JSON and resume goes blind):
 
 ```bash
 printf '%s' "$NEW" > "$(dirname "$F")/.tmp.json" && mv "$(dirname "$F")/.tmp.json" "$F"
 ```
 
-Khi chuyển sang `done`: điền `outcome` ([`../Agents.md` §5.6](../Agents.md)) — `escapedBugs`, `reworkAfterReview`, `closedAt`. Bỏ trống thì `--calibrate` không có gì để đối chiếu, và ngưỡng §5.1.1 mãi là phỏng đoán ban đầu.
+When moving to `done`: fill in `outcome` ([`../Agents.md` §5.6](../Agents.md)) — `escapedBugs`, `reworkAfterReview`, `closedAt`. Leave it empty and `--calibrate` has nothing to compare against, which leaves the §5.1.1 thresholds forever at their initial guess.
 
 ---
 
-## 8. Ngân sách ngữ cảnh & artifact (chống phình token)
+## 8. Context & artifact budget (keeping token use down)
 
-> **Kiểm tra tự động:** `node scripts/validate-tasks.mjs` enforce các trần dưới đây + schema `task.agent.json` + file bắt buộc theo stage + evidence Gate 4. Dùng trong pre-commit/CI; chi tiết: [`../tasks/README.md` §6](../tasks/README.md).
+> **Enforced automatically:** `node scripts/validate-tasks.mjs` enforces the caps below plus the `task.agent.json` schema, the per-stage required files, and Gate 4 evidence. Use it in pre-commit/CI; details: [`../tasks/README.md` §6](../tasks/README.md).
 
-**Trần kích thước artifact** (đếm theo dòng; vượt trần = gate FAIL của stage đó).
+**Artifact size caps** (counted in lines; exceeding a cap FAILs that stage's gate).
 
-> **Task bị gate trả về:** doc là append-only (§5) và resume phải append `## Cập Nhật — …` ([`../HarnessSetup.md` §7](../HarnessSetup.md)) — nên sau hai vòng, cap cả file thành bẫy đóng: vượt trần mà không được phép cắt. Vì vậy khi doc đã có block `## Cập Nhật`, trần áp cho **block mới nhất** (phần role hiện tại viết, và là phần duy nhất nó được quyền rút gọn); tổng file vượt trần chỉ còn là **warning** nhắc tách appendix.
+> **When a gate sends a task back:** docs are append-only (§5) and resuming must append a `## Update — …` heading (the validator splits on `## Update` or `## Cập Nhật`; the marker does not follow `docLanguage`) ([`../HarnessSetup.md` §7](../HarnessSetup.md)) — so after two rounds a whole-file cap becomes a closed trap: over the cap, and not allowed to cut. Therefore, once a doc has `## Update` blocks, the cap applies to the **newest block** (what the current role wrote, and the only part it may shorten); the whole-file total over the cap becomes a **warning** suggesting an appendix split.
 
-**`08`/`09` không có trần cứng — cố ý.** Chúng chứa **output dán nguyên văn từ máy**, không phải văn xuôi role tự viết: `01`/`02`/`03` chạm trần thì cắt diễn giải, nội dung còn nguyên; `08` chạm trần thì chỉ còn cách cắt bằng chứng. Mà [`../Instructions.md` §5](../Instructions.md) nói không thương lượng: dán nguyên văn. Đẩy output sang appendix cũng không được — appendix là phần stage sau *không đọc*, mà `adversary` **phải** đối chiếu output nó tự chạy với output `08` khai ([`./Adversary.md` §3.2](./Adversary.md)), và validator chỉ tính evidence nằm trong code fence của chính file đó. Trần ở đây mua được file ngắn bằng cách làm mỏng bằng chứng — ngược đúng mục tiêu Gate 4/5.
+**`08`/`09` have no hard cap — deliberately.** They hold **verbatim machine output**, not prose a role wrote: when `01`/`02`/`03` hit a cap you cut explanation and the substance survives; when `08` hits a cap the only thing left to cut is evidence. And [`../Instructions.md` §5](../Instructions.md) is non-negotiable: paste it verbatim. Moving output to an appendix does not work either — an appendix is by definition the part later stages *do not read*, yet `adversary` **must** compare the output it ran itself against what `08` claims ([`./Adversary.md` §3.2](./Adversary.md)), and the validator only counts evidence inside a code fence in that same file. A cap here buys a shorter file by thinning the evidence, which is exactly backwards from what Gates 4/5 are for.
 
-Thay vào đó `08`/`09` có **ngưỡng cảnh báo** (`lineWarn`, mặc định 400 dòng): không chặn, chỉ báo. `08` cán 400 dòng thường nghĩa là task ôm quá nhiều AC — đó là tín hiệu nên **tách task**, không phải nên viết ngắn lại.
+Instead `08`/`09` get a **warning threshold** (`lineWarn`, 400 lines by default): no blocking, just a notice. `08` reaching 400 lines usually means the task is carrying too many ACs — that is a signal to **split the task**, not to write less.
 
-**Chạy lại thì đọc block mới nhất, đừng đọc cả lịch sử.** Stage bị gate trả về (`attempts > 1`) chỉ cần block `## Cập Nhật` mới nhất của `06`/`08`/`09` + handoff cuối; vòng trước đã được chắt lọc vào đó. Đọc lại toàn bộ là trả tiền cho cùng một lịch sử nhiều lần — file cứ dài (nó là bằng chứng, phải dài), nhưng không ai phải đọc lại tất cả.
+**On a re-run, read the newest block, not the whole history.** A stage sent back by a gate (`attempts > 1`) needs only the newest `## Update` block of `06`/`08`/`09` plus the last handoff; the previous round was already distilled into it. Re-reading everything means paying for the same history repeatedly — the file stays long (it is evidence, it has to be), but nobody has to read all of it again.
 
-| Artifact | Trần | Khi vượt |
+| Artifact | Cap | When over |
 | --- | --- | --- |
-| `00-Metadata.md` | ≤ 80 dòng | cắt gọn — metadata không phải spec |
-| `01-FSD.md` | ≤ 250 dòng | phần chi tiết phụ → `01a-FSD-Appendix.md` (stage sau **không** tự đọc appendix) |
-| `02-FSD-Review.md` | ≤ 150 dòng | như trên → `02a-Review-Appendix.md` |
+| `00-Metadata.md` | ≤ 80 lines | trim — metadata is not a spec |
+| `01-FSD.md` | ≤ 250 lines | move secondary detail to `01a-FSD-Appendix.md` (later stages do **not** read appendices) |
+| `02-FSD-Review.md` | ≤ 150 lines | same → `02a-Review-Appendix.md` |
 
-> **Không bao giờ đẩy sang appendix:** bảng **AC** và **Amendment log** (§9). Appendix là phần stage sau *không đọc* — AC hoặc amendment nằm ở đó = vô hình với planner/implementer và validator. Chạm trần → cắt phần khảo sát/diễn giải, giữ nguyên hai bảng này.
-| `03-Technical-Plan.md` | ≤ 200 dòng | tách phần khảo sát dài ra appendix |
-| Block handoff `.agent-memory/` | ≤ 30 dòng / block | viết cô đọng hơn |
+> **Never move to an appendix:** the **AC** table and the **Amendment log** (§9). An appendix is the part later stages *do not read* — an AC or amendment living there is invisible to the planner, the implementer and the validator. Over the cap → cut the survey/explanation, keep these two tables intact.
+| `03-Technical-Plan.md` | ≤ 200 lines | move the long survey section to an appendix |
+| `.agent-memory/` handoff block | ≤ 30 lines / block | write it more tightly |
 
-**Kỷ luật MCP payload:**
+**MCP payload discipline:**
 
-> **Không hardcode tên tool.** Kernel không biết project cắm MCP server nào — ClickUp hay Jira, Figma hay Penpot, GitLab hay GitHub. Agent **tự tìm tool phù hợp** trong danh sách tool của phiên, theo vai trò khai ở [`ProjectRules.md` §1](./ProjectRules.md). Tên tool có tiền tố theo server (`mcp__<server>__<tool>`), nên viết cứng một tên là khoá harness vào đúng một tracker.
+> **Never hardcode a tool name.** The kernel does not know which MCP servers the project plugs in — ClickUp or Jira, Figma or Penpot, GitLab or GitHub. The agent **finds a suitable tool itself** from the session's tool list, using the roles declared in [`ProjectRules.md` §1](./ProjectRules.md). Tool names are prefixed per server (`mcp__<server>__<tool>`), so writing one name in stone locks the harness to exactly one tracker.
 >
-> Cách tìm: khớp **vai trò → động từ** trong tên tool. Cần đọc task từ tracker → tool của server tracker có `get`/`read`/`task` trong tên. Cần tìm → `search`. Cần bình luận → `comment`. Không chắc tool nào đúng, hoặc không có tool nào khớp vai trò → **dừng, hỏi user**, không đoán và không bịa dữ liệu thay thế.
+> How to find one: match **role → verb** in the tool name. Need to read a task from the tracker → a tool on the tracker server with `get`/`read`/`task` in its name. Need to find something → `search`. Need to comment → `comment`. Unsure which tool is right, or no tool matches the role → **stop and ask the user**; never guess, never invent substitute data.
 
-Áp cho mọi server, không phụ thuộc tên:
+This applies to every server, whatever it is called:
 
-- **Tracker:** gọi bản **summary/rút gọn** trước (tool thường có tham số kiểu `detail_level`, `fields`, hoặc một tool `get` nhẹ riêng); chỉ lấy bản đầy đủ khi summary thiếu thông tin chặn việc. Chỉ mở attachment/ảnh khi mô tả text **không đủ** để viết requirement (ảnh rất tốn token).
-- **Design tool:** lấy **metadata trước** để xác định node **nhỏ nhất** liên quan, rồi mới lấy design context của đúng node đó. Không lấy context cho cả page/file. Screenshot chỉ khi hành vi UI là load-bearing và text không mô tả được.
-- **Git host:** chỉ truy vấn nhánh/MR của đúng task.
+- **Tracker:** call the **summary/reduced** form first (tools usually have a `detail_level` or `fields` parameter, or a separate lightweight `get`); fetch the full form only when the summary is missing something that blocks the work. Open attachments/images only when the text description is **not enough** to write the requirement (images are very expensive in tokens).
+- **Design tool:** fetch **metadata first** to identify the **smallest** relevant node, then fetch design context for exactly that node. Never fetch context for a whole page/file. Screenshots only when UI behaviour is load-bearing and text cannot describe it.
+- **Git host:** query only the branch/MR for this task.
 
-**Kỷ luật đọc tài liệu nội bộ:**
+**Internal document reading discipline:**
 
-- Chỉ đọc **đúng file** `fsd/` / `api/` / `srs/` mà task chạm tới (tra mục lục trong README từng thư mục trước). **Cấm** đọc cả thư mục.
-- Stage sau đọc artifact stage trước **một lần**, không re-đọc nếu không có cập nhật.
-- Khi cần trích artifact vào prompt/handoff: trích **ID + 1 dòng**, không dán nguyên đoạn.
+- Read only the **exact** `fsd/` / `api/` / `srs/` files the task touches (check the index in each directory's README first). Reading a whole directory is **forbidden**.
+- A later stage reads the previous stage's artifacts **once**, and does not re-read them absent an update.
+- When quoting an artifact into a prompt/handoff: quote the **ID + one line**, never paste the whole passage.
 
 ---
 
-## 9. Truy vết AC & amendment spec (vòng ngược)
+## 9. AC traceability & spec amendments (the loop back)
 
-> **Kiểm tra tự động:** `node scripts/validate-tasks.mjs` enforce mục 9.1 khi `status ∈ {reviewing, mr_created, done}`.
+> **Enforced automatically:** `node scripts/validate-tasks.mjs` enforces §9.1 when `status ∈ {reviewing, mr_created, done}`.
 
-### 9.1. Mọi AC phải đi tới tận evidence
+### 9.1. Every AC must reach evidence
 
-Một `AC-nn` xuất hiện trong `02-FSD-Review.md` **bắt buộc** đi hết chuỗi:
+An `AC-nn` that appears in `02-FSD-Review.md` **must** travel the whole chain:
 
 ```
-02 (AC-nn)  →  03 cột "Covers AC"  hoặc  bảng AC-manual
-            →  08 bảng "AC coverage": test file :: tên it(...)   hoặc   manual
+02 (AC-nn)  →  03 "Covers AC" column  or  the AC-manual table
+            →  08 "AC coverage" table: test file :: it(...) name   or   manual
 ```
 
-- **Test tự động** là mặc định. Tên `it(...)` của test nên chứa `AC-nn` để grep được ngược từ code.
-- **`manual`** chỉ hợp lệ khi AC đó đã được liệt kê ở bảng **AC-manual** của `03-Technical-Plan.md` kèm lý do — không được tự khai `manual` ở `08` để né test.
-- AC rơi (không ở `03`) → **Gate 3 FAIL**. AC không có dòng trong bảng AC coverage của `08` → **Gate 4 FAIL**.
+- **Automated tests** are the default. The `it(...)` name should contain `AC-nn` so you can grep back from the code.
+- **`manual`** is only valid when that AC is listed in the **AC-manual** table of `03-Technical-Plan.md` with a reason — you may not declare `manual` in `08` to dodge writing a test.
+- A dropped AC (absent from `03`) → **Gate 3 FAIL**. An AC with no row in the `08` AC coverage table → **Gate 4 FAIL**.
 
-### 9.2. Spec sai thì sửa spec, không lệch ngầm
+### 9.2. If the spec is wrong, fix the spec — do not drift silently
 
-Khi technical-planner hoặc implementer phát hiện một AC / requirement **sai, thiếu, hoặc bất khả thi**:
+When the technical-planner or implementer finds an AC/requirement that is **wrong, missing, or impossible**:
 
-1. Append một dòng vào **Amendment log** của `02-FSD-Review.md` (và `01-FSD.md` nếu chạm `FSD-<MOD>-nnn`): ngày, ai phát hiện, ID, cũ → mới, lý do.
-2. Amendment **đổi phạm vi hoặc ý định nghiệp vụ** → `status = needs_clarification`, dừng chờ BA. Amendment thuần kỹ thuật (diễn đạt sai, ID trỏ nhầm) → ghi log rồi chạy tiếp.
-3. Append-only: **không** sửa đè dòng AC gốc — dòng gốc ở lại, amendment ghi bên dưới.
+1. Append a line to the **Amendment log** in `02-FSD-Review.md` (and `01-FSD.md` if it touches an `FSD-<MOD>-nnn`): date, who found it, the ID, old → new, reason.
+2. If the amendment **changes scope or business intent** → `status = needs_clarification`, stop and wait for the BA. A purely technical amendment (bad wording, an ID pointing at the wrong thing) → log it and continue.
+3. Append-only: do **not** overwrite the original AC line — it stays, and the amendment goes underneath.
 
-Ship code lệch AC mà không có amendment = lỗi quy trình: FSD tụt xuống thành biên bản lịch sử, không còn là source of truth.
+Shipping code that diverges from an AC with no amendment is a process failure: the FSD degrades into a historical record and stops being the source of truth.

@@ -126,7 +126,7 @@ Task docs live in `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout: [`tasks/READ
 2. **Read the handoff:** `.agent-memory/{role}.md` for the role matching `currentStage` → inputs, decisions, risks, evidence, "next agent", continue flags.
 3. **Re-check the gate** against the lifecycle in [`Agents.md`](./Agents.md) §2.
 4. **Continue at the right point:** `blocked` / `needs_clarification` → read the blocker, wait for the user/BA to resolve it; `in_progress` → re-dispatch the right role subagent from where it stopped.
-5. **Append, never overwrite:** every doc / `.agent-memory` update adds a new `## Update — YYYY-MM-DD` section.
+5. **Append, never overwrite:** every doc / `.agent-memory` update adds a new `## Update — YYYY-MM-DD` heading. That heading is a **structural marker** the validator splits on, so it stays in English (or the existing `## Cập Nhật`) regardless of `docLanguage`.
 6. **Sync the checkout:** work on the branch recorded in `task.agent.json` (`branchActual` if present, otherwise `branch`).
 
 > `task.agent.json` has no **token/usage** field (that is vendor data). It does have `telemetry`: stage, tier, model name, timestamps — enough for `--calibrate` to weigh cost against outcome ([`Agents.md` §5.6](./Agents.md)) without exposing token counts.

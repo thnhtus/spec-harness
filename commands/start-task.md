@@ -257,7 +257,7 @@ role tương ứng rồi chạy trong context sạch. Prompt của mọi subagen
 > then your role file named below. Obey the artifact size caps and MCP payload
 > discipline in SharedRules §8. Work only inside the task folder and the
 > files your role owns. **If this is a re-run (`attempts[<stage>] > 1`), read
-> only the newest `## Cập Nhật` block of `06`/`08`/`09` plus the last handoff —
+> only the newest `## Update` / `## Cập Nhật` block of `06`/`08`/`09` plus the last handoff —
 > not the whole history; earlier rounds are already distilled there.** When done,
 > append your `## Next Handoff` block (≤ 30 lines) to `.agent-memory/{role}.md`
 > and update `task.agent.json`. End your final message with: gate verdict
