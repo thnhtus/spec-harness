@@ -116,9 +116,15 @@
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",
   "_evidenceNegativeSamples": "Lệnh KHÔNG được tính là evidence. Chiều ngược của evidenceSampleCommand: thiếu nó thì pattern `npm run .*` qua self-check xanh, và Gate 4 nhận `npm run dev` làm bằng chứng test.",
-  "evidenceNegativeSamples": ["npm run dev", "npm run start", "npm run preview"],
+  "evidenceNegativeSamples": [
+    "npm run dev",
+    "npm run start",
+    "npm run preview"
+  ],
   "tracker": {
-    "urlPattern": "^https://app\\.clickup\\.com/t/.+"
+    "urlPattern": "^https://app\\.clickup\\.com/t/.+",
+    "writeBack": "off",
+    "statusOnReview": ""
   },
   "retryBudget": 4,
   "splitEffort": 9,
@@ -134,5 +140,6 @@
   "lineWarn": {
     "08-Test-Evidence.md": 400,
     "09-Adversarial-Review.md": 400
-  }
+  },
+  "_tracker": "writeBack: what the coordinator does on the tracker when the task reaches `reviewing`. `off` = report only (default). `comment` = post one comment with the doc path and evidence. `status` = also move the ticket to `statusOnReview`. The harness does not call a vendor API: it asks the `tracker` MCP server, so whatever the team already authenticated is what gets used."
 }

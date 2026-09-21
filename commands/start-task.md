@@ -378,11 +378,32 @@ vendor data); the model name + wall-clock is enough for `--calibrate` to answer
 
 Step 7 (you, no subagent): `node scripts/lease.mjs release "$TASK"` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no
-errors (it enforces the AC traceability chain, SharedRules §9), then post the
-final summary: what changed (from the implementer's handoff), test evidence
-location (`08-Test-Evidence.md`), and the remaining user decisions (commit /
-push / MR / ClickUp status). **Stop.** Do not commit or push — the user does
-that themselves.
+errors (it enforces the AC traceability chain, SharedRules §9).
+
+**Then write back to the tracker** — read `harness.config.json` → `tracker.writeBack`:
+
+| value | what you do |
+|---|---|
+| `off` (default) | nothing; the summary below is the only report |
+| `comment` | via the `tracker` MCP server, post **one** comment on the ticket: task doc path, branch, and where the evidence is (`08-Test-Evidence.md`) |
+| `status` | the comment **and** move the ticket to `tracker.statusOnReview` |
+
+Then record what you actually did, so the claim is checkable:
+
+```json
+"trackerWriteBack": { "at": "2026-09-18T09:20:00Z", "action": "status", "status": "Ready for QC" }
+```
+
+Write it **after** the MCP call returns, never before — this field is the only
+evidence the board was really touched, and the validator warns when `writeBack`
+is on and it is missing. If the MCP call fails, leave the field out and say so
+in the summary: a silent failure here means the board says one thing and this
+folder says another, and nobody finds out until the PM asks.
+
+Finally, post the summary: what changed (from the implementer's handoff), test
+evidence location (`08-Test-Evidence.md`), and the remaining user decisions
+(commit / push / MR). **Stop.** Do not commit or push — the user does that
+themselves.
 
 ## Hard rules for subagent prompts
 

@@ -352,6 +352,33 @@
           }
         }
       }
+    },
+    "trackerWriteBack": {
+      "type": "object",
+      "description": "What the coordinator actually did on the tracker at step 7. Written only after the tracker MCP call returned; its absence while config.tracker.writeBack is on means the board was never updated.",
+      "required": [
+        "at",
+        "action"
+      ],
+      "properties": {
+        "at": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "comment",
+            "status"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "description": "The status the ticket was moved to, when action=status."
+        },
+        "note": {
+          "type": "string"
+        }
+      }
     }
   },
   "allOf": [

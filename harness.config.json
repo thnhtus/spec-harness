@@ -115,9 +115,15 @@
   "evidenceMode": "legacy",
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
   "evidenceSampleCommand": "npm run test:scope -- src/test/x",
-  "evidenceNegativeSamples": ["npm run dev", "npm run start", "npm run preview"],
+  "evidenceNegativeSamples": [
+    "npm run dev",
+    "npm run start",
+    "npm run preview"
+  ],
   "tracker": {
-    "urlPattern": "^https://app\\.clickup\\.com/t/.+"
+    "urlPattern": "^https://app\\.clickup\\.com/t/.+",
+    "writeBack": "off",
+    "statusOnReview": ""
   },
   "_note": "Config of the spec-harness repo itself: tasksDir points at the shipped kernel templates so `--self-check` validates what we distribute. A real project copies adapters/example/harness.config.json instead.",
   "retryBudget": 4,
@@ -134,5 +140,6 @@
   "lineWarn": {
     "08-Test-Evidence.md": 400,
     "09-Adversarial-Review.md": 400
-  }
+  },
+  "_tracker": "writeBack: what the coordinator does on the tracker when the task reaches `reviewing`. `off` = report only (default). `comment` = post one comment with the doc path and evidence. `status` = also move the ticket to `statusOnReview`. The harness does not call a vendor API: it asks the `tracker` MCP server, so whatever the team already authenticated is what gets used."
 }

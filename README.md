@@ -330,7 +330,9 @@ Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny
 
 Nửa còn lại — token thật — cần coordinator ghi `telemetry[].inputTokens` ở mỗi dispatch (`/start-task` step 6). `--cost` in ra khi có, và nói thẳng là **không có** khi chưa ai điền. Chưa đo thì đừng báo ROI.
 
-**Tracker chỉ đọc.** Task xong không tự đổi trạng thái trên ClickUp/Jira; PM vẫn phải cập nhật tay.
+**Tracker write-back — tắt mặc định, bật bằng config.** `tracker.writeBack`: `off` (mặc định, chỉ báo cáo) · `comment` (đăng một comment lên ticket: đường dẫn task doc, branch, chỗ chứa evidence) · `status` (comment **và** chuyển ticket sang `tracker.statusOnReview`). Coordinator gọi qua MCP server `tracker`, **không** qua API vendor: ClickUp/Jira/Linear không chung mô hình status lẫn auth, một client viết ở đây là code không ai test được ngoài tracker của chính maintainer.
+
+Bật rồi thì phải chứng minh đã làm: coordinator ghi `trackerWriteBack` vào `task.agent.json` **sau khi** MCP trả về, và validator cảnh báo khi `writeBack` bật mà field đó vắng — một setting trông như đang bật mà không đụng gì là đúng kiểu hỏng file này sinh ra để chặn. `writeBack: "status"` mà thiếu `statusOnReview` thì `--self-check`/`--preflight` báo đỏ ngay.
 
 ## Ghi chú cài đặt
 

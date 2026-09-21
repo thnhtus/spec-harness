@@ -712,6 +712,18 @@ const REQUIRED_DENY = [
   "Bash(cat .env:*)", "Bash(env:*)", "Bash(printenv:*)", "Read(.env)",
 ];
 
+// null = fine, string = what is wrong. A predicate rather than an inline assert
+// so it can be fed the configs a project might actually write, not just the one
+// this repo ships.
+export function trackerConfigError(tracker) {
+  const wb = tracker?.writeBack ?? "off";
+  if (!["off", "comment", "status"].includes(wb))
+    return `config.tracker.writeBack must be "off", "comment" or "status" (got ${JSON.stringify(wb)})`;
+  if (wb === "status" && !String(tracker?.statusOnReview ?? "").trim())
+    return 'config.tracker.writeBack="status" needs tracker.statusOnReview (e.g. "Ready for QC") \u2014 otherwise it looks enabled and moves nothing';
+  return null;
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -1012,6 +1024,44 @@ if (args.has("--self-check")) {
     ["attested", "legacy"].includes(CFG.evidenceMode),
     `config.evidenceMode must be "attested" or "legacy" (got ${JSON.stringify(CFG.evidenceMode)}) — there is no default: "legacy" lets Gate 4 accept evidence no process ever produced`,
   );
+  // (predicate defined at module scope; see trackerConfigError)
+  // Tracker write-back. The PM does not read task.agent.json, they read the
+  // board -- so a task that reaches `reviewing` while the ticket sits untouched
+  // means two sources of truth disagree from week one.
+  //
+  // The kernel does NOT call a vendor API. ClickUp, Jira and Linear share no
+  // status model and no auth, and a client here would be untestable code that
+  // only the maintainer's tracker exercises. The coordinator asks the `tracker`
+  // MCP server instead: whatever the team already authenticated is what writes.
+  //
+  // Default `off`, because a harness that silently mutates a ticket on first
+  // install is worse than one that does nothing.
+  // Checked through the exported predicate, not inline against CFG: an inline
+  // assert can only ever see the config this repo happens to ship, so it proves
+  // nothing about the config a project will write, and deleting it leaves no
+  // trace. The predicate can be fed junk.
+  for (const [tracker, want] of [
+    [undefined, null],
+    [{}, null],
+    [{ writeBack: "off" }, null],
+    [{ writeBack: "comment" }, null],
+    [{ writeBack: "status", statusOnReview: "Ready for QC" }, null],
+    [{ writeBack: "yes-please" }, /must be "off", "comment" or "status"/],
+    [{ writeBack: "Status" }, /must be "off"/],            // enum is case-sensitive
+    [{ writeBack: true }, /must be "off"/],
+    // Enabled and pointed at nothing: reads as on in review, moves no ticket.
+    // This is the exact failure this file exists to prevent, so it is the one
+    // case worth spelling out three ways.
+    [{ writeBack: "status" }, /needs tracker.statusOnReview/],
+    [{ writeBack: "status", statusOnReview: "" }, /needs tracker.statusOnReview/],
+    [{ writeBack: "status", statusOnReview: "   " }, /needs tracker.statusOnReview/],
+  ]) {
+    const got = trackerConfigError(tracker);
+    if (want === null) assert.equal(got, null, `tracker ${JSON.stringify(tracker)} should be accepted, got: ${got}`);
+    else assert.ok(got && want.test(got), `tracker ${JSON.stringify(tracker)} should be rejected by ${want}, got: ${got}`);
+  }
+  assert.equal(trackerConfigError(CFG.tracker), null, `this repo's own tracker config is invalid: ${trackerConfigError(CFG.tracker)}`);
+
   // repos: where the CODE lives, relative to the config root. One entry with
   // path "." means harness and code share a repo; several entries mean the
   // harness sits above them (workspace layout) and task docs are NOT inside
@@ -2200,6 +2250,17 @@ for (const { sprint, task, path } of folders) {
   // with no telemetry is incomplete, not invalid. But it is the reason
   // `--calibrate` and `--cost` have nothing to say, and that should be said out
   // loud once per task rather than discovered a quarter later.
+  // writeBack enabled but nothing recorded = a setting that reads as on and does
+  // nothing. The coordinator is the only actor that can call the tracker MCP, so
+  // it is also the only one that can attest it did -- and `reviewing` is the last
+  // moment anyone looks.
+  if (data.currentStage === "reviewing" && (CFG.tracker?.writeBack ?? "off") !== "off" && !data.trackerWriteBack)
+    warnings.push(
+      `config.tracker.writeBack="${CFG.tracker.writeBack}" but task.agent.json has no \`trackerWriteBack\` record — ` +
+        "the ticket was probably never updated, so the board and this folder disagree " +
+        "(/start-task step 7 writes it after calling the tracker MCP)",
+    );
+
   if (data.currentStage === "reviewing" && !(data.telemetry ?? []).length)
     warnings.push(
       'telemetry is empty at stage "reviewing" — the coordinator appends one entry per dispatch ' +
