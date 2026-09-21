@@ -2,7 +2,8 @@
 // spec-harness installer — cài kernel + adapter + agent + gate vào một project.
 //
 // Chạy được từ MỌI shell (PowerShell, cmd, bash, zsh, WSL):
-//   node install.mjs <project-root>
+//   node install.mjs [project-root]   # thiếu = "."; hỏi xác nhận trước khi ghi
+//   node install.mjs . --yes          # bỏ hỏi (CI, script)
 //   node install.mjs --self-test      # cài thử vào repo tạm rồi kiểm, không đụng gì
 //
 // Viết bằng Node chứ không phải bash là có chủ đích: Node 20+ vốn đã bắt buộc
@@ -22,6 +23,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { createInterface } from "node:readline/promises";
 
 const REPO = process.env.SPEC_HARNESS_REPO || "thnhtus/spec-harness";
 const REF = process.env.SPEC_HARNESS_REF || "master";
@@ -111,6 +113,22 @@ function installHook(P) {
   }
   try { chmodSync(h, 0o755); } catch {}
   return null;
+}
+
+// Những file kernel SẼ đè, tính trước khi ghi một byte nào — để hỏi user trước
+// chứ không báo sau. Trùng logic với over() bên dưới, nên self-test khoá hai
+// bên phải ra cùng kết quả (drift là im lặng và chỉ lộ ra khi đã đè mất file).
+function wouldClobber(P) {
+  const out = [];
+  const chk = (src, dst) => {
+    try { if (existsSync(dst) && read(src) !== read(dst)) out.push(dst.slice(P.length + 1)); } catch {}
+  };
+  for (const f of readdirSync(join(SRC, "kernel/docs"), { withFileTypes: true }))
+    if (f.isFile()) chk(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
+  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs"])
+    chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
+  chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
+  return out;
 }
 
 function installInto(P) {
@@ -441,7 +459,12 @@ if (args[0] === "--self-test") {
   // thì user chỉ biết lúc `git diff`, hoặc không bao giờ.
   mkdirSync(join(A, "docs"), { recursive: true });
   writeFileSync(join(A, "docs/README.md"), "# docs của project tôi");
+  // wouldClobber() (hỏi trước) và over() (báo sau) là hai cài đặt rời của cùng
+  // một câu hỏi. Lệch nhau = xác nhận giấu mất file sắp bị đè.
+  const pre = wouldClobber(A);
   const rA = installInto(A);
+  if (pre.sort().join() !== rA.clobbered.slice().sort().join())
+    fail(`wouldClobber lệch over(): [${pre}] vs [${rA.clobbered}]`);
   if (!rA.clobbered.includes("docs/README.md")) fail("đè file project mà không báo");
   if (read(join(A, "docs/README.md")).includes("project tôi")) fail("kernel docs đáng lẽ phải đè");
   // cài lại: nội dung đã giống nhau → không được báo nhầm
@@ -462,13 +485,36 @@ if (args[0] === "--self-test") {
 }
 
 // ── cài thật ───────────────────────────────────────────────────────────────
-if (args.length !== 1) die("dùng: node install.mjs <project-root>");
-const target = resolve(args[0]);
-if (!existsSync(target)) die(`✖ không có thư mục: ${args[0]}`);
+const yes = args.includes("--yes") || args.includes("-y");
+const rest = args.filter((a) => a !== "--yes" && a !== "-y");
+if (rest.length > 1) die("dùng: node install.mjs [project-root] [--yes]");
+const where = rest[0] ?? ".";
+const target = resolve(where);
+if (!existsSync(target)) die(`✖ không có thư mục: ${where}`);
+
+// Đích rỗng = thư mục vừa tạo cho harness, không có gì để mất → cài thẳng.
+// Đích có file = đang cài đè lên repo code. Trước đây đối số thư mục là bắt
+// buộc và đóng vai rào chắn đó; bỏ nó đi thì xác nhận phải thay chỗ — và xác
+// nhận này mạnh hơn: nó liệt kê đúng file sắp mất chứ không chỉ hỏi chung chung.
+if (!yes && readdirSync(target).filter((n) => n !== ".git").length) {
+  const hit = wouldClobber(target);
+  console.log(`cài spec-harness vào: ${target}`);
+  if (hit.length)
+    console.log(`\n⚠️  sẽ ĐÈ ${hit.length} file trong project:\n${hit.map((f) => `   ${f}`).join("\n")}`);
+  // Không có TTY (CI, `| tee`, docker build) thì readline trả EOF ngay và câu
+  // hỏi thành "tự đồng ý" — đúng kiểu lỗi rào chắn im lặng biến mất. Chặn hẳn.
+  if (!process.stdin.isTTY) die("\n✖ không có TTY để hỏi — thêm --yes nếu chắc.");
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  // Ctrl+D / Ctrl+C ở đây là "thôi khỏi", không phải crash — để nó ném AbortError
+  // thì user thấy stack trace và không biết là đã huỷ hay đã ghi nửa chừng.
+  const ans = await rl.question("\ntiếp tục? [y/N] ").then((s) => s.trim().toLowerCase(), () => "");
+  rl.close();
+  if (ans !== "y" && ans !== "yes") die("đã huỷ, không ghi gì.");
+}
 
 const { kept, hookSkipped, signpost, clobbered } = installInto(target);
 
-console.log(`\n✅ đã cài vào ${args[0]}`);
+console.log(`\n✅ đã cài vào ${where}`);
 if (kept.length) {
   console.log("\ngiữ nguyên (đã có sẵn, không đè):");
   for (const k of kept) console.log(`   ${k}`);
@@ -482,7 +528,7 @@ ${clobbered.map((f) => `   ${f}`).join("\n")}
 
 if (signpost) console.log(`
 ℹ️  đã đặt biển báo ${signpost}
-    Harness đứng cạnh repo code, nên PHẢI mở CLI trong ${args[0]} — mở ở thư mục
+    Harness đứng cạnh repo code, nên PHẢI mở CLI trong ${where} — mở ở thư mục
     cha là mất skills, /start-task và guardrail deny git push. Biển báo đó bắt
     lỗi giúp bạn nếu lỡ mở nhầm.`);
 

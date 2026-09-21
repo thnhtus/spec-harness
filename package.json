@@ -1,12 +1,27 @@
 {
   "name": "spec-harness",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Spec-driven agent harness: 7 roles, 5 code-enforced gates (Gate 5 is an adversarial agent), AC traceability from spec to test evidence.",
-  "bin": { "spec-harness": "install.mjs" },
+  "bin": {
+    "spec-harness": "install.mjs"
+  },
   "type": "module",
-  "engines": { "node": ">=20" },
-  "files": ["install.mjs", "kernel/", "skills/", "agents/", "adapters/", "commands/", "hooks/"],
-  "repository": { "type": "git", "url": "git+https://github.com/thnhtus/spec-harness.git" },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "install.mjs",
+    "kernel/",
+    "skills/",
+    "agents/",
+    "adapters/",
+    "commands/",
+    "hooks/"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thnhtus/spec-harness.git"
+  },
   "scripts": {
     "test": "node install.mjs --self-test",
     "prepublishOnly": "node install.mjs --self-test"

@@ -46,7 +46,7 @@ Kernel cũng không gắn với một CLI: file role không khai `model:`, khôn
 
 Chọn một trong hai trường hợp — khác nhau ở chỗ `harness.config.json` nằm đâu, kéo theo task docs nằm đâu.
 
-`install.mjs` nhận **một tham số: thư mục đích** — nơi harness được cài vào. Thư mục đó phải tồn tại; git repo thì tốt hơn nhưng không bắt buộc (xem ghi chú cuối mục). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
+Installer cài vào **thư mục bạn đang đứng**; truyền đường dẫn nếu muốn cài chỗ khác (`npx spec-harness ./harness`). Thư mục đó phải tồn tại; git repo thì tốt hơn nhưng không bắt buộc (xem ghi chú cuối mục). Ví dụ dưới dùng repo tên `my-app`; thay bằng đường dẫn thật của bạn.
 
 ### Trường hợp A — cài **vào trong** repo code
 
@@ -55,19 +55,20 @@ Một repo (FE hoặc BE), task docs nằm cùng chỗ với code. Đây là m�
 ```bash
 cd ~/code/my-app          # ← repo code của bạn, đứng sẵn ở đây
 
-npx spec-harness .
+npx spec-harness
 
-# ghim version:  npx spec-harness@0.1.0 .
-# repo private:  git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs .
+# ghim version:  npx spec-harness@0.1.0
+# không hỏi:     npx spec-harness --yes        ← CI, script
+# repo private:  git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs
 ```
 
 Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 20+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
 
-Dấu `.` cuối là thư mục đích = repo bạn đang đứng. Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
+Task docs vào `my-app/docs/tasks/`, commit chung với code. `repos` sẽ là `[{ path: "." }]`.
 
 Mở CLI ngay tại repo root là xong — `.claude/` nằm sẵn ở đó. Thư mục con (`packages/web/`) và worktree do `/start-task` tạo đều thấy được, vì CLI quét ngược lên cha và `.claude/` được commit vào git. **Đừng thêm `.claude/` vào `.gitignore`** — worktree sẽ rỗng và `/start-task` mất skills giữa chừng. Lệnh `node scripts/validate-tasks.mjs` chạy từ repo root.
 
-Harness cài **đè lên** repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Installer liệt kê ra những file nó vừa đè; bản cũ còn trong git (`git diff`, `git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
+Harness cài **đè lên** repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Thư mục đích không rỗng thì installer **liệt kê đúng những file sắp đè và hỏi `[y/N]` trước khi ghi byte nào** — trả lời khác `y` là thoát, không đụng gì. Không có TTY (CI, pipe) thì nó dừng hẳn thay vì tự đồng ý; thêm `--yes` để bỏ qua. Cài xong nó liệt kê lại lần nữa; bản cũ còn trong git (`git diff`, `git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
 
 ### Trường hợp B — cài **cạnh** các repo code
 
@@ -78,7 +79,7 @@ cd ~/code/my-workspace    # ← thư mục đang chứa fe/ và be/
 mkdir harness && cd harness
 git init                  # tuỳ chọn — xem "Có cần git init không?" bên dưới
 
-npx spec-harness .
+npx spec-harness
 ```
 
 ```
