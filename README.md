@@ -1,7 +1,5 @@
 # spec-harness
 
-[![Socket Badge](https://socket.dev/api/badge/npm/package/spec-harness)](https://socket.dev/npm/package/spec-harness)
-
 Harness spec-driven cho CLI agent: **7 role · 5 gate · truy vết AC từ spec tới test evidence**. Gate enforce bằng **exit code**, không phải bằng lời nhắc trong prompt.
 
 Tách từ một harness đã chạy thật 240 task / 17 sprint trên codebase production.
