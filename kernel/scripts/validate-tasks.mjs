@@ -845,14 +845,37 @@ const PLACEHOLDER_HOST = /(?:^<|\bexample\.(?:com|org|net)$|^localhost$|^your-|c
 // Secrets do not belong in a committed file. OAuth tokens live in ~/.claude.json
 // by design, but .mcp.json is the file people hand-edit, and it is the natural
 // place to paste `Authorization: Bearer ...` when a server has no OAuth.
-const SECRETISH = /"(authorization|token|api[_-]?key|secret|password|bearer)"\s*:/i;
+//
+// Scan the VALUE, not the field name. Matching on `"authorization":` was wrong
+// in both directions: it flagged `"Authorization": "!cmd"` -- the CORRECT way,
+// where the token never enters the repo -- and it stayed silent on a real token
+// under a header the list does not name (`X-Api-Token`, `PRIVATE-TOKEN`), which
+// is the exact case this check exists to stop.
+
+// A runtime instruction is a recipe for fetching the secret, not the secret:
+// pi runs `!cmd` and substitutes stdout; `$VAR`/`${VAR}` interpolate the env.
+const RUNTIME_VALUE = /^\s*(!|\$\{?[A-Za-z_])/;
+
+// Known token shapes. Prefix + length, so a header VALUE gives it away whatever
+// the header happens to be called.
+const SECRET_SHAPE = /\b(gh[pousr]_[A-Za-z0-9]{16,}|glpat-[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/;
+
+// Walk every string in the tree: naming the server and field beats one
+// "something in this file looks like a credential" with no address.
+function* strings(node, path = []) {
+  if (typeof node === "string") yield [path, node];
+  else if (node && typeof node === "object")
+    for (const [k, v] of Object.entries(node)) yield* strings(v, [...path, k]);
+}
 
 export function mcpGaps(text) {
   const out = { errors: [], warnings: [] };
   let cfg;
   try { cfg = JSON.parse(text); } catch { return { errors: [".mcp.json is not valid JSON \u2014 the CLI starts with no MCP servers at all"], warnings: [] }; }
-  if (SECRETISH.test(text))
-    out.errors.push(".mcp.json contains what looks like a credential field \u2014 it is committed; move it to an env var or the CLI's own auth store");
+  for (const [path, v] of strings(cfg.mcpServers ?? {})) {
+    if (RUNTIME_VALUE.test(v) || !SECRET_SHAPE.test(v)) continue;
+    out.errors.push(`.mcp.json has a real credential at \`${path.join(".")}\` \u2014 it is committed; use a runtime value (\`!cmd\` runs a command, \`$\{VAR}\` reads the env) or the CLI's own auth store`);
+  }
   for (const [name, srv] of Object.entries(cfg.mcpServers ?? {})) {
     if (!srv?.url) continue; // local server: command + args
     let host;
@@ -1868,9 +1891,21 @@ if (args.has("--self-check")) {
     "a placeholder subdomain is still a placeholder");
   assert.deepEqual(mcpGaps('{"mcpServers":{"t":{"url":"https://gitlab.acme-corp.com/api/v4/mcp"}}}').errors, [],
     "a real self-hosted host must not be flagged");
-  assert.ok(mcpGaps('{"mcpServers":{"t":{"url":"https://x.com","headers":{"Authorization":"Bearer sk-1"}}}}').errors
+  assert.ok(mcpGaps('{"mcpServers":{"t":{"url":"https://x.com","headers":{"Authorization":"Bearer sk-abcdefghijklmnopqrst"}}}}').errors
       .some((e) => /credential/.test(e)),
     ".mcp.json is committed; a bearer token in it is a leak");
+  // Scanning field NAMES missed this: same leak, header the list never named.
+  // That is the case the check exists for, and it used to pass in silence.
+  assert.ok(mcpGaps('{"mcpServers":{"t":{"url":"https://x.com","headers":{"X-Api-Token":"ghp_abcdefghijklmnopqrst"}}}}').errors
+      .some((e) => /credential/.test(e)),
+    "a real token under an unlisted header name is still a leak");
+  // The other direction, and the reason field-name scanning had to go: a runtime
+  // value is the CORRECT shape -- the token stays in the keychain or the env and
+  // never enters the repo. Flagging it teaches people to switch the check off.
+  for (const v of ["!printf 'Bearer %s' \"$(gh auth token)\"", "${GITHUB_TOKEN}", "$GITHUB_TOKEN", "Bearer ${TOKEN}"])
+    assert.deepEqual(
+      mcpGaps(JSON.stringify({ mcpServers: { t: { url: "https://x.com", headers: { Authorization: v } } } })).errors, [],
+      `runtime value (${v}) is a recipe for fetching the secret, not the secret`);
 
   console.log("✅ validate-tasks self-check passed");
   process.exit(0);
