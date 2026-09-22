@@ -37,6 +37,8 @@ This is the **business** review gate: answer *"does this FSD match the business 
 | --- | --- | --- | --- | --- | --- |
 
 > Those two columns are **ENUMs matched verbatim**, and `docLanguage` covers the Question prose only ([`./SharedRules.md` §5](./SharedRules.md)). A row carrying any other wording is reported as unreadable rather than skipped: skipping defaults to "no blocking question", which turns this gate off while the table still looks filled in.
+>
+> The legal values of this table — and of the AC `Status` and Risk `Severity` columns above/below — live in `harness.config.json → docEnums`, which is what the validator reads and what `--preflight` checks this file against. They are not retyped here by hand; that is how the template once taught `clarification / contradiction`, a value Gate 2 could never match.
 
 **3.4. Business risk table** (technical risks are left to `technical-planner`):
 

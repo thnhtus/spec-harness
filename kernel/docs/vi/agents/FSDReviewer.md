@@ -37,6 +37,8 @@
 | Q-ID | Câu hỏi | Loại (`blocking`/`non-blocking`) | Trạng thái (`open`/`answered`/`deferred`) | Owner | Hỏi / Trả lời |
 
 > Hai cột Loại/Trạng thái là **ENUM**, validator khớp đúng chữ tiếng Anh. Viết "chặn" hay "chưa trả lời" → dòng đó báo lỗi *không đọc được*, không phải được bỏ qua. `docLanguage` chỉ áp cho phần văn xuôi của câu hỏi ([`./SharedRules.md` §5](./SharedRules.md)).
+>
+> Danh sách giá trị hợp lệ của bảng này — và của cột `Status` ở bảng AC, `Severity` ở bảng Risk — nằm trong `harness.config.json → docEnums`. Validator đọc từ đó, và `--preflight` đối chiếu chính file này với nó. Không chép tay lại ở đây — chép tay là lý do template từng dạy `clarification / contradiction`, giá trị Gate 2 không bao giờ khớp được.
 | --- | --- | --- | --- | --- | --- |
 
 **3.4. Bảng rủi ro nghiệp vụ** (rủi ro kỹ thuật để `technical-planner` lo):

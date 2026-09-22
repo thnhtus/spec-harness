@@ -131,6 +131,27 @@ const ROLE_STAGE = CFG.roleStage ?? {};
 // Commands that count as a real verification run (project test/lint/build stack).
 const EVIDENCE_RE = new RegExp(CFG.evidenceCommandPattern ?? "(?!)");
 
+// ENUMs that live in MARKDOWN TABLES, not in task.agent.json.
+//
+// task.agent.json has had a schema from day one: `status: "chưa xong"` is
+// rejected outright. The doc tables never had one -- their legal values existed
+// only as prose in a column header (FSDReviewer §3) and were RETYPED by hand
+// into a regex here. Two copies, nothing forcing them to agree, so they drifted:
+// the template shipped `clarification / contradiction` as the Question Type for
+// a long time, all-English, and Gate 2 could never match it. An agent filling
+// the template in correctly still got a gate that saw nothing.
+//
+// That is the structural crack, and docLanguage merely made it easy to hit. So
+// the list lives in config now, exactly like the schema's: the validator reads
+// it, the template is checked against it, and prose that contradicts it is an
+// error. One source of truth, or it drifts again.
+const DOC_ENUMS = CFG.docEnums ?? {};
+const enumAlt = (vals) => (vals ?? []).map((v) => v.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+// Longest-first so `non-blocking` is not shadowed by `blocking`; the lookbehind
+// keeps `non-blocking` from being read as a bare `blocking`.
+const enumRe = (vals) =>
+  vals?.length ? new RegExp(`(?<![\\w-])(?:${enumAlt([...vals].sort((a, b) => b.length - a.length))})(?![\\w-])`, "i") : /(?!)/;
+
 // ---------------------------------------------------------------------------
 // Minimal JSON-Schema validator (covers the subset used by the schema)
 // ---------------------------------------------------------------------------
@@ -211,8 +232,13 @@ function rel(p) {
 // Gate 2 disappears while the table still looks complete. So an unrecognised
 // row is an ERROR, not a skip: no data is fine, data we cannot read is not.
 const Q_ROW = /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/;
-const Q_TYPE = /(?<![\w-])(non-)?blocking\b/i;
-const Q_STATUS = /\b(open|answered|deferred)\b/i;
+const Q_TYPE = enumRe(DOC_ENUMS.question?.type);
+const Q_STATUS = enumRe(DOC_ENUMS.question?.status);
+// Which value of question.type actually blocks the gate, and which status means
+// unresolved. Naming them in config too -- deriving them by position would make
+// reordering the array silently change what Gate 2 blocks on.
+const Q_BLOCKS = enumRe([DOC_ENUMS.question?.blocksOn].filter(Boolean));
+const Q_UNRESOLVED = enumRe([DOC_ENUMS.question?.unresolved].filter(Boolean));
 
 // { open: ids blocking the gate, unparsed: ids whose type/status is not an ENUM }
 function classifyQuestions(lines) {
@@ -224,7 +250,7 @@ function classifyQuestions(lines) {
     // is "no data", which is the one case that legitimately stays quiet.
     if (!l.split("|").map((c) => c.trim())[2]) continue;
     if (!Q_TYPE.test(l) || !Q_STATUS.test(l)) { unparsed.push(m[1]); continue; }
-    if (/(?<![\w-])blocking\b/i.test(l) && /\bopen\b/i.test(l)) open.push(m[1]);
+    if (Q_BLOCKS.test(l) && Q_UNRESOLVED.test(l)) open.push(m[1]);
   }
   return { open, unparsed };
 }
@@ -1237,6 +1263,36 @@ if (args.has("--self-check")) {
     [],
     "every documented ENUM value parses",
   );
+  // Every value the config declares must parse. Retyping the list into a regex
+  // is what let the template and the gate disagree; this asserts they cannot.
+  for (const t of DOC_ENUMS.question?.type ?? [])
+    for (const s of DOC_ENUMS.question?.status ?? [])
+      assert.deepEqual(
+        classifyQuestions([`| Q-01 | x | ${t} | ${s} |`]).unparsed,
+        [],
+        `docEnums value pair ${t}/${s} must parse — config and validator cannot disagree`,
+      );
+
+  // enumRe: longest-first, so `non-blocking` is never read as a bare `blocking`.
+  // Getting this wrong flips Gate 2 into blocking on non-blocking rows.
+  assert.equal(enumRe(["blocking", "non-blocking"]).test("| x | non-blocking |"), true);
+  assert.equal(enumRe(["blocking"]).test("| x | non-blocking |"), false, "non-blocking must not match bare `blocking`");
+  assert.equal(enumRe(["open"]).test("| x | reopened |"), false, "substring of a longer word is not a match");
+  assert.equal(enumRe([]).test("anything"), false, "an empty enum matches nothing, never everything");
+  assert.deepEqual(
+    classifyQuestions(["| Q-01 | x | non-blocking | open |"]).open,
+    [],
+    "non-blocking + open must NOT block Gate 2 — the longest-first bug would",
+  );
+
+  // A missing docEnums must not silently disarm Gate 2: with no config the
+  // regexes match nothing, so every filled row reads as unparsed (loud), and
+  // none reads as clean (quiet). Fail closed.
+  assert.equal(
+    Object.keys(DOC_ENUMS).length > 0,
+    true,
+    "harness.config.json must declare docEnums — without it the doc tables have no schema at all",
+  );
 
   // handoffDefects: presence of the two fields the coordinator routes on.
   {
@@ -2139,6 +2195,53 @@ if (args.has("--preflight")) {
           "    GitHub: cp adapters/ci/validate-tasks.yml .github/workflows/\n" +
           "    GitLab: cp adapters/ci/.gitlab-ci.yml .",
       );
+  }
+
+  // docEnums is only a single source of truth if the places a human reads are
+  // checked against it. They were not, and that is the whole reason the
+  // template could teach `clarification / contradiction` for months while Gate 2
+  // matched something else: nothing compared the two. Cheap to close now.
+  for (const [file, label] of [
+    [join(TASKS_DIR, "_templates/02-FSD-Review.md"), "template"],
+    [join(REPO_ROOT, "docs/agents/FSDReviewer.md"), "FSDReviewer §3"],
+    [join(REPO_ROOT, "kernel/docs/agents/FSDReviewer.md"), "FSDReviewer §3"],
+  ]) {
+    if (!existsSync(file)) continue;
+    const text = readFileSync(file, "utf8");
+    for (const [table, fields] of Object.entries(DOC_ENUMS))
+      for (const [field, vals] of Object.entries(fields)) {
+        if (!Array.isArray(vals)) continue; // blocksOn/unresolved are scalars
+        const missing = vals.filter((v) => !new RegExp(`\`${v}\``).test(text));
+        if (missing.length === vals.length) continue; // that table is not documented here
+        if (missing.length)
+          errs.push(
+            `${rel(file)} (${label}) documents docEnums.${table}.${field} but omits ${missing.map((v) => `\`${v}\``).join(", ")} — a value an agent never sees is a value the gate will reject`,
+          );
+      }
+
+    // Prose above the table is not what gets copied -- the EXAMPLE ROW is, and
+    // that is exactly how `clarification / contradiction` survived: the note
+    // said one thing, the row an agent fills in taught another. So check the
+    // row's own choice-lists, independently of the surrounding words.
+    const known = new Set(Object.values(DOC_ENUMS).flatMap((f) => Object.values(f).flat()));
+    for (const line of text.split("\n")) {
+      if (!/^\|\s*(?:AC|Q|R)-[A-Za-z0-9]+\s*\|/.test(line)) continue;
+      // Split on UNESCAPED pipes only. Splitting on every "|" first would tear
+      // `a \| b` into two cells and leave one alternative each, so nothing ever
+      // looked like a choice-list and the whole check silently passed -- the
+      // exact failure shape this check exists to catch.
+      for (const cell of line.split(/(?<!\\)\|/).slice(1, -1)) {
+        // Only cells written as "a \| b" or "a / b": those teach "pick one of".
+        // A free-text or empty cell claims nothing and is left alone.
+        const parts = cell.split(/\\\||\//).map((p) => p.trim().replace(/^`|`$/g, ""));
+        if (parts.length < 2 || parts.some((p) => !/^[a-z][a-z-]*$/.test(p))) continue;
+        const bad = parts.filter((p) => !known.has(p));
+        if (bad.length)
+          errs.push(
+            `${rel(file)} (${label}) example row offers ${bad.map((v) => `\`${v}\``).join(", ")}, which is in no docEnums list — an agent copying this row writes a value the gate cannot read`,
+          );
+      }
+    }
   }
 
   if (AS_JSON) console.log(JSON.stringify({ errors: errs, warnings: warns }, null, 2));

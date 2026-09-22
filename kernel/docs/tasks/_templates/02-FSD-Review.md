@@ -5,18 +5,20 @@
 ## Acceptance criteria (AC)
 
 > Use real numbers (`AC-01`, `AC-02`, …). `AC-nn` is a **placeholder** — the validator skips it, so an unfilled row does not count as an AC.
+> `Status` is one of `confirmed` / `assumed` / `open` (`harness.config.json → docEnums.ac.status`) — matched verbatim, `docLanguage` covers the Criteria prose only.
 
 | AC ID | Acceptance Criteria | Source | Status | Test Case |
 | --- | --- | --- | --- | --- |
-| AC-nn |  | FSD §… / FR-… | open | TC-… |
+| AC-nn |  | FSD §… / FR-… | confirmed \| assumed \| open | TC-… |
 
 ## BA questions
 
 > `Type` and `Status` are ENUMs the validator matches verbatim, not prose: Gate 2
 > only sees a row carrying `blocking`/`non-blocking` **and**
-> `open`/`answered`/`deferred`. Any other wording (including a translation) is
-> reported as unreadable — it does not quietly pass. `docLanguage` applies to the
-> Question text, never to these two columns ([`../../agents/SharedRules.md` §5](../../agents/SharedRules.md)).
+> `open`/`answered`/`deferred` (source of truth: `harness.config.json →
+> docEnums.question`). Any other wording (including a translation) is reported as
+> unreadable — it does not quietly pass. `docLanguage` applies to the Question
+> text, never to these two columns ([`../../agents/SharedRules.md` §5](../../agents/SharedRules.md)).
 
 | Question ID | Question | Type | Status | Owner | Created At | Resolved At |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -24,9 +26,11 @@
 
 ## Risk
 
+> `Severity` is one of `high` / `medium` / `low` (`harness.config.json → docEnums.risk.severity`), matched verbatim like the columns above.
+
 | Risk ID | Risk | Type | Severity | Mitigation | Owner | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| R-01 |  | tech / business | low/medium/high |  |  | open |
+| R-01 |  | tech / business | high \| medium \| low |  |  | open |
 
 ## Amendment log
 
