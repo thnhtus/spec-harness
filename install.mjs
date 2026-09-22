@@ -630,10 +630,14 @@ if (args[0] === "--self-test") {
   // project. Hàn "tiếng Việt" vào kernel nghĩa là một team nói tiếng Anh cài
   // harness này rồi bị bảo viết task doc bằng tiếng Việt. Nó thuộc về
   // harness.config.json → docLanguage.
+  // `docs/vi/` là BẢN DỊCH của kernel docs (cùng nội dung, tiếng Việt) — nó nói
+  // về chính nó chứ không ép task doc phải viết tiếng Việt. Quét nó thì assert
+  // bắt đúng thứ nó sinh ra để phục vụ.
   const langLock = [];
   for (const d of ["docs", ".claude/agents"])
     for (const f of walk(join(T, d)))
       read(f).split("\n").forEach((l, i) => {
+        if (f.includes("/docs/vi/")) return;
         if (/(ti|Ti)ếng Việt/.test(l) && !l.includes("docLanguage"))
           langLock.push(`    ${f}:${i + 1}: ${l.trim().slice(0, 100)}`);
       });

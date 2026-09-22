@@ -10,3 +10,4 @@
 | [`agents/{Role}.md`](./agents/) | the procedure for each role |
 | [`tasks/README.md`](./tasks/README.md) | task doc layout + templates |
 | [`srs/`](./srs/README.md) · [`fsd/`](./fsd/README.md) · [`api/`](./api/README.md) | the project's reference artifacts (read, never edit) |
+| [`vi/`](./vi/README.md) | Vietnamese translation of the files above — **this English set stays the source of truth**; `tasks/_templates/` is not translated (the validator parses its headings) |
