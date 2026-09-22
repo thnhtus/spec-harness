@@ -30,10 +30,10 @@ Check once when onboarding a new machine. The project's specific toolchain: [`ag
 | --- | --- | --- |
 | Git + SSH to the git host | configured | `git --version` & `ssh -T git@<host>` |
 | Node.js (runs the validator) | 20+ | `node -v` |
-| npm | ships with Node | `npm -v` |
+| A package manager | npm (ships with Node), or yarn / pnpm / bun | `npm -v` / `yarn -v` / `pnpm -v` / `bun -v` |
 | Harness CLI | Claude Code or Codex CLI | `claude --version` / `codex --version` |
 
-Install dependencies: `npm install`. The list of valid check commands (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
+Install dependencies with whatever the repo uses (`npm install` / `yarn` / `pnpm install` / `bun install` — the lockfile decides; do not mix). The list of valid check commands (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
 ---
 

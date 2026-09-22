@@ -11,6 +11,8 @@ cd ~/code/my-app     # repo code của bạn
 npx spec-harness     # chép kernel + skills + .claude/
 ```
 
+Dùng package manager khác thì đổi lệnh chạy, không cần cài global: `yarn dlx spec-harness` (Yarn 2+), `pnpm dlx spec-harness`, `bunx spec-harness`. Bốn lệnh chạy cùng một `install.mjs`; harness chỉ cần Node 20+.
+
 Rồi mở CLI agent tại đó và chạy hai lệnh:
 
 ```
@@ -360,6 +362,7 @@ Bật rồi thì phải chứng minh đã làm: coordinator ghi `trackerWriteBac
 npx spec-harness@0.1.0                                      # ghim version
 npx spec-harness --yes                                      # không hỏi (CI, script)
 npx spec-harness ./harness                                  # cài vào thư mục khác (phải tồn tại sẵn)
+yarn dlx spec-harness / pnpm dlx spec-harness / bunx spec-harness   # cùng installer, khác runner
 git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs   # repo private
 ```
 

@@ -903,8 +903,11 @@ if (args.has("--self-check")) {
       `config.evidenceCommandPattern matches "${neg}", which is declared a non-evidence command — the pattern is too broad`,
     );
   // Backstop for a config that declares narrow negatives but a wide pattern:
-  // no real test/lint/build command is called `dev` or `start`.
-  for (const neg of ["npm run dev", "npm run start", "yarn dev", "pnpm dev"])
+  // no real test/lint/build command is called `dev` or `start`. Every package
+  // manager, both spellings: `yarn dev` and `yarn run dev` are the same script,
+  // and a pattern anchored on "npm run" only would wave the other three through.
+  const runners = ["npm run", "yarn", "yarn run", "pnpm", "pnpm run", "bun", "bun run"];
+  for (const neg of runners.flatMap((r) => [`${r} dev`, `${r} start`]))
     assert.equal(
       EVIDENCE_RE.test(neg),
       false,

@@ -83,6 +83,8 @@ Cross-cutting constraints:
 | `<lint command>` | 0 errors |
 | `<build command>` | success |
 
+> Write them with the package manager this repo actually uses — the lockfile decides (`package-lock.json` → `npm run`, `yarn.lock` → `yarn`, `pnpm-lock.yaml` → `pnpm`, `bun.lock*` → `bun run`), or `packageManager` in `package.json` if it is set. Non-JS stacks write their own (`go test`, `pytest`, `cargo`, `mvn`). Do not default to npm.
+
 > The commands above must match `evidenceCommandPattern` in `harness.config.json` — get that wrong and Gate 4 will not accept the evidence. Check with `node scripts/validate-tasks.mjs --self-check`.
 
 **Run them through the wrapper, do not paste output by hand:**

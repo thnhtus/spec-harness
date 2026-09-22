@@ -31,10 +31,10 @@ Kiểm một lần khi onboard máy mới. Toolchain riêng của project: [`../
 | --- | --- | --- |
 | Git + SSH tới git host | đã cấu hình | `git --version` & `ssh -T git@<host>` |
 | Node.js (chạy validator) | 20+ | `node -v` |
-| npm | đi kèm Node | `npm -v` |
+| Một package manager | npm (đi kèm Node), hoặc yarn / pnpm / bun | `npm -v` / `yarn -v` / `pnpm -v` / `bun -v` |
 | Harness CLI | Claude Code hoặc Codex CLI | `claude --version` / `codex --version` |
 
-Cài dependency: `npm install`. Danh sách lệnh kiểm hợp lệ (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
+Cài dependency bằng đúng thứ repo đang dùng (`npm install` / `yarn` / `pnpm install` / `bun install` — lockfile quyết định; đừng trộn). Danh sách lệnh kiểm hợp lệ (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
 ---
 

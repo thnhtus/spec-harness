@@ -51,6 +51,7 @@ Run these in parallel, read the results, and only then write:
 | Existing guardrails (§2) | `CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`, `.cursorrules`, `docs/*RULES*` — if present, **quote briefly + link**, do not copy the whole file |
 | Protected branch + target branch (§3) | `git branch -r`, `git symbolic-ref refs/remotes/origin/HEAD` |
 | Branch names in use (§3) | `git branch --format='%(refname:short)' \| head -20` — infer the team's actual formula |
+| Package manager (§7 command prefix) | lockfile at the repo root: `package-lock.json` → `npm run`, `yarn.lock` → `yarn`, `pnpm-lock.yaml` → `pnpm`, `bun.lockb`/`bun.lock` → `bun run`; `packageManager` in `package.json` wins if present. Write every §7 command with that prefix — do not default to npm |
 | Test/lint/build commands (§7) | `scripts` in `package.json`, `Makefile`, `justfile`, `tox.ini`, CI workflow (`.github/workflows/*.yml`) |
 | Watch/server commands the agent must not run (§7) | same sources — any command that does not terminate on its own (`dev`, `watch`, `serve`, `--watch`) |
 | Sibling BE repo (§1, tier 2) | `ls ..` — is any sibling repo the backend of this project (name hints: `*-service`, `*-api`, `*-backend`) |
@@ -90,6 +91,8 @@ update `harness.config.json` too:
 - `evidenceCommandPattern` — a regex covering exactly the set of commands you just wrote
 - `evidenceSampleCommand` — a real command, must match that pattern
 - `evidenceNegativeSamples` — ≥2 commands that **must not** match (dev server, watch mode…). If the pattern only has to *accept* the sample, `npm run .*` stays green; this is the opposite direction
+
+Use the repo's real package manager in all three — a pattern written for `npm run` rejects the `yarn build` the team actually runs, and Gate 4 then fails on green tests.
 
 ## Step 4 — verify (required, do not report done before running it)
 
