@@ -595,6 +595,15 @@ const FAILURE_RE =
 // instead of being caught.
 const KNOWN_FAILURE_RE = /<!--\s*known-failure:/i;
 
+// ...but it only counts OUTSIDE a fence. The 08 template teaches the marker by
+// printing it in a ```-block, so a whole-file test armed the escape hatch in
+// every task copied from the template: an attestation with exitCode 1 passed
+// Gate 4 untouched. The real declaration sits immediately above the output
+// block, never inside it.
+const isKnownFailure = (t) => KNOWN_FAILURE_RE.test(unfencedText(t));
+
+const unfencedText = (t) => t.replace(/```[^\n]*\n[\s\S]*?```/g, "");
+
 function hasRealEvidenceIn(t) {
   const fenced = fencedText(t);
   // An attestation with exitCode 0 outranks every string RESULT_RE hunts for:
@@ -610,10 +619,10 @@ function hasRealEvidenceIn(t) {
   // while the wrapper writes `exitCode: 1`. Judge it here, before anything
   // reads the prose.
   if (att.length && att.every((a) => a.exitCode !== 0))
-    return KNOWN_FAILURE_RE.test(t);
+    return isKnownFailure(t);
   if (att.some((a) => a.exitCode === 0)) return true;
   if (!EVIDENCE_RE.test(t) || !RESULT_RE.test(fenced)) return false;
-  return !FAILURE_RE.test(fenced) || KNOWN_FAILURE_RE.test(t);
+  return !FAILURE_RE.test(fenced) || isKnownFailure(t);
 }
 
 // ── attestation (scripts/run-evidence.mjs) ─────────────────────────────────
@@ -682,7 +691,7 @@ function attestationDefects(text, label, mode = EVIDENCE_MODE) {
   const d = [];
   for (const a of found) {
     // This is why the wrapper exists: output printing "passed" with a non-zero exit.
-    if (a.exitCode !== 0 && !KNOWN_FAILURE_RE.test(text))
+    if (a.exitCode !== 0 && !isKnownFailure(text))
       d.push(`${label}: the attestation records exitCode ${a.exitCode} — the command FAILED, whatever the output says`);
     // durationMs 0 means no process actually ran; NaN means the block was typed
     // by hand and is missing a field. Both are untrustworthy attestations.
@@ -1461,6 +1470,24 @@ if (args.has("--self-check")) {
     // matter how green the text next to it reads.
     assert.ok(!hasRealEvidenceIn(att(1, 12, "2026-09-18T09:00:00Z", "Tests: 12 passed")),
       "exitCode 1 is a failure however green the pasted output looks");
+    // The 08 template PRINTS the known-failure marker inside a fence to teach
+    // it. A whole-file test therefore armed the escape hatch in every task
+    // copied from the template -- exitCode 1 passed Gate 4 with nobody typing
+    // anything. The declaration only counts outside a fence.
+    assert.ok(
+      !hasRealEvidenceIn("```\n<!-- known-failure: AC-01 -->\n```\n" + att(1)),
+      "a known-failure marker quoted inside a fence must not arm the escape hatch",
+    );
+    assert.ok(
+      hasRealEvidenceIn("<!-- known-failure: AC-01 -->\n" + att(1)),
+      "a real declaration above the block still allows a deliberate red test",
+    );
+    assert.deepEqual(
+      attestationDefects("```\n<!-- known-failure: AC-01 -->\n```\n" + att(1), "08")
+        .filter((d) => /exitCode 1/.test(d)).length,
+      1,
+      "the fenced marker must not silence attestationDefects either",
+    );
     // outputHash: the two cheapest fakes that per-field checks let through.
     assert.ok(
       attestationDefects(att(0).replace("Tests: 12 passed", "Tests: 99 passed"), "08")
