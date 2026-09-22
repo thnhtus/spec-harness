@@ -597,6 +597,21 @@ const KNOWN_FAILURE_RE = /<!--\s*known-failure:/i;
 
 function hasRealEvidenceIn(t) {
   const fenced = fencedText(t);
+  // An attestation with exitCode 0 outranks every string RESULT_RE hunts for:
+  // those ask whether the text LOOKS green, this one records what the process
+  // actually exited with. Without this branch a quiet command (tsc --noEmit,
+  // eslint, a build) run through the wrapper is rejected for printing nothing
+  // to be pattern-matched -- attested mode would reward pasting by hand, which
+  // is backwards. attestationDefects() judges the block itself; here it only
+  // has to count as a result.
+  const att = attestationsIn(t);
+  // A non-zero exit is a failure whatever the text beside it says -- and the
+  // string checks below miss it, because FAILURE_RE looks for `exit code 1`
+  // while the wrapper writes `exitCode: 1`. Judge it here, before anything
+  // reads the prose.
+  if (att.length && att.every((a) => a.exitCode !== 0))
+    return KNOWN_FAILURE_RE.test(t);
+  if (att.some((a) => a.exitCode === 0)) return true;
   if (!EVIDENCE_RE.test(t) || !RESULT_RE.test(fenced)) return false;
   return !FAILURE_RE.test(fenced) || KNOWN_FAILURE_RE.test(t);
 }
@@ -1434,6 +1449,18 @@ if (args.has("--self-check")) {
     };
 
     assert.deepEqual(attestationDefects(att(0), "08"), [], "an exit-0 attestation is clean");
+
+    // A quiet command is the normal case for tsc/eslint/build: exit 0 and no
+    // output at all. RESULT_RE finds nothing to match, so before this branch
+    // the wrapper's own evidence was REJECTED while hand-pasted "Tests: 12
+    // passed" sailed through -- attested mode rewarding the thing it forbids.
+    assert.ok(hasRealEvidenceIn(att(0, 12, "2026-09-18T09:00:00Z", "")),
+      "a quiet exit-0 command run through the wrapper is evidence; the exit code is the result");
+    // The other direction, or the branch above becomes a way in: a non-zero
+    // attestation must NOT pass just because it carries an attestation, no
+    // matter how green the text next to it reads.
+    assert.ok(!hasRealEvidenceIn(att(1, 12, "2026-09-18T09:00:00Z", "Tests: 12 passed")),
+      "exitCode 1 is a failure however green the pasted output looks");
     // outputHash: the two cheapest fakes that per-field checks let through.
     assert.ok(
       attestationDefects(att(0).replace("Tests: 12 passed", "Tests: 99 passed"), "08")
