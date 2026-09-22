@@ -82,20 +82,25 @@ or how heavy the flow runs. So this step goes first — **before the worktree**.
    the vector and blocks on a contradiction):
 
    ```bash
-   rg -l '<main-symbol>' <src> | wc -l      # → counts.filesTouched  (1 ⇒ scope 0 · >5 ⇒ scope 2)
+   rg -l '<main-symbol>' <src> | wc -l      # → counts.filesTouched  (1 ⇒ scope 0 · 2–5 ⇒ scope ≥ 1 · >5 ⇒ scope 2)
    rg -l '<main-symbol>' <src> -g '*test*'  # → counts.existingTests (0 ⇒ testing ≥ 1)
    ```
 
-   Record `counts.symbol` = the symbol you grepped (the validator requires it):
-   choosing the symbol is choosing the `scope`, so that choice has to be on
-   paper. `0` files → write `complexity.note`: a new file or a missed grep —
-   two very different things.
+   Record `counts.symbol` = the symbol you grepped (the validator requires it,
+   ≥3 chars and no spaces so a reviewer can re-run the same `rg`): choosing the
+   symbol is choosing the `scope`, so that choice has to be on paper. `0` files
+   → write `complexity.note`: a new file or a missed grep — two very different
+   things.
 
    The third dimension has no command: write out the list of *"cannot be done
    without knowing X"* → `questions[]`. Empty ⇒ `uncertainty 0`, any entry ⇒
    `≥ 1`. **You may not conclude "empty" before you went looking** — this is the
    most under-scored dimension, and it is exactly what makes `fsd_review` run
-   again.
+   again. Each entry must be a real question (≥10 chars); `[""]` is rejected.
+
+   `blastRadius` / `reversibility` have no count, but they may not contradict
+   what you just scored: `dataImpact 2` ⇒ `reversibility ≥ 2`, `integration 2`
+   ⇒ `blastRadius ≥ 1`.
 
 4. **Compute `taskComplexity`** with the §5.1.1 formula (`max(base, riskFloor)`).
    Do not pronounce the label yourself — fill in the vector, let the formula
@@ -105,7 +110,8 @@ or how heavy the flow runs. So this step goes first — **before the worktree**.
    user: can this be split into 2 separately shippable tasks?**
    ([§5.1.4](../../docs/Agents.md)). If it splits, re-run step 0 for each
    sub-task. If it does not, write the reason into `complexity.splitEvaluated` —
-   the validator blocks if it is empty. Asking here is cheap; asking after
+   the validator blocks if it is empty, and also if it is a dismissal (`n/a`,
+   `no`, anything under 20 characters). Asking here is cheap; asking after
    `retryBudget` is spent means the money is already burned.
 
 5. **Triage** — does this task need the harness at all:
@@ -135,7 +141,9 @@ or how heavy the flow runs. So this step goes first — **before the worktree**.
    decision; skipping it without leaving a trace is not.
 
    **Score honestly, do not score toward the answer you want.** Every triage
-   goes into `_triage.log`, and the validator cross-checks it against the stored
+   goes into `_triage.log`, and the validator cross-checks the **lowest** value
+   ever logged per dimension (re-running `--triage` does not overwrite a low
+   score, and a task with no entry at all is a warning) against the stored
    vector in **both directions**: scoring low here then high at bootstrap →
    warning (adjusting upward after the survey is normal, §5.1.3 — the warning
    only makes it explicit that the lower number is the one that decided whether

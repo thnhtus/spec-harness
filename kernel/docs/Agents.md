@@ -130,9 +130,9 @@ Branch rules (created from `develop` with `--ff-only`, the user-managed-branch e
 
 | Dimension | Run | Constraint the validator enforces |
 | --- | --- | --- |
-| `scope` | `rg -l '<the main symbol>' <src> \| wc -l` → `counts.symbol` + `counts.filesTouched` | `1` ⇒ `scope 0` · `>5` ⇒ `scope 2` · `0` ⇒ a `note` is required |
+| `scope` | `rg -l '<the main symbol>' <src> \| wc -l` → `counts.symbol` + `counts.filesTouched` | `1` ⇒ `scope 0` · `2–5` ⇒ `scope ≥ 1` · `>5` ⇒ `scope 2` · `0` ⇒ a `note` is required. `counts.symbol` must be greppable (≥3 chars, no spaces) |
 | `testing` | count the test files covering that code → `counts.existingTests` | `0` ⇒ `testing ≥ 1` |
-| `uncertainty` | write out the list of "cannot proceed without knowing X" → `questions[]` | empty ⇒ `uncertainty 0` · non-empty ⇒ `uncertainty ≥ 1` |
+| `uncertainty` | write out the list of "cannot proceed without knowing X" → `questions[]` | empty ⇒ `uncertainty 0` · non-empty ⇒ `uncertainty ≥ 1`. Entries under 10 characters do not count — `[""]` used to satisfy "non-empty" while saying nothing |
 
 **`counts.symbol` is mandatory** because choosing the main symbol chooses the result: grep a rare helper and get 1 file (`scope 0`); grep a common symbol and get 20 (`scope 2`) — for the same task. Recording the symbol does not remove that choice, it makes the choice **visible** at review time. `filesTouched: 0` (no match) falls outside every rule above — a brand-new file and a missed grep are very different things that the number cannot distinguish, so the `note` must say which it is.
 
@@ -148,6 +148,13 @@ The other three (`dependency`, `dataImpact`, `integration`) have no count that w
 | `reversibility` | how hard a rollback is | `0` just edit again · `1` revert a commit · `2` needs a redeploy · `3` needs data repair · `4` irreversible (a migration dropping a column, money already moved) |
 
 > **These two cannot be measured, and they are the strongest.** `riskFloor` alone drags `trivial → high`, so scoring `blastRadius: 1` instead of `3` sidesteps all the rigour of the three `counts` dimensions. Do not invent a fake count here — no count would be right. The place this gets caught is §5.6: `escapedBugs > 0` from a `trivial` task is exactly the signal that these two are being systematically under-scored.
+
+**Two coherence rules are enforced anyway**, because they are not a measurement — they are arithmetic on the effort dimensions you already scored from evidence. A `dataImpact: 2` that claims to be undone by reverting a commit, or a new external contract whose failure reaches one spot, is not a judgement call, it is a contradiction:
+
+| Rule | Why |
+| --- | --- |
+| `dataImpact = 2` ⇒ `reversibility ≥ 2` | a schema change/migration is not undone by editing the file again |
+| `integration = 2` ⇒ `blastRadius ≥ 1` | a new/changed contract or an external system reaches past one spot by definition |
 
 ### 5.1.1. The formula (deterministic — not the LLM's call)
 
@@ -181,6 +188,10 @@ taskComplexity = max(base, riskFloor)          # trivial < normal < high
 
 `counts` and `questions` are **not commentary** — the validator cross-checks them against the vector and blocks on a contradiction (`filesTouched: 1` with `scope: 1`, empty `questions` with `uncertainty: 2`, …). Omitting them is also an error for tasks created after `acTrace.since`; older tasks get a warning.
 
+The same applies to answers that are technically present and say nothing: `counts.symbol: "s"`, `questions: [""]`, `splitEvaluated: "n/a"`. Blank was already an error, so a two-letter dismissal was the remaining way out; it is now rejected too — §5.1.4 wants the split question **answered**, not closed.
+
+**`createdAt` is checked against git.** It is the switch that decides whether this whole section is an error or a warning (`acTrace.since`), and pre-commit runs `--no-warn` — so one self-declared string turned off more rules than any other field. It must be `YYYY-MM-DD`, and a date claiming to predate the harness is contradicted by the folder's first commit: no history, or a first commit after the cutoff, means the task was created under the harness and §5.1/§5.6 apply in full. No git available → no witness, no finding.
+
 **A missing `complexity` block is an error, not a warning** (for tasks created after `acTrace.since`). It used to be a warning, and pre-commit runs `--no-warn` — which meant **deleting the block was cheaper than filling it in wrong**, turning all of §5.1 into opt-out. Every downstream routing decision (gate weight, model tier, worktree) rests on this vector.
 
 `taskComplexity` (the older field) is still the quick read; `complexity.vector` is its **basis**. The validator recomputes the formula from the vector — a mismatch with `taskComplexity` is an **error**. That is where "deterministic" gets teeth: an agent cannot record a low vector and then declare `high`, or the reverse.
@@ -192,9 +203,13 @@ The bootstrap assessment rests on the task description, and task descriptions le
 - The old vector still holds → do nothing.
 - Materially wider (an extra dependency layer, a migration, a changed contract) → **update the vector**, record `assessedAt: "technical_plan"` + the reason, recompute `taskComplexity`.
 
+Either way, set `assessedAt: "technical_plan"`. When the vector does not change, that field is the **only** trace the re-check happened — without it, the stage most likely to discover the task is wider than advertised was also the one stage nobody could tell had been skipped. Still `"bootstrap"` past `technical_plan` → warning.
+
 Only **raising** is allowed. Lowering it to get a lighter run is gate evasion — to lower it, go to `needs_clarification` and ask the user.
 
 **This rule has teeth.** The validator compares the stored vector against the vector recorded in `_triage.log`, **in both directions**:
+
+The comparison uses the **lowest** value ever entered for each dimension, not the most recent one. "Last entry wins" handed back the exact dodge the log exists to catch: score low, collect `quick-task`, then re-run `--triage` with the honest vector and the check compares the stored vector against itself. A task with **no** entry at all is also a warning — `_triage.log` is untracked, so deleting it used to erase the comparison silently.
 
 | Direction | Level | Why |
 | --- | --- | --- |

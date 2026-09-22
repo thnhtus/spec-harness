@@ -15,7 +15,7 @@ Turn settled ACs into an **executable plan**: which `src/` files change (real pa
 1. Read `02-FSD-Review.md` (once). If Gate 2 has not passed or the ACs are ambiguous → **do not plan**, send it back to `fsd-reviewer`.
 2. Open **exactly** the relevant screens in [`../fsd/`](../fsd/README.md) and contracts in [`../api/`](../api/README.md) (check the README first; never read a whole directory).
 3. Survey the real `src/` (Glob/Grep) to confirm the paths — **never guess**.
-4. **Re-check `complexity.vector`** ([`../Agents.md` §5.1.3](../Agents.md)): if the `src/` survey shows the task is materially wider (an extra dependency layer, a migration, a contract change) → update the vector, set `assessedAt: "technical_plan"`, recompute `taskComplexity`. Raise only, never lower. `reversibility ≥ 3` → the Risk entry must include a **rollback plan**; if there is no way to roll back → `needs_clarification`.
+4. **Re-check `complexity.vector`** ([`../Agents.md` §5.1.3](../Agents.md)): if the `src/` survey shows the task is materially wider (an extra dependency layer, a migration, a contract change) → update the vector and recompute `taskComplexity`. Raise only, never lower. **Set `assessedAt: "technical_plan"` either way** — when the vector does not change, that field is the only trace this re-check happened at all (the validator warns if it is still `"bootstrap"` past this stage). `reversibility ≥ 3` → the Risk entry must include a **rollback plan**; if there is no way to roll back → `needs_clarification`.
 5. Fill in the four tables (§3) in `03-Technical-Plan.md`.
 6. Assess Gate 3 (§4), hand off (§5).
 

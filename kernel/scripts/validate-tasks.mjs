@@ -268,9 +268,19 @@ export function triageVectorFor(logPath, taskId) {
   for (const line of readFileSync(logPath, "utf8").split("\n")) {
     const col = line.split("\t");
     if (col.length < 5 || col[1] !== taskId) continue;
-    try { found = JSON.parse(col[4]); } catch { /* a corrupt line must not fabricate a finding */ }
+    let v;
+    try { v = JSON.parse(col[4]); } catch { continue; } // a corrupt line must not fabricate a finding
+    if (v === null || typeof v !== "object" || Array.isArray(v)) continue;
+    // The LOWEST score ever entered, per dimension -- not the last one.
+    // "Last entry wins" handed back the dodge it was built to catch: score low,
+    // get `quick-task`, then re-run --triage with the honest vector and the
+    // drift check compares the stored vector against itself. The number that
+    // decided whether this task needed the harness is the smallest one typed.
+    found ??= {};
+    for (const [k, n] of Object.entries(v))
+      if (Number.isInteger(n) && (!(k in found) || n < found[k])) found[k] = n;
   }
-  return found; // last entry wins: a re-triage supersedes the earlier answer
+  return found;
 }
 
 // How the stored vector differs from the one triage was answered with.
@@ -356,6 +366,25 @@ export function vectorInputErrors(v) {
     }
   const extra = Object.keys(v).filter((k) => !EFFORT_KEYS.includes(k) && !RISK_KEYS.includes(k));
   if (extra.length) out.push(`unknown dimension(s): ${extra.join(", ")} — a typo here scores 0 silently`);
+  if (out.length) return out; // ranges first: coherence on rubbish says nothing
+  return vectorCoherenceDefects(v);
+}
+
+// `blastRadius` and `reversibility` are the strongest dimensions (riskFloor
+// alone drags trivial → high) and the only two with nothing to check them
+// against — §5.1 says so and declines to invent a fake count. Fair. But the
+// effort dimensions ARE scored from evidence, and some combinations are simply
+// incoherent: a schema migration that is "revert a commit" to undo, a new
+// external contract whose failure reaches nobody. That is not a measurement,
+// it is arithmetic on what the agent already wrote down — and it closes the
+// cheapest dodge there is, since scoring blastRadius 1 instead of 3 skips every
+// other rule in §5.1 at once.
+export function vectorCoherenceDefects(v) {
+  const out = [];
+  if ((v.dataImpact ?? 0) === 2 && (v.reversibility ?? 0) < 2)
+    out.push(`dataImpact=2 but reversibility=${v.reversibility ?? 0} — a schema change/migration cannot be undone by editing again or reverting a commit (Agents.md §5.1)`);
+  if ((v.integration ?? 0) === 2 && (v.blastRadius ?? 0) < 1)
+    out.push(`integration=2 but blastRadius=${v.blastRadius ?? 0} — a new/changed contract or an external system reaches past one spot by definition (Agents.md §5.1)`);
   return out;
 }
 
@@ -391,6 +420,7 @@ function deriveComplexity(vector) {
 // by which point the money is gone. Two `normal` tasks run cheaper than one
 // `high` task that bounces twice.
 const SPLIT_EFFORT = CFG.splitEffort ?? 9;
+const NON_ANSWER_RE = /^(n\/?a|no|none|nope|-+|\.|tbd|todo|\?)$/i;
 
 export function vectorEvidenceDefects(complexity) {
   const v = complexity?.vector;
@@ -402,8 +432,13 @@ export function vectorEvidenceDefects(complexity) {
   // Which symbol was grepped is a free parameter that picks the answer: a rare
   // helper returns 1 file (scope 0), a common one returns 20 (scope 2). Naming
   // it does not remove the choice, it makes the choice reviewable.
-  if (!String(c.symbol ?? "").trim())
+  // >=3 chars, no whitespace: "a" or "the resolver" is not something anyone can
+  // re-run `rg` with, and a symbol nobody can re-run is not evidence.
+  const sym = String(c.symbol ?? "").trim();
+  if (!sym)
     out.push("complexity.counts.symbol missing — name the symbol filesTouched was grepped for; picking the symbol picks the scope (Agents.md §5.1)");
+  else if (sym.length < 3 || /\s/.test(sym))
+    out.push(`complexity.counts.symbol="${sym}" — must be a greppable identifier (≥3 chars, no spaces): the point is that a reviewer can re-run the same rg`);
 
   const files = num("filesTouched");
   if (files === null)
@@ -415,6 +450,11 @@ export function vectorEvidenceDefects(complexity) {
     out.push("counts.filesTouched=0 matched nothing — complexity.note must say whether this is a new file or the grep missed (Agents.md §5.1)");
   else if (files === 1 && v.scope !== 0)
     out.push(`counts.filesTouched=1 but scope=${v.scope} — one file is scope 0`);
+  // 2..5 used to be a free-for-all: `filesTouched: 4, scope: 0` passed clean,
+  // which is the whole under-scoring move with the count sitting right there
+  // contradicting it. The scale says scope 0 is "1 file" -- so 2 is not 0.
+  else if (files >= 2 && files <= 5 && v.scope === 0)
+    out.push(`counts.filesTouched=${files} but scope=0 — scope 0 is one file; several files is at least 1`);
   else if (files > 5 && v.scope !== 2)
     out.push(`counts.filesTouched=${files} but scope=${v.scope} — more than 5 files is scope 2`);
 
@@ -427,18 +467,34 @@ export function vectorEvidenceDefects(complexity) {
   const q = complexity.questions;
   if (!Array.isArray(q))
     out.push("complexity.questions missing — `uncertainty` is the dimension most often scored low, and the check is concrete: write the list of things you cannot build without knowing (Agents.md §5.1)");
-  else if (q.length === 0 && (v.uncertainty ?? 0) > 0)
-    out.push(`uncertainty=${v.uncertainty} but complexity.questions is empty — name what is unclear or score it 0`);
-  else if (q.length > 0 && (v.uncertainty ?? 0) === 0)
-    out.push(`complexity.questions lists ${q.length} open question(s) but uncertainty=0`);
+  else {
+    // [""] satisfied "non-empty" while saying nothing. Count only entries that
+    // are actually a question someone could answer.
+    const real = q.filter((s) => typeof s === "string" && s.trim().length >= 10);
+    if (real.length < q.length)
+      out.push(`complexity.questions has ${q.length - real.length} blank/stub entry(ies) — an empty string is not an open question; write it out or drop it`);
+    if (real.length === 0 && (v.uncertainty ?? 0) > 0)
+      out.push(`uncertainty=${v.uncertainty} but complexity.questions is empty — name what is unclear or score it 0`);
+    else if (real.length > 0 && (v.uncertainty ?? 0) === 0)
+      out.push(`complexity.questions lists ${real.length} open question(s) but uncertainty=0`);
+  }
 
   const { effort } = deriveComplexity(v);
   const oversized = effort >= SPLIT_EFFORT || ((v.scope ?? 0) === 2 && (v.uncertainty ?? 0) === 2);
-  if (oversized && !String(complexity.splitEvaluated ?? "").trim())
+  const split = String(complexity.splitEvaluated ?? "").trim();
+  if (oversized && !split)
     out.push(
       `effort=${effort} scope=${v.scope} uncertainty=${v.uncertainty} — a task this size must record complexity.splitEvaluated: either the child task IDs, or why it cannot ship in parts (Agents.md §5.1.4)`,
     );
+  // "n/a" / "no" is the field being closed, not answered. §5.1.4 wants the split
+  // QUESTION answered while the answer is still cheap; a two-letter dismissal is
+  // the same as leaving it blank, and blank is already an error.
+  else if (oversized && (NON_ANSWER_RE.test(split) || split.length < 20))
+    out.push(
+      `complexity.splitEvaluated="${split}" is a dismissal, not an answer — give the child task IDs, or the reason the parts cannot ship separately (Agents.md §5.1.4)`,
+    );
 
+  out.push(...vectorCoherenceDefects(v));
   return out;
 }
 
@@ -1342,9 +1398,21 @@ if (args.has("--self-check")) {
         `rubbish line\n` +
         `2026-01-02\tA-1\tquick-task\t-\t{"scope":1}\t\n`,
     );
-    assert.deepEqual(triageVectorFor(log, "A-1"), { scope: 1 }, "last entry wins: a re-triage supersedes");
+    // The LOWEST entry, not the last: "last wins" meant one re-run of --triage
+    // with the honest vector erased the low score that bought the escape hatch.
+    assert.deepEqual(triageVectorFor(log, "A-1"), { scope: 0 }, "lowest entry wins: re-triaging cannot erase the low score");
     assert.deepEqual(triageVectorFor(log, "B-2"), { scope: 2 }, "finds the right task");
     assert.equal(triageVectorFor(log, "C-3"), null, "task not in the log → no finding");
+    // Per dimension, not per entry: raising one and lowering another in the same
+    // re-triage must keep both floors.
+    writeFileSync(
+      join(d, "mix.log"),
+      `2026-01-01\tM-1\tharness\t-\t{"scope":2,"testing":0}\t\n` +
+        `2026-01-02\tM-1\tharness\t-\t{"scope":0,"testing":2}\t\n`,
+    );
+    assert.deepEqual(triageVectorFor(join(d, "mix.log"), "M-1"), { scope: 0, testing: 0 }, "floors are per dimension");
+    writeFileSync(join(d, "junk.log"), `2026-01-01\tJ-1\tharness\t-\t"nope"\t\n`);
+    assert.equal(triageVectorFor(join(d, "junk.log"), "J-1"), null, "a JSON string is not a vector");
 
     assert.deepEqual(vectorDriftSince({ scope: 0 }, { scope: 2, testing: 1 }).raised, ["scope 0→2", "testing 0→1"], "names each raised dimension");
     assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 2 }), { raised: [], lowered: [] }, "unchanged → silent");
@@ -1371,6 +1439,41 @@ if (args.has("--self-check")) {
     assert.ok(vectorInputErrors({ ...full, blastRadius: 4 }).length === 0, "risk dimensions go to 4");
     assert.ok(vectorInputErrors({ ...full, blastRadius: 5 })[0].includes("0–4"), "risk dimensions cap at 4");
     assert.ok(vectorInputErrors({ ...full, scop: 2 })[0].includes("unknown"), "a typo'd key would score 0 in silence");
+
+    // Cross-dimension coherence: the two risk dimensions have no measurement,
+    // but they cannot contradict the effort dimensions that do.
+    assert.ok(
+      vectorInputErrors({ ...full, dataImpact: 2, reversibility: 1 })[0].includes("reversibility"),
+      "a migration is not undone by reverting a commit",
+    );
+    assert.deepEqual(vectorInputErrors({ ...full, dataImpact: 2, reversibility: 2 }), [], "dataImpact 2 with a real rollback cost is fine");
+    assert.ok(
+      vectorInputErrors({ ...full, integration: 2, blastRadius: 0 })[0].includes("blastRadius"),
+      "a new external contract reaches past one spot",
+    );
+    assert.deepEqual(vectorInputErrors({ ...full, integration: 2, blastRadius: 1 }), [], "integration 2 with module-wide blast is fine");
+    assert.deepEqual(vectorInputErrors({ ...full, dataImpact: 1, reversibility: 0 }), [], "dataImpact 1 carries no floor");
+    // Range errors must not be buried under coherence noise computed from junk.
+    assert.ok(
+      vectorInputErrors({ ...full, dataImpact: 9 }).every((e) => e.includes("0–2")),
+      "out-of-range reports the range, not a coherence guess",
+    );
+  }
+
+  // createdAt: the master switch for every since-cutoff in this file. Unchecked,
+  // one string turned §5.1 and §5.6 back into warnings -- and --no-warn eats those.
+  {
+    const since = "2026-07-28";
+    const b = (c, g) => backdatedCreatedAt(c, g, since);
+    assert.equal(b("2026-09-01", null), null, "a date after the cutoff claims nothing");
+    assert.equal(b("2026-01-01", "2026-01-05"), null, "genuinely old task, git agrees → keeps the grandfather clause");
+    assert.ok(b("2026-01-01", "2026-09-01").includes("first appears in git"), "git contradicts the backdate");
+    assert.ok(b("2026-01-01", null).includes("no commit yet"), "predating the harness with no history at all is not credible");
+    assert.equal(b("2026-01-01", undefined), null, "no git = no witness; a check must not convict on missing evidence");
+    assert.ok(b("yesterday", null).includes("not a date"), "unparseable sorts below every cutoff forever");
+    assert.ok(b(undefined, null).includes("not a date"), "missing is the same hole as unparseable");
+    assert.ok(b("1", null).includes("not a date"), "a bare number is not a date");
+    assert.equal(b("2026-07-28", null), null, "the cutoff day itself is inside the harness");
   }
 
   // split: the named exit from an exhausted retry budget. Both halves matter --
@@ -1439,31 +1542,51 @@ if (args.has("--self-check")) {
     assert.deepEqual(d(undefined), [], "no complexity block at all is handled elsewhere (§5.1 warning)");
     assert.deepEqual(d({ counts: ok.counts, questions: [] }), [], "counts without a vector: nothing to cross-check");
 
-    assert.ok(d({ ...ok, counts: { symbol: "s", existingTests: 0 } }).some((x) => x.includes("filesTouched")), "missing filesTouched is named");
-    assert.ok(d({ ...ok, counts: { symbol: "s", filesTouched: 3 } }).some((x) => x.includes("existingTests")), "missing existingTests is named");
+    assert.ok(d({ ...ok, counts: { symbol: "useRoster", existingTests: 0 } }).some((x) => x.includes("filesTouched")), "missing filesTouched is named");
+    assert.ok(d({ ...ok, counts: { symbol: "useRoster", filesTouched: 3 } }).some((x) => x.includes("existingTests")), "missing existingTests is named");
     assert.ok(d({ vector: ok.vector, counts: ok.counts }).some((x) => x.includes("questions")), "missing questions is named");
 
     // counts must actually constrain the score, or they are decoration.
     assert.ok(
-      d({ ...ok, counts: { symbol: "s", filesTouched: 1, existingTests: 0 } }).some((x) => x.includes("one file is scope 0")),
+      d({ ...ok, counts: { symbol: "useRoster", filesTouched: 1, existingTests: 0 } }).some((x) => x.includes("one file is scope 0")),
       "1 file cannot be scope 1",
     );
     assert.ok(
-      d({ ...ok, counts: { symbol: "s", filesTouched: 9, existingTests: 0 } }).some((x) => x.includes("more than 5 files")),
+      d({ ...ok, counts: { symbol: "useRoster", filesTouched: 9, existingTests: 0 } }).some((x) => x.includes("more than 5 files")),
       "9 files cannot be scope 1",
     );
+    // 2..5 used to be unconstrained in both directions: the count sat in the
+    // file contradicting `scope: 0` and nothing said a word.
+    assert.ok(
+      d({ vector: { ...ok.vector, scope: 0 }, counts: { symbol: "useRoster", filesTouched: 4, existingTests: 0 }, questions: [] })
+        .some((x) => x.includes("scope 0 is one file")),
+      "4 files cannot be scope 0",
+    );
+    assert.ok(
+      d({ vector: { ...ok.vector, scope: 0 }, counts: { symbol: "useRoster", filesTouched: 2, existingTests: 0 }, questions: [] })
+        .some((x) => x.includes("scope 0 is one file")),
+      "the floor starts at 2, not at 3",
+    );
     assert.deepEqual(
-      d({ vector: { ...ok.vector, scope: 2 }, counts: { symbol: "s", filesTouched: 9, existingTests: 0 }, questions: [] }),
+      d({ vector: { ...ok.vector, scope: 2 }, counts: { symbol: "useRoster", filesTouched: 4, existingTests: 0 }, questions: [] }),
+      [],
+      "4 files at scope 2 is a judgement call, not a contradiction",
+    );
+    // The symbol has to be something a reviewer can paste back into rg.
+    assert.ok(d({ ...ok, counts: { ...ok.counts, symbol: "s" } })[0].includes("greppable"), "one letter is not a symbol");
+    assert.ok(d({ ...ok, counts: { ...ok.counts, symbol: "the roster hook" } })[0].includes("greppable"), "a phrase is not a symbol");
+    assert.deepEqual(
+      d({ vector: { ...ok.vector, scope: 2 }, counts: { symbol: "useRoster", filesTouched: 9, existingTests: 0 }, questions: [] }),
       [],
       "9 files with scope 2 is consistent",
     );
     assert.ok(
-      d({ vector: { ...ok.vector, testing: 0 }, counts: { symbol: "s", filesTouched: 3, existingTests: 0 }, questions: [] })
+      d({ vector: { ...ok.vector, testing: 0 }, counts: { symbol: "useRoster", filesTouched: 3, existingTests: 0 }, questions: [] })
         .some((x) => x.includes("existingTests=0")),
       "no test covers it ⇒ testing cannot be 0",
     );
     assert.deepEqual(
-      d({ vector: { ...ok.vector, testing: 0 }, counts: { symbol: "s", filesTouched: 3, existingTests: 4 }, questions: [] }),
+      d({ vector: { ...ok.vector, testing: 0 }, counts: { symbol: "useRoster", filesTouched: 3, existingTests: 4 }, questions: [] }),
       [],
       "existing tests cover it ⇒ testing 0 is fine",
     );
@@ -1477,10 +1600,29 @@ if (args.has("--self-check")) {
       d({ ...ok, questions: ["which role sees the button?"] }).some((x) => x.includes("uncertainty=0")),
       "a listed blocker contradicts uncertainty 0",
     );
+    // [""] satisfied "non-empty" and said nothing -- the cheapest way to score
+    // uncertainty 2 without having looked, or to dodge the empty-list error.
+    assert.ok(
+      d({ vector: { ...ok.vector, uncertainty: 2 }, counts: ok.counts, questions: [""] }).some((x) => x.includes("blank/stub")),
+      "an empty string is not an open question",
+    );
+    assert.ok(
+      d({ vector: { ...ok.vector, uncertainty: 2 }, counts: ok.counts, questions: [""] }).some((x) => x.includes("empty")),
+      "and with nothing real left, uncertainty 2 is still unbacked",
+    );
+    assert.ok(
+      d({ vector: { ...ok.vector, uncertainty: 2 }, counts: ok.counts, questions: ["who?"] }).some((x) => x.includes("blank/stub")),
+      "a 4-char stub is the same dodge",
+    );
+    assert.deepEqual(
+      d({ vector: { ...ok.vector, uncertainty: 1 }, counts: ok.counts, questions: ["which roles keep access after the move?"] }),
+      [],
+      "a real question backs a real score",
+    );
 
     // split-before-spend: the point is to fire at bootstrap, not after retries.
-    const big = { scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 1, testing: 1, blastRadius: 1, reversibility: 1 };
-    const bigOk = { vector: big, counts: { symbol: "s", filesTouched: 9, existingTests: 0 }, questions: ["q"] };
+    const big = { scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 1, testing: 1, blastRadius: 1, reversibility: 2 };
+    const bigOk = { vector: big, counts: { symbol: "useRoster", filesTouched: 9, existingTests: 0 }, questions: ["which roles keep access after the move?"] };
     assert.ok(d(bigOk).some((x) => x.includes("splitEvaluated")), "effort 10 must record a split decision");
     assert.deepEqual(
       d({ ...bigOk, splitEvaluated: "cannot split: one migration, one deploy" }),
@@ -1488,11 +1630,18 @@ if (args.has("--self-check")) {
       "an answered split decision clears it",
     );
     assert.ok(d({ ...bigOk, splitEvaluated: "   " }).some((x) => x.includes("splitEvaluated")), "blank is not an answer");
+    // Blank was already an error, so the escape became a two-letter dismissal:
+    // same information, green gate. §5.1.4 wants the question ANSWERED.
+    for (const dodge of ["n/a", "N/A", "no", "none", "-", "TBD", "?", "cannot"])
+      assert.ok(
+        d({ ...bigOk, splitEvaluated: dodge }).some((x) => x.includes("dismissal")),
+        `"${dodge}" closes the split question instead of answering it`,
+      );
     assert.ok(
       d({
         vector: { scope: 2, uncertainty: 2, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 },
-        counts: { symbol: "s", filesTouched: 9, existingTests: 0 },
-        questions: ["q"],
+        counts: { symbol: "useRoster", filesTouched: 9, existingTests: 0 },
+        questions: ["which roles keep access after the move?"],
       }).some((x) => x.includes("splitEvaluated")),
       "wide AND unclear at effort 4 still asks the question",
     );
@@ -1973,6 +2122,58 @@ function outcomeIsBlocking(data, since = AC_TRACE_SINCE) {
   return (data.createdAt ?? "") >= since;
 }
 
+// `createdAt` is the master switch for every since-cutoff in this file: the
+// complexity block, the AC trace and `outcome.closedAt` all degrade to warnings
+// below it, and pre-commit runs --no-warn. So one self-declared string, checked
+// nowhere and typed `minLength: 1` in the schema, turned off more rules than any
+// other field -- including "delete the complexity block", which is the exact
+// opt-out §5.1 was rewritten to close.
+//
+// Two things it must survive:
+//   1. a shape that is not a date at all ("yesterday", "1") -- sorts below every
+//      ISO string, so it reads as "predates the harness" forever;
+//   2. an honest-looking date that is simply older than the truth.
+// (2) cannot be proven, but it can be contradicted: git knows when the task
+// folder first appeared. A folder whose first commit lands after the cutoff did
+// not exist before it.
+export function backdatedCreatedAt(createdAt, firstCommit, since = AC_TRACE_SINCE) {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(createdAt ?? ""))
+    return `createdAt=${JSON.stringify(createdAt ?? null)} is not a date (YYYY-MM-DD) — it decides whether §5.1/§5.6 are errors or warnings, and anything unparseable sorts below the cutoff forever`;
+  if (createdAt >= since) return null; // claims nothing, gets nothing
+  // Claims to predate the harness. git is the only witness that does not come
+  // from the same file -- but no git means no witness, and a check that
+  // convicts on missing evidence is worse than no check.
+  if (firstCommit === undefined) return null;
+  // No history yet (folder never committed) is not proof on its own -- but a
+  // brand-new folder cannot be older than the switch-on date either, so both
+  // branches land in the same place. Deliberately falsy-tested, not `=== null`:
+  // that makes the guard above load-bearing rather than decorative, so deleting
+  // it turns the "no git = no witness" case red instead of passing by accident.
+  if (!firstCommit)
+    return `createdAt=${createdAt} predates acTrace.since=${since} (which downgrades §5.1/§5.6 errors to warnings) but this folder has no commit yet — a task the harness never saw cannot claim the grandfather clause`;
+  if (firstCommit >= since)
+    return `createdAt=${createdAt} predates acTrace.since=${since}, but the folder first appears in git on ${firstCommit} — it was created under the harness, so §5.1/§5.6 apply in full`;
+  return null;
+}
+
+// Oldest commit date (YYYY-MM-DD) touching a path.
+// null = git works, path has no history. undefined = no git, no opinion.
+function firstCommitDate(path) {
+  try {
+    const out = execFileSync("git", ["log", "--format=%cs", "--", path], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    return out.length ? out[out.length - 1] : null;
+  } catch {
+    return undefined;
+  }
+}
+
 function calibrate(tasks) {
   const closed = tasks.filter((t) => t.outcome?.closedAt);
   // Coverage: shipped tasks are the denominator, tasks with an outcome are the
@@ -2198,6 +2399,13 @@ for (const { sprint, task, path } of folders) {
   if (data.docsPath && !data.docsPath.includes(`${sprint}/${task}`))
     errors.push(`docsPath "${data.docsPath}" does not point at this folder`);
 
+  // 2a. createdAt: the switch that decides whether §5.1/§5.6 are errors or
+  // warnings. Checked against git, because the field checks itself otherwise.
+  {
+    const bad = backdatedCreatedAt(data.createdAt, firstCommitDate(path));
+    if (bad) errors.push(bad);
+  }
+
   // duplicate id tracking (record subTaskKey so shared-id sub-bugs are allowed)
   if (data.taskId) {
     const arr = taskIdMap.get(data.taskId) ?? [];
@@ -2225,10 +2433,15 @@ for (const { sprint, task, path } of folders) {
     // the evidence, tasks that predate it stay warnings.
     const sink = outcomeIsBlocking(data) ? errors : warnings;
 
-    const drift = vectorDriftSince(
-      triageVectorFor(join(TASKS_DIR, "_triage.log"), data.taskId),
-      data.complexity.vector,
-    );
+    const triaged = triageVectorFor(join(TASKS_DIR, "_triage.log"), data.taskId);
+    // No entry at all is not "nothing to compare" -- the whole cross-check is a
+    // no-op then, and _triage.log is untracked, so deleting it was the cheapest
+    // way to erase the comparison. Say it out loud instead of going quiet.
+    if (!triaged && outcomeIsBlocking(data))
+      warnings.push(
+        `no _triage.log entry for ${data.taskId} — step 0 triage either never ran or its log is gone, so the bootstrap vector has nothing to be cross-checked against (§5.1.3)`,
+      );
+    const drift = vectorDriftSince(triaged, data.complexity.vector);
     if (drift.raised.length)
       warnings.push(
         `vector scored higher at bootstrap than at triage (${drift.raised.join(", ")}) — the lower score is what decided whether this task needed the harness (§5.1.3)`,
@@ -2241,6 +2454,18 @@ for (const { sprint, task, path } of folders) {
       );
 
     for (const d of vectorEvidenceDefects(data.complexity)) sink.push(d);
+
+    // §5.1.3 makes the planner re-check the vector after surveying src/. When
+    // the vector does not change, nothing on disk shows the re-check happened —
+    // so the stage that most often finds the task is wider than advertised was
+    // also the one stage nobody could tell had been skipped.
+    if (
+      STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("technical_plan") &&
+      (data.complexity.assessedAt ?? "bootstrap") === "bootstrap"
+    )
+      warnings.push(
+        "complexity.assessedAt is still \"bootstrap\" past technical_plan — §5.1.3 requires the planner to re-check the vector against the src/ survey; set assessedAt:\"technical_plan\" once it has (raising only)",
+      );
   } else if (STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("bootstrap")) {
     // Omitting the block used to be cheaper than filling it in wrong: a missing
     // vector was a warning, and pre-commit runs --no-warn. So the whole §5.1
