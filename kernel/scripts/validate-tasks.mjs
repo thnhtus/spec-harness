@@ -202,18 +202,36 @@ function rel(p) {
 // Gate 2 says a blocking question left open blocks the gate. Rows look like
 // "| Q-01 | … | blocking | open | …" — a table scan is enough to catch the case
 // the gate exists for, and it is the one a model most often waves through.
-function openBlockingQuestions_test(lines) {
-  return lines
-    .filter((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.test(l) && /(?<![\w-])blocking\b/i.test(l) && /\bopen\b/i.test(l))
-    .map((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.exec(l)[1]);
+//
+// The scan needs BOTH tokens on the row, so a row missing either one used to
+// vanish from the gate's view entirely -- and the default of vanishing is
+// "no blocking question here", i.e. silently green. That is not a hypothetical:
+// docLanguage is prose-only (SharedRules §5), but an agent writing a Vietnamese
+// doc types `| blocking | chưa trả lời |` or `| chặn | open |` by reflex, and
+// Gate 2 disappears while the table still looks complete. So an unrecognised
+// row is an ERROR, not a skip: no data is fine, data we cannot read is not.
+const Q_ROW = /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/;
+const Q_TYPE = /(?<![\w-])(non-)?blocking\b/i;
+const Q_STATUS = /\b(open|answered|deferred)\b/i;
+
+// { open: ids blocking the gate, unparsed: ids whose type/status is not an ENUM }
+function classifyQuestions(lines) {
+  const open = [], unparsed = [];
+  for (const l of lines) {
+    const m = Q_ROW.exec(l);
+    if (!m) continue;
+    // An untouched template row (`| Q-01 |  | …`) states nothing -- skipping it
+    // is "no data", which is the one case that legitimately stays quiet.
+    if (!l.split("|").map((c) => c.trim())[2]) continue;
+    if (!Q_TYPE.test(l) || !Q_STATUS.test(l)) { unparsed.push(m[1]); continue; }
+    if (/(?<![\w-])blocking\b/i.test(l) && /\bopen\b/i.test(l)) open.push(m[1]);
+  }
+  return { open, unparsed };
 }
 
-function openBlockingQuestions(file) {
-  if (!existsSync(file)) return [];
-  return readFileSync(file, "utf8")
-    .split("\n")
-    .filter((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.test(l) && /(?<![\w-])blocking\b/i.test(l) && /\bopen\b/i.test(l))
-    .map((l) => /^\|\s*(Q-[A-Za-z0-9]+)\s*\|/.exec(l)[1]);
+function questionDefects(file) {
+  if (!existsSync(file)) return { open: [], unparsed: [] };
+  return classifyQuestions(readFileSync(file, "utf8").split("\n"));
 }
 
 // A finished role must leave a usable handoff: the coordinator routes on
@@ -1191,10 +1209,33 @@ if (args.has("--self-check")) {
   assert.equal(deriveComplexity(v({ scope: 2, uncertainty: 2, dependency: 2, dataImpact: 2, integration: 2, testing: 2 })).effort, 12, "effort maxes at 12");
   assert.equal(deriveComplexity(v({ blastRadius: 2 })).label, "normal", "feature-wide blast floors at normal");
 
-  // openBlockingQuestions: table row only, both flags on the same row.
+  // classifyQuestions: table row only, both flags on the same row.
   assert.deepEqual(
-    openBlockingQuestions_test(["| Q-01 | x | blocking | open |", "| Q-02 | y | blocking | answered |", "| Q-03 | z | non-blocking | open |", "prose blocking open"]),
+    classifyQuestions(["| Q-01 | x | blocking | open |", "| Q-02 | y | blocking | answered |", "| Q-03 | z | non-blocking | open |", "prose blocking open"]).open,
     ["Q-01"],
+  );
+  // A row whose ENUM was translated must be LOUD, not skipped. Skipping it
+  // defaults to "no blocking question" and turns Gate 2 off in silence — the
+  // failure mode a Vietnamese-prose task hits by reflex, not by evasion.
+  assert.deepEqual(
+    classifyQuestions(["| Q-01 | x | blocking | chưa trả lời |", "| Q-02 | y | chặn | open |"]).unparsed,
+    ["Q-01", "Q-02"],
+    "translated Type/Status must be reported, never silently dropped",
+  );
+  assert.deepEqual(
+    classifyQuestions(["| Q-01 | x | blocking | chưa trả lời |"]).open,
+    [],
+    "an unreadable row is not counted as open — it is reported separately",
+  );
+  assert.deepEqual(
+    classifyQuestions(["| Q-nn |  | blocking \\| non-blocking | open \\| answered |", "| Q-01 |  |  |  |"]).unparsed,
+    [],
+    "untouched template row states nothing — no data stays quiet (empty Question cell)",
+  );
+  assert.deepEqual(
+    classifyQuestions(["| Q-01 | x | non-blocking | deferred |"]).unparsed,
+    [],
+    "every documented ENUM value parses",
   );
 
   // handoffDefects: presence of the two fields the coordinator routes on.
@@ -2639,7 +2680,11 @@ for (const { sprint, task, path } of folders) {
 
   // 5a. Gate 2: no blocking question may stay open past fsd_review.
   if (AC_TRACE.declaredIn && stageIdx > STAGE_ORDER.indexOf("fsd_review")) {
-    const open = openBlockingQuestions(join(path, AC_TRACE.declaredIn));
+    const { open, unparsed } = questionDefects(join(path, AC_TRACE.declaredIn));
+    if (unparsed.length)
+      errors.push(
+        `Gate 2: BA question row(s) ${unparsed.join(", ")} have a Type/Status the gate cannot read — it needs \`blocking\`/\`non-blocking\` + \`open\`/\`answered\`/\`deferred\` verbatim (docLanguage is prose only, SharedRules §5). Unreadable rows are invisible to Gate 2`,
+      );
     if (open.length)
       errors.push(
         `Gate 2: blocking question still open past fsd_review: ${open.join(", ")} — Agents.md §3`,

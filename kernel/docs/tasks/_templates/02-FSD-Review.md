@@ -12,9 +12,15 @@
 
 ## BA questions
 
+> `Type` and `Status` are ENUMs the validator matches verbatim, not prose: Gate 2
+> only sees a row carrying `blocking`/`non-blocking` **and**
+> `open`/`answered`/`deferred`. Any other wording (including a translation) is
+> reported as unreadable — it does not quietly pass. `docLanguage` applies to the
+> Question text, never to these two columns ([`../../agents/SharedRules.md` §5](../../agents/SharedRules.md)).
+
 | Question ID | Question | Type | Status | Owner | Created At | Resolved At |
 | --- | --- | --- | --- | --- | --- | --- |
-| Q-01 |  | clarification / contradiction | open |  |  |  |
+| Q-01 |  | blocking \| non-blocking | open \| answered \| deferred |  |  |  |
 
 ## Risk
 

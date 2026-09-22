@@ -35,6 +35,8 @@
 **3.3. Bảng câu hỏi BA:**
 
 | Q-ID | Câu hỏi | Loại (`blocking`/`non-blocking`) | Trạng thái (`open`/`answered`/`deferred`) | Owner | Hỏi / Trả lời |
+
+> Hai cột Loại/Trạng thái là **ENUM**, validator khớp đúng chữ tiếng Anh. Viết "chặn" hay "chưa trả lời" → dòng đó báo lỗi *không đọc được*, không phải được bỏ qua. `docLanguage` chỉ áp cho phần văn xuôi của câu hỏi ([`./SharedRules.md` §5](./SharedRules.md)).
 | --- | --- | --- | --- | --- | --- |
 
 **3.4. Bảng rủi ro nghiệp vụ** (rủi ro kỹ thuật để `technical-planner` lo):

@@ -36,6 +36,8 @@ This is the **business** review gate: answer *"does this FSD match the business 
 | Q-ID | Question | Type (`blocking`/`non-blocking`) | Status (`open`/`answered`/`deferred`) | Owner | Asked / Answered |
 | --- | --- | --- | --- | --- | --- |
 
+> Those two columns are **ENUMs matched verbatim**, and `docLanguage` covers the Question prose only ([`./SharedRules.md` §5](./SharedRules.md)). A row carrying any other wording is reported as unreadable rather than skipped: skipping defaults to "no blocking question", which turns this gate off while the table still looks filled in.
+
 **3.4. Business risk table** (technical risks are left to `technical-planner`):
 
 | R-ID | Risk | Severity (`high`/`medium`/`low`) | Mitigation | Owner |
