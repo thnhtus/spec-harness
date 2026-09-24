@@ -339,7 +339,8 @@
           },
           "attempt": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "description": "Which run of this stage this entry is. Drives the model cascade (Agents.md §5.3.1): attempt n runs one tier above attempt n-1, capped at strong. Omitting it on a stage that ran twice makes the cascade rule uncheckable."
           },
           "startedAt": {
             "type": "string"

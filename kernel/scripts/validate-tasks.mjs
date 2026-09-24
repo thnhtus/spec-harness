@@ -369,6 +369,56 @@ function contextBleed(telemetry = [], { minRuns = 4, growth = 2.5 } = {}) {
   return { first, last, runs: t.length, from: t[0].stage, to: t.at(-1).stage };
 }
 
+// Model cascade (Agents.md §5.3.1): a retry must not run on the tier that just
+// failed. The base tier comes from role x taskComplexity; each extra attempt
+// lifts it one notch, capped at `strong`. This is the same asymmetry as §5.1.3
+// on the vector -- raising is allowed, lowering is the forbidden direction,
+// because a cheaper retry buys rework odds, not savings.
+//
+// Checked against telemetry rather than a plan, because telemetry is what the
+// coordinator actually recorded after each dispatch.
+const TIER_ORDER = ["cheap", "mid", "strong"];
+
+export function cascadeDefects(telemetry = []) {
+  const errors = [], warnings = [];
+  const byStage = {};
+  for (const e of telemetry) {
+    // session-default means the CLI cannot route per subagent at all -- there is
+    // no tier to compare, and demanding one would fail every such run.
+    if (!e?.stage || !TIER_ORDER.includes(e.tier)) continue;
+    (byStage[e.stage] ??= []).push(e);
+  }
+  for (const [stage, runs] of Object.entries(byStage)) {
+    if (runs.length < 2) continue;
+    // Without `attempt` the order is whatever the array happens to be, and a
+    // cascade violation would be indistinguishable from an out-of-order append.
+    if (runs.some((e) => !Number.isInteger(e.attempt))) {
+      warnings.push(
+        `telemetry for stage "${stage}" has ${runs.length} runs but not every entry has \`attempt\` — ` +
+          "the cascade rule (§5.3.1) cannot be checked without it",
+      );
+      continue;
+    }
+    const sorted = [...runs].sort((a, b) => a.attempt - b.attempt);
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1], cur = sorted[i];
+      if (prev.attempt === cur.attempt) continue;
+      const d = TIER_ORDER.indexOf(cur.tier) - TIER_ORDER.indexOf(prev.tier);
+      if (d < 0)
+        errors.push(
+          `"${stage}" attempt ${cur.attempt} ran on "${cur.tier}" after attempt ${prev.attempt} ran on "${prev.tier}" — ` +
+            "a retry may not drop tier (§5.3.1); the cheaper model already has the blind spot that caused the bounce",
+        );
+      else if (d === 0 && prev.tier !== TIER_ORDER.at(-1))
+        warnings.push(
+          `"${stage}" attempt ${cur.attempt} re-ran on the same tier "${cur.tier}" — ` +
+            `§5.3.1 lifts a retry one notch (to "${TIER_ORDER[TIER_ORDER.indexOf(prev.tier) + 1]}"): the same tier has the same blind spots`,
+        );
+    }
+  }
+  return { errors, warnings };
+}
+
 // Returns array of {file, lines} for handoff blocks exceeding the cap.
 function oversizedHandoffBlocks(memDir) {
   const offenders = [];
@@ -1689,6 +1739,70 @@ if (args.has("--self-check")) {
     assert.equal(contextBleed(tel(0, 0, 0, 9000)), null, "a zero first reading must not divide into a finding");
   }
 
+  // cascade (§5.3.1): the retry must cost more than the attempt it is fixing.
+  // Both directions get a case -- a check that never fires is decoration, and a
+  // check that fires on a legal escalation would push everyone back to flat tiers.
+  {
+    const e = (stage, tier, attempt) => ({ stage, tier, attempt });
+    const cd = (t) => cascadeDefects(t);
+
+    assert.deepEqual(cd([]), { errors: [], warnings: [] }, "no telemetry: nothing to say");
+    assert.deepEqual(
+      cd([e("implementation", "mid", 1)]),
+      { errors: [], warnings: [] },
+      "a single run cannot violate a rule about retries",
+    );
+    assert.deepEqual(
+      cd([e("implementation", "mid", 1), e("implementation", "strong", 2)]),
+      { errors: [], warnings: [] },
+      "mid -> strong on retry is exactly the rule",
+    );
+    // The forbidden direction.
+    assert.ok(
+      cd([e("implementation", "strong", 1), e("implementation", "mid", 2)]).errors[0]?.includes("may not drop tier"),
+      "strong -> mid on retry is an error",
+    );
+    assert.ok(
+      cd([e("implementation", "mid", 1), e("implementation", "cheap", 2)]).errors.length === 1,
+      "mid -> cheap is the same defect",
+    );
+    // Flat retry: the blind-spot argument of §5.3, now measurable.
+    assert.ok(
+      cd([e("fsd_review", "mid", 1), e("fsd_review", "mid", 2)]).warnings[0]?.includes("same tier"),
+      "re-running the same tier is a warning",
+    );
+    // ...but only below the ceiling: strong -> strong is the rule working, not
+    // breaking it. Without this, every hard task would warn forever.
+    assert.deepEqual(
+      cd([e("fsd_review", "strong", 1), e("fsd_review", "strong", 2)]),
+      { errors: [], warnings: [] },
+      "strong is the ceiling: re-running it is the rule, not a violation",
+    );
+    // Out-of-order appends must not read as a violation.
+    assert.deepEqual(
+      cd([e("implementation", "strong", 2), e("implementation", "mid", 1)]),
+      { errors: [], warnings: [] },
+      "entries are compared by attempt, not by array position",
+    );
+    // Stages are independent: a cheap fsd_write after a strong implementation is
+    // normal, not a downgrade.
+    assert.deepEqual(
+      cd([e("implementation", "strong", 1), e("adversarial_review", "mid", 1)]),
+      { errors: [], warnings: [] },
+      "different stages are not a cascade",
+    );
+    // A CLI with no per-subagent routing has no tier to compare.
+    assert.deepEqual(
+      cd([e("implementation", "session-default", 1), e("implementation", "session-default", 2)]),
+      { errors: [], warnings: [] },
+      "session-default is exempt: there is no tier to escalate",
+    );
+    assert.ok(
+      cd([e("implementation", "mid", undefined), e("implementation", "cheap", undefined)]).warnings[0]?.includes("attempt"),
+      "without `attempt` the rule is unverifiable and says so instead of guessing",
+    );
+  }
+
   // vector evidence: the vector decides model tier, gate weight and worktree, so
   // a vector scored from vibes routes real money. Both directions get a case --
   // demanding counts that contradict the score is as broken as demanding none.
@@ -2759,6 +2873,15 @@ for (const { sprint, task, path } of folders) {
           `(${blind.map((e) => e.stage ?? "?").join(", ")}) — scripts/collect-telemetry.mjs matches on that window, ` +
           "so their cost can never be recovered",
       );
+  }
+
+  // Model cascade: a retry that re-ran on a cheaper tier than the attempt it is
+  // fixing. Errors here, because it is the same forbidden direction as lowering
+  // the vector (§5.1.3) -- both make the next run cheaper by making it worse.
+  {
+    const c = cascadeDefects(data.telemetry);
+    errors.push(...c.errors);
+    warnings.push(...c.warnings);
   }
 
   // 2d. Context bleed: the /clear-between-stages rule, with something behind it.

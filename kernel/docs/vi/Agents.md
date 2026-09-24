@@ -278,6 +278,34 @@ Nguyên tắc: **hạng rẻ cho việc đọc-và-chép, hạng mạnh cho vi�
 
 **Đừng tối ưu ngược:** hạ hạng của `fsd-reviewer`/`adversary` để tiết kiệm là mua rủi ro — một AC bị rơi hay một bug lọt lưới đắt hơn toàn bộ tiền model của task.
 
+### 5.3.1. Cascade: lần chạy lại không dùng lại hạng vừa hỏng
+
+Bảng trên là hạng **nền** — cái attempt 1 chạy. Một stage bị bật lại sẽ được dispatch lại, và dispatch lại trên cùng model chính là lập luận §5.3 dùng để giữ `adversary` không bị hạ xuống `cheap`: **cùng hạng thì cùng điểm mù.** Nên mỗi attempt thêm sẽ nâng hạng lên một bậc, trần là `strong`:
+
+```
+tier(stage, attempt) = min(strong, base(role, taskComplexity) + (attempt - 1))
+```
+
+| Stage | attempt 1 | attempt 2 | attempt 3+ |
+| --- | --- | --- | --- |
+| `implementation` trên task `normal` | mid | strong | strong |
+| `fsd-writer` trên task `trivial` | cheap | mid | strong |
+| thứ đã ở `strong` | strong | strong | strong |
+
+Chi phí bị chặn trên bởi `retryBudget` (§5.5) — một stage không leo mãi được, vì đến 4 block là hết budget và task đi vào `split`.
+
+**Enforce trên `telemetry`, cả hai chiều** — cùng tính bất đối xứng như §5.1.3 với vector:
+
+| Chiều | Mức | Vì sao |
+| --- | --- | --- |
+| attempt n+1 ở hạng **thấp hơn** | **error** | chiều bị cấm: chạy lại rẻ hơn không tiết kiệm được gì, chỉ mua thêm xác suất phải làm lại |
+| attempt n+1 ở hạng **bằng**, mà chưa chạm `strong` | warning | cascade bị bỏ qua — lần chạy lại thừa hưởng đúng điểm mù đã làm nó bật |
+| một stage chạy ≥2 lần mà không có field `attempt` | warning | luật không kiểm được, và luật không kiểm được là luật tùy chọn |
+
+`tier: "session-default"` (CLI không chọn được model theo subagent) được miễn: không có hạng nào để nâng. Các stage so độc lập — `fsd_write` chạy `cheap` sau `implementation` chạy `strong` là bình thường, không phải hạ hạng.
+
+**Vì sao là error chứ không phải warning:** pre-commit chạy `--no-warn`. Hạ hạng lúc chạy lại là cách rẻ nhất để một stage vừa bật tiếp tục bật, và nó sẽ vô hình.
+
 ### 5.4. Hai chiều rủi ro ngoài chuyện chọn model
 
 `blastRadius` và `reversibility` không chỉ nâng `taskComplexity`. Chúng còn quyết định **chỗ dừng lại hỏi người**:

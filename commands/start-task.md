@@ -309,6 +309,19 @@ Tier → real model name is looked up in `harness.config.json → models`
 you run, so it only speaks in tiers — switching Claude ↔ Codex ↔ Gemini means
 editing those three lines, this table does not change.
 
+**On a retry, lift the tier one notch** ([`docs/Agents.md` §5.3.1](../../docs/Agents.md)).
+The table above is the tier for **attempt 1**. A stage that bounced and gets
+re-dispatched runs one notch higher, capped at `strong`:
+
+```
+tier = min(strong, table(role, taskComplexity) + (attempts[stage] - 1))
+```
+
+Re-dispatching on the tier that just failed is the same mistake §5.3 forbids for
+`adversary`: the same tier has the same blind spots. Going *down* on a retry is
+an **error** the validator blocks — it does not save money, it buys another
+bounce. `retryBudget` still caps the climb: at 4 blocks the task is out of budget.
+
 `models` empty `{}`, or the CLI cannot pick a model per subagent → **skip this
 step**, every stage runs the session's model. The harness is still correct, just
 not cheaper. Do **not** drop the model for `fsd-reviewer` or
@@ -375,6 +388,10 @@ tier the stage just ran on:
 { "stage": "implementation", "tier": "strong", "model": "opus", "attempt": 2,
   "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z" }
 ```
+
+`attempt` is not optional once a stage runs twice: it is what makes the cascade
+rule (§5.3.1) checkable at all, and without it the validator can only warn that
+it cannot tell an escalation from a downgrade.
 
 **Record `startedAt`/`endedAt` always; leave `inputTokens` out.** You know the
 timestamps for certain — you dispatched the stage. You do not know the token

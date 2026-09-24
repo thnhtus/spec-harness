@@ -277,6 +277,34 @@ The principle: **the cheap tier for reading-and-transcribing, the strong tier fo
 
 **Do not optimise backwards:** dropping the tier of `fsd-reviewer`/`adversary` to save money is buying risk — one dropped AC or one escaped bug costs more than the entire model spend of the task.
 
+### 5.3.1. Cascade: a retry does not run on the tier that just failed
+
+The table above is the **base** tier — what attempt 1 runs on. A bounced stage gets re-dispatched, and re-dispatching it on the same model is the same argument §5.3 uses to keep `adversary` off `cheap`: **the same tier has the same blind spots.** So each extra attempt lifts the tier one notch, capped at `strong`:
+
+```
+tier(stage, attempt) = min(strong, base(role, taskComplexity) + (attempt - 1))
+```
+
+| Stage | attempt 1 | attempt 2 | attempt 3+ |
+| --- | --- | --- | --- |
+| `implementation` on a `normal` task | mid | strong | strong |
+| `fsd-writer` on a `trivial` task | cheap | mid | strong |
+| anything already at `strong` | strong | strong | strong |
+
+The cost is bounded by `retryBudget` (§5.5) — a stage cannot climb forever, because at 4 blocks the task is out of budget and goes to `split`.
+
+**Enforced on `telemetry`, in both directions** — the same asymmetry as §5.1.3 on the vector:
+
+| Direction | Level | Why |
+| --- | --- | --- |
+| attempt n+1 on a **lower** tier | **error** | the forbidden direction: a cheaper retry does not save money, it buys rework odds |
+| attempt n+1 on the **same** tier, below `strong` | warning | the cascade was skipped — the retry inherits the blind spot that caused the bounce |
+| ≥2 runs of one stage with no `attempt` field | warning | the rule cannot be checked, and an unverifiable rule is an optional one |
+
+`tier: "session-default"` (the CLI cannot route per subagent) is exempt: there is no tier to escalate. Stages are compared independently — a `cheap` `fsd_write` after a `strong` `implementation` is normal, not a downgrade.
+
+**Why error and not warning:** pre-commit runs `--no-warn`. Lowering the tier on a retry is the cheapest possible way to make a bounced stage bounce again, and it would be invisible.
+
 ### 5.4. The two risk dimensions outside model choice
 
 `blastRadius` and `reversibility` do not only lift `taskComplexity`. They also decide **where to stop and ask a human**:
