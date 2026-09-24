@@ -128,6 +128,7 @@ function wouldClobber(P) {
   for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs"])
     chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
+  chk(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
   return out;
 }
 
@@ -180,6 +181,12 @@ function installInto(P) {
     cpSync(join(SRC, "agents", f), join(P, ".claude/agents", f));
   over(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   try { chmodSync(join(P, "hooks/pre-commit"), 0o755); } catch {}
+  // Hook CLI-specific: dán link task → chèn một dòng context. Nằm ở adapters/
+  // vì `UserPromptSubmit` là API của MỘT CLI; CLI khác không bao giờ gọi tới.
+  // Vẫn `over` như pre-commit: đây là kernel logic mỏng, không phải adapter của
+  // user — phần user chỉnh là khối `hooks` trong settings.json (giữ bằng keep).
+  over(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
+  try { chmodSync(join(P, "hooks/prompt-submit"), 0o755); } catch {}
   // skill fsd-writer gọi ở Gate 1 — thiếu nó thì stage fsd_write gọi hụt
   cpSync(join(SRC, "skills"), join(P, ".claude/skills"), { recursive: true });
 

@@ -121,6 +121,10 @@ Luật nhánh làm việc (công thức đặt tên, `--ff-only`, ngoại lệ n
 
 ## 7. Resume một task còn dở
 
+**Dán link tracker vào là đuủ để biết task đang ở đâu.** `scripts/validate-tasks.mjs --route <url>` khớp URL với `tracker.urlPattern`, tìm xem đã có task folder nào giữ link đó chưa, rồi in một dòng: chạy `/start-task`, resume task X ở stage Y, hay đừng chạy lại task đã xong. Trên Claude Code, hook `hooks/prompt-submit` gọi nó ở mọi prompt và chèn dòng đó tự động ([`adapters/claude-code/README.md`](../../../adapters/claude-code/README.md)). Nó chỉ **gợi ý** — model vẫn tự quyết, và hook im lặng với mọi thứ không phải link task.
+
+Ca đắt tiền mà nó sinh ra để chặn không phải "quên gõ `/start-task`": là việc tạo **task folder thứ hai** cho một URL đã có folder. Doc ở đây là append-only, nên một vòng đời bị fork thì không dọn lại được.
+
 Task doc nằm ở `docs/tasks/sprint-{n}/{taskId}-{slug}/` (bố cục: [`tasks/README.md`](./tasks/README.md)). Cách resume:
 
 1. **Đọc trạng thái:** `task.agent.json` → `currentStage`, `status`, `branch` (+ `branchActual` nếu có), `agents.{role}.status`.

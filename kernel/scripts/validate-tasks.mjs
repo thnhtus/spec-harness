@@ -456,6 +456,42 @@ export function gate1Defects(text, { modal = CFG.fsdModal } = {}) {
   return out;
 }
 
+// --route: what a pasted tracker link should lead to. The decision is here, not
+// in the shell hook, because it reads config, matches a regex and compares task
+// state -- three things bash gets wrong quietly. The hook is a thin shell that
+// prints whatever this says.
+//
+// It ADVISES, it does not act: the CLI hook injects one line of context and the
+// model decides. There is no tool called "start working on a task", so there is
+// nothing to deny -- a PreToolUse gate cannot express this.
+// ponytail: advisory only. Upgrade path: if a task is ever started twice in
+// practice, move the duplicate check into /start-task step 1 as a hard error.
+export function routeForUrl(url, tasks, { urlPattern = CFG.tracker?.urlPattern } = {}) {
+  // Fail closed: no pattern means every prompt would look like a task link.
+  if (!urlPattern) throw new Error("config.tracker.urlPattern is required (--route cannot recognise a task link without it)");
+  if (!new RegExp(urlPattern).test(url ?? "")) return { action: "ignore" };
+
+  const hit = tasks.find((t) => t.trackerUrl === url);
+  if (!hit) return { action: "start", url };
+  // Already finished: re-running would append a second lifecycle to append-only
+  // docs, which is unrecoverable. Worth a louder line than "start".
+  if (["done", "mr_created", "reviewing"].includes(hit.status))
+    return { action: "done", url, task: hit.taskId, stage: hit.currentStage, status: hit.status, docsPath: hit.docsPath };
+  // The case this whole flag exists for: a session died mid-task. The lease TTL
+  // detects a dead session but nothing surfaced the abandoned task itself.
+  return { action: "resume", url, task: hit.taskId, stage: hit.currentStage, status: hit.status, docsPath: hit.docsPath };
+}
+
+// One line of context for the CLI to inject. Kept next to the decision so the
+// two cannot drift.
+export function routeMessage(r) {
+  if (r.action === "ignore") return "";
+  if (r.action === "start") return `spec-harness: ${r.url} is a tracker task with no task folder yet — run \`/start-task ${r.url}\` rather than editing code directly.`;
+  if (r.action === "resume")
+    return `spec-harness: ${r.url} is already task ${r.task} at stage "${r.stage}" (status ${r.status}) in ${r.docsPath} — resume it, do NOT create a second task folder.`;
+  return `spec-harness: ${r.url} is task ${r.task}, already ${r.status} (${r.docsPath}) — do not re-run the harness on it; the docs are append-only.`;
+}
+
 // Which stages must hold up against Gate 1. `>=`, not `>`: fsd_review is the
 // FIRST stage that READS 01-FSD.md, so exempting it would let an empty FSD reach
 // the reviewer -- which is the whole failure Gate 1 exists to stop. Same shape
@@ -1860,6 +1896,39 @@ if (args.has("--self-check")) {
         assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
   }
 
+  // routeForUrl: the pasted-link entry point. Every branch gets a case, because
+  // the expensive mistake is not "no suggestion" -- it is suggesting a fresh
+  // /start-task on a task that already exists, which forks append-only docs.
+  {
+    const P = "^https://app\\.clickup\\.com/t/.+";
+    const U = "https://app.clickup.com/t/abc123";
+    const t = (o) => ({ taskId: "ABC-1", trackerUrl: U, currentStage: "technical_plan", status: "in_progress", docsPath: "docs/tasks/sprint-1/ABC-1-x", ...o });
+    const r = (url, tasks) => routeForUrl(url, tasks, { urlPattern: P });
+
+    assert.equal(r("just a question", []).action, "ignore", "ordinary prompts must not look like task links");
+    assert.equal(r("https://example.com/t/1", []).action, "ignore", "another host is not this tracker");
+    assert.equal(r(U, []).action, "start", "a known link with no folder starts the harness");
+    // The case the flag exists for: a session died mid-task.
+    assert.equal(r(U, [t()]).action, "resume", "an unfinished task is resumed, not restarted");
+    for (const s of ["reviewing", "mr_created", "done"])
+      assert.equal(r(U, [t({ status: s })]).action, "done", `status=${s} must not re-run the harness`);
+    // Another task's URL must not match this one.
+    assert.equal(r(U, [t({ trackerUrl: U + "9" })]).action, "start", "matching is exact, not prefix");
+    // Fail closed: with no pattern every prompt would be a task link.
+    assert.throws(() => routeForUrl(U, [], { urlPattern: null }), /urlPattern is required/, "a missing urlPattern cannot silently match nothing");
+
+    // The message is what the model actually reads, so the distinguishing word
+    // has to be in it -- an identical string for resume and start would make the
+    // whole branch pointless.
+    assert.equal(routeMessage(r("hi", [])), "", "ignore prints nothing at all");
+    assert.ok(routeMessage(r(U, [])).includes("/start-task"), "the start message names the command");
+    assert.ok(routeMessage(r(U, [t()])).includes("do NOT create a second"), "the resume message warns against a second folder");
+    assert.ok(routeMessage(r(U, [t()])).includes("technical_plan"), "the resume message says where the task got to");
+    assert.ok(!routeMessage(r(U, [t({ status: "done" })])).includes("/start-task"), "a finished task must not be offered /start-task");
+    // This repo must ship a pattern the flag can use.
+    assert.ok(CFG.tracker?.urlPattern, "harness.config.json must declare tracker.urlPattern");
+  }
+
   // gate1Defects: the four checklist lines the template printed for months while
   // nothing read them. The cases that matter are the false greens -- an
   // untouched template and a header-only file both used to pass.
@@ -2469,6 +2538,33 @@ if (args.has("--cost")) {
 // --tier: the one place the base table is read. The coordinator asks instead of
 // transcribing a markdown table into a dispatch call -- the transcription step
 // is where §5.3 and §5.3.1 were free to disagree with what actually ran.
+// --route <url>: called by the UserPromptSubmit hook on every prompt, so it must
+// be quiet and fast. Prints one line or nothing; exit 0 either way -- a hook that
+// can fail a prompt is a hook people disable.
+if (args.has("--route")) {
+  const url = argv[argv.indexOf("--route") + 1] ?? "";
+  let out = "";
+  try {
+    const tasks = [];
+    if (existsSync(TASKS_DIR))
+      for (const group of readdirSync(TASKS_DIR)) {
+        const gdir = join(TASKS_DIR, group);
+        if (!group.startsWith(GROUP_PREFIX) || !statSync(gdir).isDirectory()) continue;
+        for (const folder of readdirSync(gdir)) {
+          const f = join(gdir, folder, "task.agent.json");
+          if (existsSync(f)) try { tasks.push(JSON.parse(readFileSync(f, "utf8"))); } catch {}
+        }
+      }
+    out = routeMessage(routeForUrl(url, tasks));
+  } catch {
+    // A broken config or an unreadable folder must not break every prompt in the
+    // session. Silence here costs a suggestion; throwing costs the session.
+    out = "";
+  }
+  if (out) console.log(out);
+  process.exit(0);
+}
+
 if (args.has("--tier")) {
   const at = argv.indexOf("--tier");
   const [role, complexity, attemptArg] = argv.slice(at + 1, at + 4);

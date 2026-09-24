@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# spec-harness: paste a tracker link, get routed into the harness.
+#
+# UserPromptSubmit hook (Claude Code). It does NOT run anything — it prints one
+# line that the CLI injects as context, and the model decides. That is the point:
+# a false positive costs one line, not a seven-stage run.
+#
+# This file lives in adapters/, not kernel/: `UserPromptSubmit` is one CLI's API,
+# and the kernel does not name a CLI (Agents.md §5.3 keeps the same property for
+# models). On any other CLI this file is simply never called.
+#
+# Install: see adapters/claude-code/README.md (install.mjs wires it for you).
+#
+# Everything below fails open. A hook that can break a prompt is a hook people
+# turn off, and then the guardrail is gone for good rather than for one prompt.
+set -uo pipefail
+
+# The CLI sends the prompt as JSON on stdin. No node, no repo, no jq-able input
+# → say nothing and get out of the way.
+command -v node >/dev/null 2>&1 || exit 0
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+validator="$root/scripts/validate-tasks.mjs"
+[ -f "$validator" ] || exit 0
+
+payload=$(cat 2>/dev/null) || exit 0
+
+# Pull the first URL out of the prompt with node (already required above) rather
+# than a grep -P the BSD userland does not have.
+url=$(printf '%s' "$payload" | node -e '
+  let s = "";
+  process.stdin.on("data", (d) => (s += d));
+  process.stdin.on("end", () => {
+    let text = s;
+    try { text = JSON.parse(s).prompt ?? s; } catch {}
+    const m = /https?:\/\/[^\s"'"'"'<>)\]]+/.exec(text);
+    process.stdout.write(m ? m[0] : "");
+  });
+' 2>/dev/null) || exit 0
+[ -n "$url" ] || exit 0
+
+# --route prints one line, or nothing when the URL is not a task link.
+node "$validator" --route "$url" 2>/dev/null || true
+exit 0

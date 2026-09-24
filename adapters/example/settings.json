@@ -15,5 +15,18 @@
       "Read(.env.*)",
       "Read(.claude.json)"
     ]
+  },
+  "_hooks": "Dán link task vào prompt → hook chạy `validate-tasks.mjs --route` và CHÈN một dòng context, không chạy gì cả. Ba nhánh: chưa có task folder → gợi ý /start-task; task đang dở → nhắc tiếp tục thay vì tạo folder thứ hai (đây mới là ca đắt: docs append-only, fork là không gỡ được); task đã xong → bảo đừng chạy lại. TRẦN: chỉ là GỢI Ý — model đọc rồi tự quyết, không có tool nào tên \"bắt đầu làm task\" để mà deny. Hook fail open ở mọi nhánh: không node / không git / stdin rác đều exit 0 im lặng.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/prompt-submit"
+          }
+        ]
+      }
+    ]
   }
 }

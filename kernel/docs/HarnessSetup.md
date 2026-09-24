@@ -120,6 +120,10 @@ Working-branch rules (name formula, `--ff-only`, the user-managed-branch excepti
 
 ## 7. Resuming an unfinished task
 
+**Pasting the tracker link is enough to find out where a task stands.** `scripts/validate-tasks.mjs --route <url>` matches the URL against `tracker.urlPattern`, looks for a task folder already holding it, and prints one line: run `/start-task`, resume task X at stage Y, or do not re-run a finished task. On Claude Code the `hooks/prompt-submit` hook calls it on every prompt and injects that line automatically ([`adapters/claude-code/README.md`](../../adapters/claude-code/README.md)). It advises only — the model still decides, and the hook is silent on anything that is not a task link.
+
+The expensive case it exists for is not "forgot to type `/start-task`": it is a **second** task folder created for a URL that already has one. These docs are append-only, so a forked lifecycle cannot be cleaned up afterwards.
+
 Task docs live in `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout: [`tasks/README.md`](./tasks/README.md)). To resume:
 
 1. **Read the state:** `task.agent.json` → `currentStage`, `status`, `branch` (+ `branchActual` if present), `agents.{role}.status`.
