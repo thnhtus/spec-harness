@@ -21,6 +21,16 @@
     "mid": "sonnet",
     "strong": "opus"
   },
+  "_baseTier": "Agents.md §5.3, as data. role -> [trivial, normal, high]. Was prose in three files (Agents.md, vi/Agents.md, start-task.md) that no check ever read — the same shape of drift docEnums was created to end. `scripts/validate-tasks.mjs --tier <role> <complexity> [attempt]` resolves it, applying the §5.3.1 cascade.",
+  "baseTier": {
+    "orchestrator": ["cheap", "cheap", "mid"],
+    "fsd-writer": ["cheap", "mid", "mid"],
+    "fsd-reviewer": ["mid", "mid", "strong"],
+    "technical-planner": ["mid", "mid", "strong"],
+    "implementer": ["mid", "mid", "strong"],
+    "fixer": ["mid", "mid", "strong"],
+    "adversary": ["mid", "mid", "strong"]
+  },
   "repos": [
     {
       "name": "<repo-name>",

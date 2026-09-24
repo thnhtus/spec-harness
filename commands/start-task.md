@@ -304,6 +304,18 @@ read-and-copy work, strong for judgement:
 | implementer | mid | mid | strong |
 | `adversary` | mid | mid | strong |
 
+**Do not transcribe that table — ask for the answer.** It is data in
+`harness.config.json → baseTier`, and the script applies the §5.3.1 cascade too:
+
+```bash
+MODEL=$(node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" "${ATTEMPT:-1}")
+```
+
+It prints the bare model name (empty when `config.models` is `{}` — then dispatch
+without a model), and exits `2` on an unknown role or complexity rather than
+falling back to a default. The table above is printed for humans; `--preflight`
+checks it against the config, so the two cannot drift.
+
 Tier → real model name is looked up in `harness.config.json → models`
 (`{ "cheap": …, "mid": …, "strong": … }`). The kernel does not know which CLI
 you run, so it only speaks in tiers — switching Claude ↔ Codex ↔ Gemini means
@@ -313,8 +325,9 @@ editing those three lines, this table does not change.
 The table above is the tier for **attempt 1**. A stage that bounced and gets
 re-dispatched runs one notch higher, capped at `strong`:
 
-```
-tier = min(strong, table(role, taskComplexity) + (attempts[stage] - 1))
+```bash
+# same command, with the attempt number -- it applies the cascade itself
+node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" 2
 ```
 
 Re-dispatching on the tier that just failed is the same mistake §5.3 forbids for

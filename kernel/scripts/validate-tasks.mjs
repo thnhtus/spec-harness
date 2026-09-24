@@ -379,6 +379,26 @@ function contextBleed(telemetry = [], { minRuns = 4, growth = 2.5 } = {}) {
 // coordinator actually recorded after each dispatch.
 const TIER_ORDER = ["cheap", "mid", "strong"];
 
+// The §5.3 table, resolved from config instead of read off a markdown table by
+// the coordinator. Prose in three files that no check ever read is the same
+// drift shape `docEnums` exists to end -- and here the drift silently routes
+// money. Returns { tier, model, base } or { error }.
+export function resolveTier(role, complexity, attempt = 1, cfg = CFG) {
+  const RANKS = ["trivial", "normal", "high"];
+  const row = (cfg.baseTier ?? {})[role];
+  if (!row) return { error: `config.baseTier has no row for role "${role}" (§5.3)` };
+  const i = RANKS.indexOf(complexity);
+  if (i < 0) return { error: `taskComplexity "${complexity}" is not one of ${RANKS.join("/")}` };
+  const base = row[i];
+  if (!TIER_ORDER.includes(base)) return { error: `config.baseTier.${role}[${i}] = "${base}" is not a tier` };
+  if (!Number.isInteger(attempt) || attempt < 1) return { error: `attempt must be an integer >= 1, got ${attempt}` };
+  // §5.3.1: each extra attempt lifts one notch, capped at strong.
+  const tier = TIER_ORDER[Math.min(TIER_ORDER.length - 1, TIER_ORDER.indexOf(base) + attempt - 1)];
+  // models empty = the CLI routes nothing; say so rather than inventing a name.
+  const model = Object.keys(cfg.models ?? {}).length ? cfg.models[tier] : null;
+  return { tier, model, base };
+}
+
 export function cascadeDefects(telemetry = []) {
   const errors = [], warnings = [];
   const byStage = {};
@@ -1739,6 +1759,32 @@ if (args.has("--self-check")) {
     assert.equal(contextBleed(tel(0, 0, 0, 9000)), null, "a zero first reading must not divide into a finding");
   }
 
+  // resolveTier: the §5.3 table + the §5.3.1 cascade, as one function. The point
+  // is that nobody transcribes a markdown table into a dispatch call any more,
+  // so the cases that matter are the ceiling and the refusal to guess.
+  {
+    const cfg = { baseTier: { implementer: ["mid", "mid", "strong"], "fsd-writer": ["cheap", "mid", "mid"] }, models: { cheap: "h", mid: "s", strong: "o" } };
+    const rt = (r, c, a) => resolveTier(r, c, a, cfg);
+    assert.equal(rt("implementer", "normal", 1).tier, "mid", "attempt 1 is the base tier");
+    assert.equal(rt("implementer", "normal", 2).tier, "strong", "attempt 2 lifts one notch");
+    assert.equal(rt("implementer", "normal", 9).tier, "strong", "the cascade is capped at strong, it does not run off the end");
+    assert.equal(rt("fsd-writer", "trivial", 2).tier, "mid", "cheap -> mid on retry");
+    assert.equal(rt("fsd-writer", "trivial", 3).tier, "strong", "two bounces reach the ceiling");
+    assert.equal(rt("implementer", "high", 1).model, "o", "the tier is mapped through config.models");
+    assert.equal(rt("implementer", "normal", 1).base, "mid", "base is reported separately from the escalated tier");
+    // A CLI that routes nothing must not be handed an invented model name.
+    assert.equal(resolveTier("implementer", "normal", 1, { ...cfg, models: {} }).model, null, "empty config.models resolves to no model");
+    // Refusals: every one of these used to be a silent wrong dispatch.
+    assert.ok(rt("nobody", "normal", 1).error, "an unknown role is an error, not a default tier");
+    assert.ok(rt("implementer", "medium", 1).error, "a taskComplexity outside the three ranks is rejected");
+    assert.ok(rt("implementer", "normal", 0).error, "attempt 0 is rejected");
+    assert.ok(rt("implementer", "normal", 1.5).error, "a non-integer attempt is rejected");
+    // This repo's own config must actually resolve, or --tier is broken on ship.
+    for (const role of CFG.roles ?? [])
+      for (const c of ["trivial", "normal", "high"])
+        assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
+  }
+
   // cascade (§5.3.1): the retry must cost more than the attempt it is fixing.
   // Both directions get a case -- a check that never fires is decoration, and a
   // check that fires on a legal escalation would push everyone back to flat tiers.
@@ -2243,6 +2289,27 @@ if (args.has("--cost")) {
 // Skipping the harness is a legitimate call. Skipping it without a trace is not,
 // so --force appends the verdict, the vector and the reason to _triage.log.
 // ---------------------------------------------------------------------------
+// --tier: the one place the base table is read. The coordinator asks instead of
+// transcribing a markdown table into a dispatch call -- the transcription step
+// is where §5.3 and §5.3.1 were free to disagree with what actually ran.
+if (args.has("--tier")) {
+  const at = argv.indexOf("--tier");
+  const [role, complexity, attemptArg] = argv.slice(at + 1, at + 4);
+  const attempt = attemptArg === undefined || attemptArg.startsWith("--") ? 1 : Number(attemptArg);
+  const r = resolveTier(role, complexity, attempt);
+  if (r.error) {
+    console.error(`✖ --tier: ${r.error}`);
+    console.error("  usage: validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt]");
+    process.exit(2);
+  }
+  if (AS_JSON) console.log(JSON.stringify({ role, complexity, attempt, ...r }));
+  // Bare model name on stdout: the coordinator interpolates it straight into the
+  // dispatch. `null` when config.models is empty -- print nothing, so a shell
+  // substitution yields an empty flag rather than the string "null".
+  else console.log(r.model ?? "");
+  process.exit(0);
+}
+
 if (args.has("--triage")) {
   const at = argv.indexOf("--triage");
   let vector;
@@ -2447,6 +2514,38 @@ if (args.has("--preflight")) {
             `${rel(file)} (${label}) example row offers ${bad.map((v) => `\`${v}\``).join(", ")}, which is in no docEnums list — an agent copying this row writes a value the gate cannot read`,
           );
       }
+    }
+  }
+
+  // Same lesson as docEnums, one field over: config.baseTier is only a single
+  // source of truth if the tables a human (and an agent) reads are checked
+  // against it. These tables route money -- a doc that says `cheap` where the
+  // config says `mid` sends the coordinator to dispatch the wrong model, and
+  // nothing downstream can tell the difference from a deliberate choice.
+  for (const file of [
+    join(REPO_ROOT, "kernel/docs/Agents.md"),
+    join(REPO_ROOT, "kernel/docs/vi/Agents.md"),
+    join(REPO_ROOT, "docs/Agents.md"),
+    join(REPO_ROOT, "docs/vi/Agents.md"),
+    join(REPO_ROOT, "commands/start-task.md"),
+    join(REPO_ROOT, ".claude/commands/start-task.md"),
+  ]) {
+    if (!existsSync(file)) continue;
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      // A row is "| `role` | t | t | t |" -- the shape of the §5.3 table. Other
+      // tables in these files do not have three tier words in a row, so an
+      // accidental match cannot happen quietly.
+      const m = /^\|\s*`?([a-z-]+)`?\s*\|([^|]+)\|([^|]+)\|([^|]+)\|/.exec(line);
+      if (!m) continue;
+      const row = (CFG.baseTier ?? {})[m[1]];
+      if (!row) continue;
+      const cells = [m[2], m[3], m[4]].map((c) => c.trim().replace(/`/g, ""));
+      if (!cells.every((c) => TIER_ORDER.includes(c))) continue; // not the tier table
+      if (cells.join(",") !== row.join(","))
+        errs.push(
+          `${rel(file)} §5.3 table says ${m[1]} = ${cells.join("/")} but config.baseTier says ${row.join("/")} — ` +
+            "the doc is what a human reads and `--tier` is what dispatches; they cannot disagree",
+        );
     }
   }
 

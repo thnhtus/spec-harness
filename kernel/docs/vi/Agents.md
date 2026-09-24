@@ -274,6 +274,14 @@ Nguyên tắc: **hạng rẻ cho việc đọc-và-chép, hạng mạnh cho vi�
 
 **Vì sao `adversary` không bao giờ bị hạ xuống cheap:** role này tồn tại để nhìn ra cái người làm không nhìn ra. Ở hạng yếu hơn implementer, nó chỉ gật theo.
 
+**Bảng này là dữ liệu, không phải văn xuôi.** Nó nằm ở `harness.config.json → baseTier` (`role: [trivial, normal, high]`), và coordinator hỏi nó thay vì đọc:
+
+```bash
+node scripts/validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt]   # in ra tên model
+```
+
+Bảng in ở trên là cho người đọc; `--preflight` so nó với config, nên một doc ghi `cheap` trong khi config ghi `mid` là error, thay vì một lần dispatch sai mà không ai phân biệt được với lựa chọn có chủ đích. Role hay complexity lạ thì exit `2` — không bao giờ rơi về một tier mặc định.
+
 **Áp dụng thế nào:** các file `.claude/agents/{role}.md` **không** ghi `model:` — mặc định là model của phiên. `/start-task` tra bảng trên cộng `config.models` rồi truyền `model` lúc dispatch. Nếu CLI không hỗ trợ chọn model theo subagent → bỏ qua; mọi stage chạy model của phiên, harness vẫn chạy, chỉ là không tiết kiệm được gì.
 
 **Đừng tối ưu ngược:** hạ hạng của `fsd-reviewer`/`adversary` để tiết kiệm là mua rủi ro — một AC bị rơi hay một bug lọt lưới đắt hơn toàn bộ tiền model của task.
@@ -285,6 +293,8 @@ Bảng trên là hạng **nền** — cái attempt 1 chạy. Một stage bị b�
 ```
 tier(stage, attempt) = min(strong, base(role, taskComplexity) + (attempt - 1))
 ```
+
+`--tier` tự áp dụng công thức này — truyền số attempt làm tham số thứ ba.
 
 | Stage | attempt 1 | attempt 2 | attempt 3+ |
 | --- | --- | --- | --- |

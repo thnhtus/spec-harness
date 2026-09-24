@@ -273,6 +273,14 @@ The principle: **the cheap tier for reading-and-transcribing, the strong tier fo
 
 **Why `adversary` is never dropped to cheap:** this role exists to see what the person doing the work did not. On a weaker tier than the implementer, it just nods along.
 
+**The table is data, not prose.** It lives in `harness.config.json → baseTier` (`role: [trivial, normal, high]`), and the coordinator resolves it instead of reading it:
+
+```bash
+node scripts/validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt]   # prints the model name
+```
+
+The printed table above is for humans; `--preflight` compares it against the config, so a doc that says `cheap` where the config says `mid` is an error rather than a wrong dispatch nobody can distinguish from a deliberate one. Unknown role or complexity exits `2` — it never falls back to a default tier.
+
 **How it is applied:** the `.claude/agents/{role}.md` files carry **no `model:`** — the default is the session's model. `/start-task` looks up the table above plus `config.models` and passes `model` at dispatch. If the CLI does not support per-subagent model selection → skip it; every stage runs the session model, the harness still works, it just saves nothing.
 
 **Do not optimise backwards:** dropping the tier of `fsd-reviewer`/`adversary` to save money is buying risk — one dropped AC or one escaped bug costs more than the entire model spend of the task.
@@ -284,6 +292,8 @@ The table above is the **base** tier — what attempt 1 runs on. A bounced stage
 ```
 tier(stage, attempt) = min(strong, base(role, taskComplexity) + (attempt - 1))
 ```
+
+`--tier` applies this itself — pass the attempt number as the third argument.
 
 | Stage | attempt 1 | attempt 2 | attempt 3+ |
 | --- | --- | --- | --- |
