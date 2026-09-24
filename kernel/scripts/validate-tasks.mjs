@@ -746,6 +746,65 @@ function triage(vector, branchType) {
   };
 }
 
+// The escape hatches (`quick-task` / `fix-bug`) had no feedback loop. --triage
+// logged the verdict, nothing logged what happened next, and --calibrate only
+// reads tasks with `outcome.closedAt` -- which an escaped task never has,
+// because it has no task folder at all. So the one question that matters about
+// the riskFloor thresholds ("are they letting real bugs out?") was unanswerable
+// for exactly the tasks that skipped every gate.
+//
+// Same log file, an extra row shape: verdict column = "outcome", forced column
+// = escaped|clean, vector column = "-" so triageVectorFor's JSON.parse skips it
+// (a row that parsed would make a task with ONLY an outcome row look triaged).
+//
+// ponytail: self-reported. Nothing on disk can contradict "clean" -- an escaped
+// task leaves no artifact to check. Coverage is therefore reported next to
+// every finding, exactly as `outcome.closedAt` coverage is. Upgrade path: when
+// a bugfix task carries `regressionOf: <taskId>`, count that instead.
+const ESCAPE_VERDICTS = ["quick-task", "fix-bug"];
+
+export function escapeHatchStats(logText = "", { minSample = CFG.calibrateMinSample ?? 5 } = {}) {
+  const verdict = new Map(); // taskId -> escape verdict
+  const outcome = new Map(); // taskId -> "escaped" | "clean"
+  for (const line of logText.split("\n")) {
+    const col = line.split("\t");
+    if (col.length < 5) continue;
+    const [, taskId, v, flag] = col;
+    if (!taskId) continue;
+    // A task triaged twice keeps the FIRST escape verdict, for the same reason
+    // triageVectorFor keeps the lowest vector: re-running --triage must not
+    // erase the run that actually skipped the gates.
+    if (ESCAPE_VERDICTS.includes(v) && !verdict.has(taskId)) verdict.set(taskId, v);
+    // "escaped" wins over "clean": a task reported clean and later found to
+    // have shipped a bug is an escape, not a coin flip.
+    if (v === "outcome" && (flag === "escaped" || flag === "clean"))
+      if (flag === "escaped" || !outcome.has(taskId)) outcome.set(taskId, flag);
+  }
+  const ids = [...verdict.keys()];
+  const withOutcome = ids.filter((id) => outcome.has(id));
+  const escaped = withOutcome.filter((id) => outcome.get(id) === "escaped");
+  const stats = {
+    escapes: ids.length,
+    byVerdict: ESCAPE_VERDICTS.reduce((a, v) => ((a[v] = ids.filter((id) => verdict.get(id) === v).length), a), {}),
+    withOutcome: withOutcome.length,
+    escapedBugs: escaped.length,
+    findings: [],
+  };
+  if (!ids.length) return stats;
+  // Coverage first, same as the shipped/closed ratio: a finding computed over a
+  // quarter of the escapes describes a biased slice, and someone is about to
+  // retune riskFloor with it.
+  if (withOutcome.length / ids.length < 0.8)
+    stats.findings.push(
+      `escape-hatch outcome coverage ${withOutcome.length}/${ids.length} (<80%) — most quick-task/fix-bug runs never reported back, so nothing below can be trusted to retune riskFloor (§5.1.1)`,
+    );
+  if (escaped.length && ids.length >= minSample)
+    stats.findings.push(
+      `${escaped.length}/${withOutcome.length} escape-hatch task(s) shipped a bug (${escaped.join(", ")}) — the riskFloor thresholds are letting real risk skip all 5 gates (§5.1.1)`,
+    );
+  return stats;
+}
+
 // --- pure text predicates (self-checked below via --self-check) -------------
 
 // "Real evidence": a command was run AND a pass/exit signal was recorded IN A
@@ -1896,6 +1955,80 @@ if (args.has("--self-check")) {
         assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
   }
 
+  // escapeHatchStats: the feedback loop for tasks that skipped every gate. The
+  // cases that matter are the two dodges -- re-triaging to erase an escape, and
+  // overwriting an "escaped" with a later "clean".
+  {
+    const row = (id, v, flag = "-", vec = "-") => `2026-01-01T00:00:00Z\t${id}\t${v}\t${flag}\t${vec}\t\n`;
+    const s = (text, o) => escapeHatchStats(text, { minSample: 2, ...o });
+
+    assert.equal(s("").escapes, 0, "an empty log says nothing");
+    assert.equal(s(row("A-1", "harness", "-", '{"scope":2}')).escapes, 0, "a harness verdict is not an escape");
+    assert.equal(s(row("A-1", "quick-task", "-", '{"scope":0}')).escapes, 1, "quick-task counts as an escape");
+    assert.equal(s(row("B-2", "fix-bug", "-", '{"scope":0}')).byVerdict["fix-bug"], 1, "fix-bug counts separately");
+
+    // Re-triaging must not erase the run that actually skipped the gates --
+    // same reason triageVectorFor keeps the lowest vector.
+    assert.equal(
+      s(row("A-1", "quick-task") + row("A-1", "harness", "-", '{"scope":2}')).escapes,
+      1,
+      "a later harness verdict does not undo the escape that already happened",
+    );
+    // Two DIFFERENT escape verdicts is what makes first-wins load-bearing: the
+    // case above never re-enters the branch, so it passed with the guard
+    // deleted. Found by mutation-testing, not by reading it.
+    assert.equal(
+      s(row("A-1", "quick-task") + row("A-1", "fix-bug")).byVerdict["quick-task"],
+      1,
+      "the first escape verdict is the one that skipped the gates",
+    );
+
+    // Coverage, before any conclusion.
+    const none = s(row("A-1", "quick-task") + row("B-2", "quick-task"));
+    assert.equal(none.withOutcome, 0, "no outcome rows yet");
+    assert.ok(none.findings[0]?.includes("coverage"), "zero coverage is reported before any verdict about riskFloor");
+
+    const clean = s(row("A-1", "quick-task") + row("A-1", "outcome", "clean") + row("B-2", "quick-task") + row("B-2", "outcome", "clean"));
+    assert.deepEqual(clean.findings, [], "full coverage and no escaped bug is silence");
+    assert.equal(clean.withOutcome, 2, "both outcomes counted");
+
+    const bad = s(row("A-1", "quick-task") + row("A-1", "outcome", "escaped") + row("B-2", "fix-bug") + row("B-2", "outcome", "clean"));
+    assert.ok(bad.findings.some((f) => f.includes("shipped a bug")), "an escaped bug is the finding riskFloor exists to prevent");
+    assert.ok(bad.findings.some((f) => f.includes("A-1")), "the finding names the task");
+
+    // "escaped" must not be overwritable by a later "clean": that is the
+    // cheapest way to make the thresholds look safe.
+    assert.equal(
+      s(row("A-1", "quick-task") + row("A-1", "outcome", "escaped") + row("A-1", "outcome", "clean")).escapedBugs,
+      1,
+      "a later clean cannot erase an escaped bug",
+    );
+    // ...and the honest direction works: clean first, escaped later.
+    assert.equal(
+      s(row("A-1", "quick-task") + row("A-1", "outcome", "clean") + row("A-1", "outcome", "escaped")).escapedBugs,
+      1,
+      "a bug found later is recorded",
+    );
+
+    // An outcome for a task that never escaped must not invent a denominator.
+    // An orphan outcome must not inflate coverage either: counting outcome rows
+    // instead of matched escapes would report 1/1 for a log with one unrelated
+    // row and one unreported escape.
+    const orphan = s(row("A-1", "quick-task") + row("Z-9", "outcome", "clean"));
+    assert.equal(orphan.escapes, 1, "an orphan outcome row is not an escape");
+    assert.equal(orphan.withOutcome, 0, "an orphan outcome row does not count as coverage");
+    // Below minSample, one bad task is not a threshold verdict.
+    assert.ok(
+      !escapeHatchStats(row("A-1", "quick-task") + row("A-1", "outcome", "escaped"), { minSample: 5 }).findings.some((f) =>
+        f.includes("shipped a bug"),
+      ),
+      "one task is not enough evidence to retune riskFloor",
+    );
+    // An outcome row must never be read as a triage vector, or a task with only
+    // an outcome would look triaged and silence the "no _triage.log entry" warning.
+    assert.equal(triageVectorFor("/nonexistent", "A-1"), null, "guard: triageVectorFor on a missing file");
+  }
+
   // routeForUrl: the pasted-link entry point. Every branch gets a case, because
   // the expensive mistake is not "no suggestion" -- it is suggesting a fresh
   // /start-task on a task that already exists, which forks append-only docs.
@@ -2541,6 +2674,41 @@ if (args.has("--cost")) {
 // --route <url>: called by the UserPromptSubmit hook on every prompt, so it must
 // be quiet and fast. Prints one line or nothing; exit 0 either way -- a hook that
 // can fail a prompt is a hook people disable.
+// --escape-outcome <taskId> <escaped|clean>: close the loop on a task that
+// skipped the harness. Without it the riskFloor thresholds (§5.1.1) can never
+// be wrong in a way anyone measures: the tasks they waved through leave no
+// folder, so --calibrate cannot see them.
+if (args.has("--escape-outcome")) {
+  const at = argv.indexOf("--escape-outcome");
+  const [taskId, result] = argv.slice(at + 1, at + 3);
+  if (!taskId || !["escaped", "clean"].includes(result)) {
+    console.error('✖ --escape-outcome needs: <taskId> <escaped|clean>');
+    console.error("  escaped = a bug from this task reached someone else; clean = it did not");
+    process.exit(2);
+  }
+  const logPath = join(TASKS_DIR, "_triage.log");
+  // Refuse to record an outcome for a task that never took an escape hatch:
+  // otherwise the denominator is whatever anyone typed, and coverage — the one
+  // number that says whether the findings mean anything — becomes fiction.
+  const known = existsSync(logPath)
+    ? readFileSync(logPath, "utf8").split("\n").some((l) => {
+        const c = l.split("\t");
+        return c.length >= 5 && c[1] === taskId && ["quick-task", "fix-bug"].includes(c[2]);
+      })
+    : false;
+  if (!known) {
+    console.error(`✖ --escape-outcome: ${taskId} has no quick-task/fix-bug verdict in _triage.log — nothing to close the loop on`);
+    process.exit(2);
+  }
+  const { appendFileSync, mkdirSync } = await import("node:fs");
+  mkdirSync(TASKS_DIR, { recursive: true });
+  // vector column is "-" on purpose: triageVectorFor JSON.parses that column,
+  // and a parseable value here would make an outcome row look like a triage.
+  appendFileSync(logPath, `${new Date().toISOString()}\t${taskId}\toutcome\t${result}\t-\t\n`);
+  console.log(`recorded: ${taskId} → ${result}`);
+  process.exit(0);
+}
+
 if (args.has("--route")) {
   const url = argv[argv.indexOf("--route") + 1] ?? "";
   let out = "";
@@ -3509,6 +3677,12 @@ const totalWarn = results.reduce((s, r) => s + r.warnings.length, 0);
 
 if (CALIBRATE) {
   const c = calibrate(allTasks);
+  // The escape hatches are half the routing decision, and until now --calibrate
+  // was blind to them: a task waved through as quick-task has no folder, so it
+  // is in neither the numerator nor the denominator above. A threshold can only
+  // be wrong in a way someone notices if both branches report back.
+  const esc = escapeHatchStats(existsSync(join(TASKS_DIR, "_triage.log")) ? readFileSync(join(TASKS_DIR, "_triage.log"), "utf8") : "");
+  c.escapeHatch = esc;
   if (AS_JSON) console.log(JSON.stringify(c, null, 2));
   else {
     console.log(`\n── calibration · ${c.tasks} closed task(s) ──`);
@@ -3529,6 +3703,24 @@ if (CALIBRATE) {
             "   Check it against your CLI's own usage log before changing a tier.",
         );
     } else if (c.tasks) console.log("\n   no threshold looks wrong yet");
+
+    if (esc.escapes) {
+      console.log(`\n── escape hatches · ${esc.escapes} task(s) skipped the harness ──`);
+      console.log(`   quick-task=${esc.byVerdict["quick-task"]}  fix-bug=${esc.byVerdict["fix-bug"]}`);
+      console.log(`   outcome reported: ${esc.withOutcome}/${esc.escapes}  ·  shipped a bug: ${esc.escapedBugs}`);
+      for (const f of esc.findings) console.log(`   • ${f}`);
+      // "looks safe" must not be printed over a reported bug just because the
+      // sample is too small to conclude from -- that is the sentence someone
+      // quotes while raising the thresholds. Say which of the two it is.
+      if (!esc.findings.length && esc.withOutcome)
+        console.log(
+          esc.escapedBugs
+            ? `   ${esc.escapedBugs} bug(s) reported, but ${esc.escapes} escape(s) < ${CFG.calibrateMinSample ?? 5} — too few to conclude anything about riskFloor`
+            : "   riskFloor looks safe so far",
+        );
+      console.log("\n   note: self-reported via `--escape-outcome <taskId> <escaped|clean>`.\n" +
+        "   An escaped task leaves no artifact, so nothing on disk can contradict \"clean\".");
+    }
   }
   process.exit(0);
 }

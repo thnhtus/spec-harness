@@ -135,6 +135,22 @@ or how heavy the flow runs. So this step goes first — **before the worktree**.
    second threshold: a task that is not `trivial`, or any risk dimension ≥ 2,
    goes to the harness — however small the diff looks.
 
+   **Taking an escape hatch does not end the task — report back when it ships.**
+   A `quick-task` / `fix-bug` run creates no task folder, so `--calibrate` cannot
+   see it at all: the thresholds that waved it through are the one part of §5.1.1
+   nothing could ever prove wrong. One command closes that loop, at the point the
+   work is actually done:
+
+   ```bash
+   node scripts/validate-tasks.mjs --escape-outcome <taskId> clean     # no bug came back
+   node scripts/validate-tasks.mjs --escape-outcome <taskId> escaped   # a bug from it reached someone else
+   ```
+
+   `escaped` is not an admission of fault — it is the only evidence that
+   `riskFloor` is too loose, and `--calibrate` needs several before it says so.
+   Recording `clean` for a task that later bit someone is the one entry that
+   cannot be taken back (a later `escaped` wins, a later `clean` does not).
+
    The user wants the harness even though the verdict is an escape hatch → just
    run it, nothing else needed. The other direction (verdict `harness` but the
    user wants to skip) → `--force "<reason>"`. Skipping the harness is a valid

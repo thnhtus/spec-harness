@@ -376,6 +376,19 @@ A warning, not an error: a genuinely hard task can also grow, and `08` pasting m
 
 ### 5.6. Closing the loop: `outcome` + `--calibrate`
 
+**The escape hatches need the same loop, and it is a different command.** A task triaged as `quick-task` / `fix-bug` never gets a task folder, so it has no `outcome` block and `--calibrate` cannot see it — which meant the `riskFloor` thresholds could only ever be proven wrong for the tasks they *did* send to the harness. Backwards: those are the tasks that had five gates.
+
+```bash
+node scripts/validate-tasks.mjs --escape-outcome <taskId> <clean|escaped>
+```
+
+It appends one row to `_triage.log` (the same file that already holds the verdict) and refuses a task that never took an escape hatch — otherwise the denominator is whatever anyone typed, and coverage becomes fiction. A later `escaped` overrides an earlier `clean`, never the reverse: a bug found in week three is still a bug the thresholds let out.
+
+`--calibrate` then prints an escape-hatch section: how many skipped, how many reported back, how many shipped a bug. Below 80% reporting it says so **before** any verdict about `riskFloor` — a finding computed over a quarter of the escapes describes a biased slice.
+
+> **This half is self-reported and cannot be contradicted.** A task that skipped the harness leaves no artifact, so nothing on disk can dispute a `clean`. That is why coverage is printed next to every finding rather than folded into it. It is still strictly more than the previous state, which was no signal at all.
+
+
 The `vector` is the estimate **before**, `attempts` is the rework **during**. Neither knows whether the task actually held up after shipping. That is `outcome`, filled in when the task closes:
 
 ```json

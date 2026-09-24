@@ -377,6 +377,19 @@ Cảnh báo chứ không phải lỗi: một task thực sự khó cũng có th�
 
 ### 5.6. Khép vòng: `outcome` + `--calibrate`
 
+**Hai nhánh escape cũng cần vòng này, và nó là lệnh khác.** Task được triage ra `quick-task` / `fix-bug` không có task folder, nên không có block `outcome` và `--calibrate` không nhìn thấy nó — tức ngưỡng `riskFloor` chỉ có thể bị chứng minh là sai ở những task nó đã đẩy vào harness. Ngược đời: đó chính là những task đã có năm cái gate.
+
+```bash
+node scripts/validate-tasks.mjs --escape-outcome <taskId> <clean|escaped>
+```
+
+Nó ghi thêm một dòng vào `_triage.log` (chính file đã giữ verdict) và từ chối task chưa bao giờ đi lối escape — nếu không thì mẫu số là bất cứ thứ gì người ta gõ vào, và độ phủ thành chuyện bịa. Một `escaped` đến sau đè lên `clean` trước đó, chiều ngược lại thì không: bug tìm ra ở tuần thứ ba vẫn là bug ngưỡng đó thả ra.
+
+`--calibrate` rồi in một mục escape hatch: bao nhiêu task đã bỏ qua harness, bao nhiêu đã báo lại, bao nhiêu để lọt bug. Dưới 80% báo lại thì nó nói điều đó **trước** mọi kết luận về `riskFloor` — finding tính trên một phần tư số escape là mô tả một lát cắt lệch.
+
+> **Nửa này là tự khai và không có gì phản biện được.** Task bỏ qua harness không để lại artifact nào, nên không thứ gì trên đĩa cãi được một chữ `clean`. Đó là lý do độ phủ được in cạnh mọi finding chứ không gộp vào. Dù vậy vẫn hơn hẳn trạng thái trước đó: không có tín hiệu nào cả.
+
+
 `vector` là ước lượng **trước**, `attempts` là phần làm lại **trong lúc làm**. Cả hai đều không biết task có trụ được sau khi ship hay không. Đó là `outcome`, điền khi đóng task:
 
 ```json
