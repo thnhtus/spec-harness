@@ -399,6 +399,15 @@ export function resolveTier(role, complexity, attempt = 1, cfg = CFG) {
   return { tier, model, base };
 }
 
+// Which stages owe a complexity vector. `bootstrap` is INCLUDED: it is the stage
+// that writes the vector, and excluding it left "delete the block" silent at
+// exactly the moment it happens -- every later stage then inherits a task whose
+// routing (gate weight, model tier, worktree) was never checked. Found by running
+// the real validator on a real task folder, not by reading the code.
+export function vectorIsOwed(currentStage, stageOrder = STAGE_ORDER) {
+  return stageOrder.indexOf(currentStage) >= stageOrder.indexOf("bootstrap");
+}
+
 export function cascadeDefects(telemetry = []) {
   const errors = [], warnings = [];
   const byStage = {};
@@ -1785,6 +1794,18 @@ if (args.has("--self-check")) {
         assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
   }
 
+  // vectorIsOwed: the missing-vector rule used to start AFTER bootstrap, which
+  // exempted the one stage that writes it -- so `--no-warn` passed a task whose
+  // whole §5.1 apparatus had simply been deleted. The bootstrap case is the
+  // regression test; the others keep the boundary honest.
+  {
+    assert.ok(vectorIsOwed("bootstrap"), "bootstrap WRITES the vector — exempting it makes deletion free");
+    for (const s of STAGE_ORDER.slice(1)) assert.ok(vectorIsOwed(s), `stage "${s}" inherits the vector and owes it too`);
+    // A stage the config does not know is indexOf -1: it must not read as owed,
+    // or a typo'd currentStage would produce a second, confusing error.
+    assert.equal(vectorIsOwed("typo-stage"), false, "an unknown stage is reported elsewhere, not here");
+  }
+
   // cascade (§5.3.1): the retry must cost more than the attempt it is fixing.
   // Both directions get a case -- a check that never fires is decoration, and a
   // check that fires on a legal escalation would push everyone back to flat tiers.
@@ -2915,10 +2936,7 @@ for (const { sprint, task, path } of folders) {
       warnings.push(
         "complexity.assessedAt is still \"bootstrap\" past technical_plan — §5.1.3 requires the planner to re-check the vector against the src/ survey; set assessedAt:\"technical_plan\" once it has (raising only)",
       );
-  } else if (STAGE_ORDER.indexOf(data.currentStage) > STAGE_ORDER.indexOf("bootstrap")) {
-    // Omitting the block used to be cheaper than filling it in wrong: a missing
-    // vector was a warning, and pre-commit runs --no-warn. So the whole §5.1
-    // apparatus was opt-out by deletion. Same since-cutoff as everything else.
+  } else if (vectorIsOwed(data.currentStage)) {
     (outcomeIsBlocking(data) ? errors : warnings).push(
       "complexity.vector missing — taskComplexity is an unchecked guess, and every downstream routing decision (gate weight, model tier, worktree) rests on it (Agents.md §5.1)",
     );
