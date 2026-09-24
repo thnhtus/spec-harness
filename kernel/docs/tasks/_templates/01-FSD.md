@@ -56,8 +56,10 @@
 
 ## Gate 1 — checklist
 
+> These four lines are **enforced** by `scripts/validate-tasks.mjs` from `fsd_review` onward — they are not self-graded. A row still carrying `<MOD>`, an empty requirement cell, or a requirement quoted inside a blockquote does not count.
+
 - [ ] `01-FSD.md` follows the IEEE skeleton (Introduction + Overall Description + External Interface + Functional Requirements)
-- [ ] ≥ 1 functional requirement written with `shall`, atomic, with a Source
+- [ ] ≥ 1 functional requirement written with a modal from `harness.config.json → fsdModal`, atomic, with a Source
 - [ ] Assumptions & Open Questions kept separate; any sourceless requirement marked `assumed`
 - [ ] Requirement Trace Summary maps every `FSD-<MOD>-nnn` back to a source
 

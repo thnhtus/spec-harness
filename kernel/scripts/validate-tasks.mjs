@@ -399,6 +399,72 @@ export function resolveTier(role, complexity, attempt = 1, cfg = CFG) {
   return { tier, model, base };
 }
 
+// Gate 1, with something behind it. Until now Gate 1 checked only that
+// 01-FSD.md EXISTS and fits the line cap -- everything the gate actually claims
+// (the IEEE skeleton, requirements written as requirements, each traced to a
+// source) was the coordinator reading its own output and grading it. Stripping
+// every `shall` and deleting §4 outright both passed silently, and the
+// emptiness surfaced only at Gate 3, after the planner had worked from it.
+//
+// The rules below are the template's own "Gate 1 — checklist", verbatim. Prose
+// that no check reads is the drift shape docEnums exists to end.
+const FSD_SECTIONS = ["Introduction", "Overall Description", "External Interface", "Functional Requirements"];
+
+export function gate1Defects(text, { modal = CFG.fsdModal } = {}) {
+  // Fail closed: no configured modal would silently delete the wording rule.
+  if (!Array.isArray(modal) || !modal.length)
+    throw new Error("config.fsdModal is required (Gate 1 cannot check requirement wording without it)");
+  const out = [];
+  // Documentation inside the artifact must not satisfy the check that reads it:
+  // the template's instruction blockquote names every section and shows a
+  // sample requirement row. Both regexes below anchor at `^`, so a quoted line
+  // ("> ## 4. ..." / "> | FSD-...") matches neither -- an explicit blockquote
+  // filter was tried here and mutation-testing proved it changed no input.
+  const body = text;
+
+  const missing = FSD_SECTIONS.filter((s) => !new RegExp(String.raw`^#{1,3}\s*\d*\.?\s*` + s, "mi").test(body));
+  if (missing.length)
+    out.push(`01-FSD.md is missing IEEE section(s): ${missing.join(", ")} — Gate 1 requires the skeleton (Agents.md §3)`);
+
+  // A requirement row is "| FSD-... | text | source | status |". The template's
+  // own sample row has an EMPTY requirement cell and a `<MOD>` placeholder id,
+  // so an untouched file must not count as having a requirement -- that is the
+  // exact false green being closed here.
+  const rows = body
+    .split("\n")
+    .map((l) => /^\|\s*(FSD-[A-Za-z0-9<>_-]+-\d+)\s*\|(.*)$/.exec(l))
+    .filter(Boolean)
+    .map((m) => ({ id: m[1], cells: m[2].split(/(?<!\\)\|/).map((c) => c.trim()) }))
+    .filter((r) => !r.id.includes("<"));
+  const esc1 = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Unicode-aware boundaries: \b would not fire on "phải" in most positions.
+  const modalRe = new RegExp(`(?:^|[^\\p{L}])(?:${modal.map(esc1).join("|")})(?:[^\\p{L}]|$)`, "iu");
+  const written = rows.filter((r) => modalRe.test(r.cells[0] ?? ""));
+  if (!written.length)
+    out.push(
+      `01-FSD.md has no functional requirement written with ${modal.map((m) => `"${m}"`).join(" / ")} (config.fsdModal) — ` +
+        "a table of IDs with no requirement text is not a specification (Gate 1 checklist)",
+    );
+
+  // A requirement with no Source is where the AC chain starts from nothing.
+  const sourceless = written.filter((r) => !(r.cells[1] ?? "").replace(/[`….\s]/g, "").length);
+  if (sourceless.length)
+    out.push(
+      `01-FSD.md requirement(s) with no Source: ${sourceless.map((r) => r.id).join(", ")} — ` +
+        "an untraceable requirement is where the AC chain breaks (Gate 1 checklist)",
+    );
+  return out;
+}
+
+// Which stages must hold up against Gate 1. `>=`, not `>`: fsd_review is the
+// FIRST stage that READS 01-FSD.md, so exempting it would let an empty FSD reach
+// the reviewer -- which is the whole failure Gate 1 exists to stop. Same shape
+// as the bootstrap/vector exemption fixed in 986e9bd.
+export function gate1IsOwed(currentStage, stageOrder = STAGE_ORDER) {
+  const i = stageOrder.indexOf(currentStage);
+  return i >= 0 && i >= stageOrder.indexOf("fsd_review");
+}
+
 // Which stages owe a complexity vector. `bootstrap` is INCLUDED: it is the stage
 // that writes the vector, and excluding it left "delete the block" silent at
 // exactly the moment it happens -- every later stage then inherits a task whose
@@ -1794,6 +1860,96 @@ if (args.has("--self-check")) {
         assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
   }
 
+  // gate1Defects: the four checklist lines the template printed for months while
+  // nothing read them. The cases that matter are the false greens -- an
+  // untouched template and a header-only file both used to pass.
+  {
+    const good = [
+      "## 1. Introduction", "## 2. Overall Description", "## 3. External Interface Requirements",
+      "## 4. Functional Requirements",
+      "| FSD ID | Requirement | Source | Status |",
+      "| FSD-ROS-001 | The system shall filter the roster by department | `FR-12` | confirmed |",
+    ].join("\n");
+    const g = (t, o) => gate1Defects(t, { modal: ["shall", "phải"], ...o });
+    assert.deepEqual(g(good), [], "a real FSD is silent");
+
+    // The regression: stripping the modal used to pass.
+    assert.ok(g(good.replace("shall", "MUST")).some((d) => d.includes("no functional requirement")), "a row with no modal is not a requirement");
+    // The other regression: deleting §4 entirely used to pass.
+    assert.ok(g(good.replace("## 4. Functional Requirements", "")).some((d) => d.includes("Functional Requirements")), "a missing IEEE section is named");
+    // 2, not 3: with no requirement at all there is no requirement to be
+    // sourceless. The sourceless rule gets its own case below.
+    assert.equal(g("## 1. Introduction").length, 2, "an almost-empty file fails the skeleton and the requirement rule");
+    // Filled-in text on a placeholder id is what makes the `<MOD>` filter
+    // load-bearing: with the blank cell alone the modal rule fires anyway, so
+    // the first version of this assert passed with the filter deleted. Found by
+    // mutation-testing, not by reading it.
+    assert.ok(
+      g(good.replace(/\| FSD-ROS-001 .*/, "| FSD-<MOD>-001 | The system shall filter | `FR-12` | confirmed |")).some((d) =>
+        d.includes("no functional requirement"),
+      ),
+      "a row still carrying the <MOD> placeholder was never filled in, whatever the text says",
+    );
+    // A requirement with no source is where the AC chain starts from nothing.
+    assert.ok(
+      g(good.replace("| `FR-12` |", "|  |")).some((d) => d.includes("no Source")),
+      "a sourceless requirement is named by id",
+    );
+    assert.ok(g(good.replace("| `FR-12` |", "| `…` |")).some((d) => d.includes("no Source")), "an ellipsis placeholder is not a source");
+    // Documentation inside the artifact must not satisfy the check that reads
+    // it -- the template's own instruction blockquote names every section and
+    // quotes `shall`, so a header-only file would otherwise pass clean.
+    // `> ## X` is already not a heading, so the case that makes the blockquote
+    // filter load-bearing is a real skeleton whose ONLY requirement row is
+    // quoted -- the template shows a sample row, and documentation inside the
+    // artifact must not satisfy the check that reads the artifact.
+    const quotedRow = good.replace(/^\| FSD-ROS-001 .*/m, "> | FSD-ROS-001 | The system shall filter | `FR-12` | confirmed |");
+    assert.ok(
+      g(quotedRow).some((d) => d.includes("no functional requirement")),
+      "a requirement row inside an instruction blockquote is documentation, not a requirement",
+    );
+    // The `^` anchor is what does that, so it needs its own case: a blockquote
+    // that quotes every heading must not satisfy the skeleton rule. Without
+    // this, dropping the anchor passed silently.
+    assert.ok(
+      g(FSD_SECTIONS.map((s) => `> ## ${s}`).join("\n")).some((d) => d.includes("missing IEEE section")),
+      "quoted headings are prose about the sections, not the sections",
+    );
+    // docLanguage is not English for every team: the modal comes from config.
+    assert.deepEqual(
+      g(good.replace("The system shall filter", "Hệ thống phải lọc")),
+      [],
+      "a configured non-English modal is accepted",
+    );
+    // Fail closed: no modal must throw, never silently drop the rule.
+    assert.throws(() => gate1Defects(good, { modal: [] }), /fsdModal is required/, "an empty fsdModal cannot disable the rule quietly");
+    // `undefined` falls through to the CFG default by design, so the real case
+    // is a config that never declared it.
+    assert.throws(() => gate1Defects(good, { modal: null }), /fsdModal is required/, "an absent fsdModal cannot disable the rule quietly");
+    assert.throws(() => gate1Defects(good, { modal: "shall" }), /fsdModal is required/, "a string is rejected, not iterated as characters");
+    // This repo must ship a config that can actually run the gate.
+    assert.ok(Array.isArray(CFG.fsdModal) && CFG.fsdModal.length, "harness.config.json must declare fsdModal");
+    // And the shipped template must pass its own gate once filled in -- except
+    // the sample row, which is deliberately blank.
+    const tpl = join(TASKS_DIR, "_templates/01-FSD.md");
+    if (existsSync(tpl))
+      assert.deepEqual(
+        gate1Defects(readFileSync(tpl, "utf8")).filter((d) => !d.includes("no functional requirement")),
+        [],
+        "the shipped template must satisfy every Gate 1 rule it can (only the blank sample row may fail)",
+      );
+  }
+
+  // gate1IsOwed: fsd_review is the first stage that READS the FSD, so it is the
+  // first stage that owes it. Exempting it would hand the reviewer an empty spec.
+  {
+    assert.ok(gate1IsOwed("fsd_review"), "fsd_review READS 01-FSD.md — exempting it defeats the gate");
+    for (const s of STAGE_ORDER.slice(STAGE_ORDER.indexOf("fsd_review"))) assert.ok(gate1IsOwed(s), `stage "${s}" is at or past fsd_review`);
+    assert.equal(gate1IsOwed("fsd_write"), false, "the FSD is still being written at fsd_write");
+    assert.equal(gate1IsOwed("bootstrap"), false, "no FSD exists at bootstrap");
+    assert.equal(gate1IsOwed("typo-stage"), false, "an unknown stage is reported elsewhere, not here");
+  }
+
   // vectorIsOwed: the missing-vector rule used to start AFTER bootstrap, which
   // exempted the one stage that writes it -- so `--no-warn` passed a task whose
   // whole §5.1 apparatus had simply been deleted. The bootstrap case is the
@@ -3159,6 +3315,16 @@ for (const { sprint, task, path } of folders) {
           `${role} is done and status=${data.status}, but its last handoff says "Continue automation: no" — one of the two is stale (SharedRules §4)`,
         );
     }
+
+  // Gate 1, enforced. Same shape as the Gate 2 rule below: the artifact only
+  // has to hold up once the stage that consumes it has started. `>=`, not `>`
+  // -- fsd_review is the FIRST stage that reads 01-FSD.md, and exempting it
+  // would let an empty FSD reach the reviewer, which is the whole failure.
+  {
+    const fsd = join(path, "01-FSD.md");
+    if (existsSync(fsd) && gate1IsOwed(data.currentStage))
+      for (const d of gate1Defects(readFileSync(fsd, "utf8"))) errors.push(d);
+  }
 
   // 8. AC traceability, checked per stage. An AC that never reached the plan is
   // a Gate 3 failure; waiting for `reviewing` to say so means the implementer

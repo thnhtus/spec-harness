@@ -91,6 +91,8 @@ Gate là chốt kiểm **chặn**. Chỉ bàn giao khi PASS; khi FAIL thì đặ
 
 Danh sách lệnh hợp lệ (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
+**Gate 1 được máy kiểm từ `fsd_review` trở đi** (stage đầu tiên *đọc* FSD): bốn section IEEE phải có mặt dưới dạng heading thật, ít nhất một dòng `FSD-<MOD>-nnn` phải có nội dung requirement dùng modal khai trong `harness.config.json → fsdModal`, và mọi requirement như vậy phải có Source. Danh sách modal nằm ở config vì văn xuôi theo `docLanguage` — hardcode `shall` sẽ làm Gate 1 đỏ vĩnh viễn với team không viết tiếng Anh. Dòng còn giữ placeholder `<MOD>`, hay requirement nằm trong blockquote hướng dẫn, đều không tính: tài liệu nằm bên trong artifact không được phép thoả mãn chính cái check đọc artifact đó. Thiếu `fsdModal` thì throw, chứ không tắt luật.
+
 > **Vì sao có Gate 5:** Gate 1–4 đều do chính người làm tự chấm. Validator chỉ đọc được chữ — nó thấy `08` có một lệnh và chữ "passed", nó không thấy được test đó có thật sự chứng minh AC hay không. `adversary` bắt đầu ở trạng thái FAIL và phải tìm ra bằng chứng mới lên được PASS.
 
 ---

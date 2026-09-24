@@ -90,6 +90,8 @@ A gate is a **blocking** checkpoint. Hand off only on PASS; on FAIL set the stat
 
 The list of valid commands (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
+**Gate 1 is machine-checked from `fsd_review` onward** (the first stage that *reads* the FSD): the four IEEE sections must be present as real headings, at least one `FSD-<MOD>-nnn` row must carry requirement text using a modal from `harness.config.json → fsdModal`, and every such requirement needs a Source. The modal list is config because prose follows `docLanguage` — hardcoding `shall` would turn Gate 1 permanently red for a team that does not write in English. A row still carrying the `<MOD>` placeholder, or a requirement quoted inside an instruction blockquote, does not count: documentation inside the artifact must not satisfy the check that reads the artifact. Missing `fsdModal` throws rather than disabling the rule.
+
 > **Why Gate 5 exists:** Gates 1–4 are all graded by the person doing the work. The validator can only read text — it sees that `08` contains a command and the word "passed"; it cannot see whether that test actually proves the AC. `adversary` starts at FAIL and has to find evidence to reach PASS.
 
 ---

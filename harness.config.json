@@ -120,6 +120,8 @@
     "since": "2026-07-28"
   },
   "_evidenceMode": "BẮT BUỘC khai, không có mặc định (--self-check đỏ nếu thiếu). Repo nguồn không chạy task thật — tasksDir trỏ vào _templates — nên legacy; bản cài ra cho project (adapters/example/) là attested.",
+  "_fsdModal": "Từ khóa modal làm một dòng bảng trong §4 thành requirement (IEEE: \"The system shall …\"). Phải khai, không có mặc định: prose theo `docLanguage`, nên hardcode \"shall\" sẽ làm Gate 1 luôn đỏ với team không nói tiếng Anh. Khớp không phân biệt hoa thường.",
+  "fsdModal": ["shall", "phải"],
   "_docLanguage": "Ngôn ngữ VĂN XUÔI của task doc (01/02/03/06/09, handoff). ID kỹ thuật, ENUM, đường dẫn, lệnh, output luôn giữ nguyên gốc bất kể giá trị này. Kernel không giả định — một team nói tiếng Anh đặt \"English\".",
   "docLanguage": "Tiếng Việt",
   "_docEnums": "ENUM của các bảng trong markdown (02-FSD-Review). task.agent.json có schema canh ENUM; bảng doc thì không — giá trị hợp lệ từng chỉ nằm trong prose rồi bị chép tay vào regex, nên hai bên trôi lệch (template dạy `clarification / contradiction`, Gate 2 không bao giờ khớp). Nay validator + template + docs đều đọc từ đây. `blocksOn`/`unresolved`: cặp giá trị làm Gate 2 đỏ.",
