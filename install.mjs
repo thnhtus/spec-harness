@@ -329,7 +329,13 @@ function installAdapter(P, cli, keep) {
   else keep(null, p);
   for (const [f, t] of a.also ?? []) writeFileSync(join(P, f), t);
   // Role files only where the format IS Claude's (name/description frontmatter + body).
-  if (a.roles) cpSync(join(SRC, "agents"), join(P, a.roles), { recursive: true });
+  // `hooks:` is Claude-only frontmatter (#53) — another CLI may reject the unknown
+  // key or, worse, run a hook whose payload the guard does not understand.
+  if (a.roles) {
+    mkdirSync(join(P, a.roles), { recursive: true });
+    for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md")))
+      writeFileSync(join(P, a.roles, f), read(join(SRC, "agents", f)).replace(/^hooks:\n(?:[ \t]+.*\n)+/m, ""));
+  }
 }
 
 function installAgentsLayer(P, keep) {
@@ -1205,6 +1211,18 @@ if (args[0] === "--self-test") {
     if (!read(join(A, ".windsurf/hooks.json")).includes("--guard windsurf")) fail(".windsurf/hooks.json (bản IDE cũ) mất guard");
     for (const f of [".gemini/agents/adversary.md", ".qwen/agents/adversary.md", ".factory/droids/adversary.md"])
       if (!existsSync(join(A, f))) fail(`thiếu ${f} — CLI đó mất role adversary, Gate 5 không còn độc lập`);
+      else if (/^hooks:/m.test(read(join(A, f)))) fail(`${f} còn block hooks: của Claude — CLI khác không hiểu payload đó (#53)`);
+
+    // #53: read-only role = hook ghi-file trong frontmatter Claude, chạy ĐÚNG lệnh
+    // đã khai trong file role (không gọi thẳng validator — lệnh sai path là guard tắt).
+    for (const r of ["adversary", "fsd-reviewer"]) {
+      const cmd = /command:\s*(.+--guard-role)\s*$/m.exec(read(join(A, ".claude/agents", `${r}.md`)))?.[1];
+      if (!cmd) fail(`.claude/agents/${r}.md không có hook --guard-role — "không sửa code" lại chỉ là prose`);
+      const run = (fp) => spawnSync("sh", ["-c", cmd], { cwd: A, env: { ...process.env, CLAUDE_PROJECT_DIR: A },
+        input: JSON.stringify({ cwd: A, agent_type: r, tool_name: "Edit", tool_input: { file_path: fp } }), encoding: "utf8" }).status;
+      if (run(join(A, "src/app.ts")) !== 2) fail(`${r}: Edit src/app.ts không bị chặn`);
+      if (run(join(A, "docs/tasks/sprint-1/A-1/09-Adversarial-Review.md")) !== 0) fail(`${r}: ghi task doc bị chặn — role không làm được việc`);
+    }
 
     const J = (f) => JSON.parse(read(join(A, f)));
     const sub = join(A, "src"); mkdirSync(sub, { recursive: true });
@@ -1359,6 +1377,10 @@ if (signpost) console.log(`
     Harness đứng cạnh repo code, nên PHẢI mở CLI trong ${where} — mở ở thư mục
     cha là mất skills, /start-task và guardrail deny git push. Biển báo đó bắt
     lỗi giúp bạn nếu lỡ mở nhầm.`);
+
+console.log(`
+ℹ️  Claude Code: adversary/fsd-reviewer chỉ được ghi trong tasksDir (hook trong frontmatter role).
+    Hook đó TẮT tới khi bạn trust folder: mở \`claude\` ở đây một lần, đồng ý trust dialog.`);
 
 if (done.includes("codex")) console.log(`
 ⚠️  Codex: hook guard (deny git push/reset --hard/.env) TẮT cho tới khi bạn trust.

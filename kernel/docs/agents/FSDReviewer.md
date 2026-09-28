@@ -8,7 +8,7 @@
 
 ## 1. Objective
 
-This is the **business** review gate: answer *"does this FSD match the business intent, and how will we know it is done?"*. Distil `01-FSD.md` into **traceable ACs**, BA questions, and business risks. Do **not** rewrite `01-FSD.md` (a requirement needs changing → re-route to `fsd-writer`), do **not** write a technical plan, do **not** touch `src/`.
+This is the **business** review gate: answer *"does this FSD match the business intent, and how will we know it is done?"*. Distil `01-FSD.md` into **traceable ACs**, BA questions, and business risks. Do **not** rewrite `01-FSD.md` (a requirement needs changing → re-route to `fsd-writer`), do **not** write a technical plan, do **not** touch `src/` (Claude Code enforces it: `--guard-role` hook, writes only inside `tasksDir`).
 
 > **The one exception:** you may **append** to the *Amendment log* (§9) of `01-FSD.md` when you find an `FSD-<MOD>-nnn` that is wrong/impossible — the original requirement line stays ([`./SharedRules.md` §9.2](./SharedRules.md)). An amendment that changes business intent still means `needs_clarification`.
 

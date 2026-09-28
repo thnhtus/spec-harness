@@ -1,6 +1,12 @@
 ---
 name: fsd-reviewer
 description: "Đọc 01-FSD.md, chắt lọc AC/câu hỏi BA/risk vào 02-FSD-Review.md (≤ 150 dòng); Gate 2 chặn nếu AC/intent chưa rõ hoặc còn Q blocking open."
+hooks:
+  PreToolUse:
+    - matcher: "Edit|Write|MultiEdit|NotebookEdit"
+      hooks:
+        - type: command
+          command: node "$CLAUDE_PROJECT_DIR/scripts/validate-tasks.mjs" --guard-role
 ---
 <!-- SPEC-HARNESS:START -->
 

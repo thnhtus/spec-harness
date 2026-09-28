@@ -202,6 +202,51 @@ if (args.has("--guard")) {
   process.exit(2);
 }
 
+// ---------------------------------------------------------------------------
+// --guard-role: the read-only roles (adversary, fsd-reviewer) may only WRITE
+// inside tasksDir (#53). "Does not touch src/" was prose; this is a PreToolUse
+// hook in their Claude frontmatter, so it only fires while that subagent runs.
+// Not `disallowedTools: Edit, Write`: both roles must write 09 / 02 /
+// .agent-memory / task.agent.json.
+//
+// A target with no harness.config.json above it (the code repo in layout C) is
+// outside every tasksDir by definition → deny.
+// ponytail: Edit/Write/MultiEdit/NotebookEdit only — `sed -i` / `>` through
+// Bash still land. Backstop: `--eval` scores "src unchanged" per case. Upgrade
+// path: a Bash write-detector, if eval ever shows a role doing it.
+// ---------------------------------------------------------------------------
+export function roleWriteVerdict(target, cwd, cfgAt) {
+  if (typeof target !== "string" || !target) return null;
+  const abs = resolve(cwd, target);
+  // Adversary-Mutation.md: the throwaway `git worktree add --detach /tmp/adv-$$`
+  // is where the adversary IS allowed to change a constant.
+  if (/^(\/private)?\/tmp\/adv-[^/]+\//.test(abs)) return null;
+  let dir = dirname(abs);
+  for (;;) {
+    const cfg = cfgAt(dir);
+    if (cfg) {
+      const tasks = resolve(dir, cfg.tasksDir ?? "docs/tasks");
+      return abs.startsWith(tasks + sep) ? null : `outside ${relative(dir, tasks) || tasks}/`;
+    }
+    const up = dirname(dir);
+    if (up === dir) return "no harness.config.json above it";
+    dir = up;
+  }
+}
+
+if (args.has("--guard-role")) {
+  let input;
+  // Fail open on an unreadable payload, same reason as --guard.
+  try { input = JSON.parse(process.stdin.isTTY ? "" : readFileSync(0, "utf8")); } catch { process.exit(0); }
+  const ti = input?.tool_input ?? {};
+  const cfgAt = (d) => { try { return JSON.parse(readFileSync(join(d, "harness.config.json"), "utf8")); } catch { return null; } };
+  const target = ti.file_path ?? ti.notebook_path;
+  const why = roleWriteVerdict(target, input?.cwd ?? process.cwd(), cfgAt);
+  if (!why) process.exit(0);
+  console.error(`blocked: role ${input?.agent_type ?? "(read-only)"} writes only inside tasksDir — ${target} is ${why} (spec-harness #53)`);
+  process.exit(2);
+}
+
 const CONFIG_NAME = "harness.config.json";
 
 // Walk up from `start` looking for harness.config.json. The directory holding it
@@ -1727,6 +1772,19 @@ if (args.has("--self-check")) {
     "harness.config.json must declare docEnums — without it the doc tables have no schema at all",
   );
 
+  // roleWriteVerdict (#53): inside tasksDir allowed, anything else denied.
+  {
+    const cfgAt = (d) => (d === "/h" ? { tasksDir: "docs/tasks" } : null);
+    assert.equal(roleWriteVerdict("docs/tasks/sprint-1/A-1/09-Adversarial-Review.md", "/h", cfgAt), null, "09 inside tasksDir is allowed");
+    assert.equal(roleWriteVerdict("/h/docs/tasks/sprint-1/A-1/.agent-memory/adversary.md", "/x", cfgAt), null, "absolute path inside tasksDir is allowed");
+    assert.ok(roleWriteVerdict("src/app.ts", "/h", cfgAt), "src/ is denied");
+    assert.ok(roleWriteVerdict("docs/tasks-evil/x.md", "/h", cfgAt), "a sibling sharing the prefix is not inside tasksDir");
+    assert.ok(roleWriteVerdict("/code/src/a.ts", "/h", cfgAt), "no config above the target (layout C code repo) is denied");
+    assert.equal(roleWriteVerdict(undefined, "/h", cfgAt), null, "no path in the payload is not a write");
+    assert.equal(roleWriteVerdict("/tmp/adv-123/src/a.ts", "/h", cfgAt), null, "the mutation worktree (Adversary-Mutation.md) is allowed");
+    assert.ok(roleWriteVerdict("/tmp/advx/src/a.ts", "/h", cfgAt), "only the adv-<pid> worktree, not any /tmp path");
+  }
+
   // strayTaskFolders (#54): a task the group scan skips must be reported, a
   // non-task dir and the group dirs themselves must not.
   {
@@ -3084,6 +3142,24 @@ if (args.has("--preflight")) {
     // which is exactly how a tool consuming --preflight --json finds out, at
     // the worst moment.
     else if (!QUIET && !AS_JSON) console.log(`ℹ kernel ${readFileSync(stamp, "utf8").split("\n")[0].trim()}`);
+  }
+
+  // #53, observed e2e (claude 2.1): an untrusted folder SKIPS subagent
+  // frontmatter hooks, logged only to the debug log — the read-only roles then
+  // write anywhere. Warning: ~/.claude.json is user state, not the repo's.
+  {
+    const { homedir } = await import("node:os");
+    const { realpathSync } = await import("node:fs");
+    const cj = join(homedir(), ".claude.json");
+    if (!isSourceRepo && existsSync(join(REPO_ROOT, ".claude/agents/adversary.md")) && existsSync(cj)) {
+      let trusted = null;
+      try {
+        const p = JSON.parse(readFileSync(cj, "utf8")).projects ?? {};
+        trusted = [REPO_ROOT, realpathSync(REPO_ROOT)].some((d) => p[d]?.hasTrustDialogAccepted);
+      } catch {}
+      if (trusted === false)
+        warns.push("Claude Code has not trusted this folder — it silently skips the adversary/fsd-reviewer write guard (#53). Open `claude` here once and accept the trust dialog");
+    }
   }
 
   if (!existsSync(TASKS_DIR)) errs.push(`tasksDir "${CFG.tasksDir}" does not exist (resolved: ${TASKS_DIR})`);
