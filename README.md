@@ -13,6 +13,8 @@ npx spec-harness     # chép kernel + skills + .claude/
 
 Dùng package manager khác thì đổi lệnh chạy, không cần cài global: `yarn dlx spec-harness` (Yarn 2+), `pnpm dlx spec-harness`, `bunx spec-harness`. Bốn lệnh chạy cùng một `install.mjs`; harness chỉ cần Node 20+.
 
+> **`npm i spec-harness` không cài harness.** Lệnh này chỉ tải package vào `node_modules/`, không chạy `install.mjs`. Package cố ý không có `postinstall`: installer hỏi `[y/N]` trước khi ghi đè file, và pnpm/bun hoặc `--ignore-scripts` đều chặn lifecycle script. Muốn ghim version làm devDependency thì chạy `npm i -D spec-harness`, rồi `npx spec-harness`. Lệnh sau dùng bản trong `node_modules/.bin`, không tải lại.
+
 Rồi mở CLI agent tại đó và chạy hai lệnh:
 
 ```
