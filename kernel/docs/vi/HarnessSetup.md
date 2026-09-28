@@ -32,7 +32,7 @@ Kiểm một lần khi onboard máy mới. Toolchain riêng của project: [`../
 | Git + SSH tới git host | đã cấu hình | `git --version` & `ssh -T git@<host>` |
 | Node.js (chạy validator) | 20+ | `node -v` |
 | Một package manager | npm (đi kèm Node), hoặc yarn / pnpm / bun | `npm -v` / `yarn -v` / `pnpm -v` / `bun -v` |
-| Harness CLI | Claude Code hoặc Codex CLI | `claude --version` / `codex --version` |
+| Harness CLI | Claude Code, Codex CLI hoặc Cursor (`install.mjs --cli codex,cursor`) | `claude --version` / `codex --version` |
 
 Cài dependency bằng đúng thứ repo đang dùng (`npm install` / `yarn` / `pnpm install` / `bun install` — lockfile quyết định; đừng trộn). Danh sách lệnh kiểm hợp lệ (one-shot vs watch mode): [`agents/SharedRules.md` §7](./agents/SharedRules.md).
 
@@ -75,7 +75,8 @@ Luật cốt lõi: **merge, không đè** — chỉ thay vùng giữa marker `SP
 | Tool | Đường dẫn | Nội dung |
 | --- | --- | --- |
 | Claude Code | `.claude/agents/{role}.md` (7 file) | file ngắn trỏ về `docs/agents/{Role}.md`, marker dạng HTML comment |
-| Codex | `.codex/AGENTS.md` + `.codex/agents/{role}.toml` (7 file) | tương đương, marker `# SPEC-HARNESS:START` |
+| Codex | `AGENTS.md` + `.codex/agents/{role}.toml` (7 file) + `.codex/hooks.json` (`--guard codex`) | do `install.mjs --cli codex` sinh, bị đè khi nâng cấp |
+| Cursor | đọc thẳng `.claude/agents/` + `.cursor/hooks.json` (`--guard cursor`) | do `install.mjs --cli cursor` sinh |
 
 Bảy `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `implementer`, `fixer`, **`adversary`**.
 

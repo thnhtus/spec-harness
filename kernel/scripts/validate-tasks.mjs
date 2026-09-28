@@ -57,6 +57,71 @@ const STAGED = args.has("--staged");
 const taskFlagAt = argv.indexOf("--task");
 const TASK_ARG = taskFlagAt !== -1 ? argv[taskFlagAt + 1] : null;
 
+// Declared here, not next to denyGaps(): --guard below runs BEFORE config load.
+const REQUIRED_DENY = [
+  "Bash(git push:*)", "Bash(git reset --hard:*)", "Bash(git stash:*)", "Bash(git clean:*)",
+  "Bash(cat .env:*)", "Bash(env:*)", "Bash(printenv:*)", "Read(.env)",
+];
+
+// ---------------------------------------------------------------------------
+// --guard codex|cursor: the deny-list for CLIs that do not read
+// `.claude/settings.json → permissions.deny`. Wired as Codex `PreToolUse` and
+// Cursor `beforeShellExecution` / `beforeReadFile` by install.mjs --cli.
+//
+// ONE list: REQUIRED_DENY ∪ the project's settings.json deny rules, parsed with
+// Claude's own syntax. A second copy of the list per CLI would drift, and a
+// drifted guard is a guardrail that looks armed.
+//
+// Runs before config load on purpose: a hook that exits 2 because
+// harness.config.json is missing blocks EVERY shell command in the session.
+//
+// ponytail: prefix match per `&&`/`;`/`|` segment, same ceiling as Claude's
+// deny — `bash -c "git push"`, `git -C x push`, `python -c open('.env')` pass.
+// It stops accidents, not intent. Upgrade path: a real shell parser, if a
+// bypass ever shows up in telemetry.
+// ---------------------------------------------------------------------------
+export function guardVerdict(kind, subject, deny) {
+  const toRe = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
+  for (const rule of deny) {
+    const m = /^(Bash|Read)\((.+)\)$/.exec(rule);
+    if (!m) continue;
+    if (kind === "shell" && m[1] === "Bash") {
+      const prefix = m[2].replace(/:\*$/, "");
+      const open = m[2].endsWith(":*");
+      for (const seg of String(subject).split(/&&|\|\||[;|\n]/).map((s) => s.trim().replace(/\s+/g, " ")))
+        if (seg === prefix || (open && seg.startsWith(prefix + " "))) return rule;
+    }
+    if (kind === "read" && m[1] === "Read") {
+      const base = String(subject).split(/[\\/]/).pop();
+      if (toRe(m[2]).test(base)) return rule;
+    }
+  }
+  return null;
+}
+
+if (args.has("--guard")) {
+  const cli = argv[argv.indexOf("--guard") + 1];
+  if (cli !== "codex" && cli !== "cursor") { console.error("usage: --guard codex|cursor  (hook payload on stdin)"); process.exit(64); }
+  const allow = () => { if (cli === "cursor") console.log('{"permission":"allow"}'); process.exit(0); };
+  let input;
+  // Fail OPEN on an unreadable payload: it means the CLI changed its hook
+  // format, and failing closed there blocks every command until someone
+  // disables the hook — the guardrail then stays gone for good.
+  try { input = JSON.parse(readFileSync(0, "utf8")); } catch { allow(); }
+  const deny = new Set(REQUIRED_DENY);
+  const settings = findUpward(join(".claude", "settings.json"), input.cwd ?? process.cwd());
+  if (settings) try { for (const r of JSON.parse(readFileSync(settings, "utf8"))?.permissions?.deny ?? []) deny.add(r); } catch {}
+  const cmd = input.tool_input?.command ?? input.command;
+  const hit = input.file_path != null
+    ? guardVerdict("read", input.file_path, deny)
+    : cmd != null ? guardVerdict("shell", Array.isArray(cmd) ? cmd.join(" ") : cmd, deny) : null;
+  if (!hit) allow();
+  const why = `blocked by spec-harness deny rule ${hit} (docs/Instructions.md §1)`;
+  if (cli === "cursor") console.log(JSON.stringify({ permission: "deny", user_message: why, agent_message: why }));
+  else console.error(why);
+  process.exit(2);
+}
+
 const CONFIG_NAME = "harness.config.json";
 
 // Walk up from `start` looking for harness.config.json. The directory holding it
@@ -1071,10 +1136,8 @@ const UPDATE_HEADING = /^## (?:Cập Nhật|Update) — /m;
 // Matched as a WHOLE RULE, not a substring. `deny.some(d => d.includes(r))` with
 // r="env" is satisfied by the unrelated rule `Read(.env)` -- the check would
 // report a guardrail that is not there. Each entry is the exact rule text.
-const REQUIRED_DENY = [
-  "Bash(git push:*)", "Bash(git reset --hard:*)", "Bash(git stash:*)", "Bash(git clean:*)",
-  "Bash(cat .env:*)", "Bash(env:*)", "Bash(printenv:*)", "Read(.env)",
-];
+// (REQUIRED_DENY itself is declared at the top of the file: --guard runs before
+// config load and needs it there.)
 
 // null = fine, string = what is wrong. A predicate rather than an inline assert
 // so it can be fed the configs a project might actually write, not just the one
@@ -2422,6 +2485,21 @@ if (args.has("--self-check")) {
       `REQUIRED_DENY entry ${JSON.stringify(r)} is not a whole rule — a fragment makes the match ambiguous and the check silently passes on rules that are not there`);
   assert.equal(new Set(REQUIRED_DENY).size, REQUIRED_DENY.length, "REQUIRED_DENY has a duplicate");
 
+  // guardVerdict: the deny-list for Codex/Cursor. Each case isolates ONE branch.
+  {
+    const g = (k, s) => guardVerdict(k, s, REQUIRED_DENY);
+    assert.equal(g("shell", "git push origin main"), "Bash(git push:*)", "guard: plain git push must block");
+    assert.equal(g("shell", "git push"), "Bash(git push:*)", "guard: bare prefix (no args) must block");
+    assert.equal(g("shell", "npm test && git reset --hard HEAD"), "Bash(git reset --hard:*)", "guard: a denied command after && must block");
+    assert.equal(g("shell", "ls; git  stash"), "Bash(git stash:*)", "guard: after ; with doubled space must block");
+    assert.equal(g("shell", "git pushx"), null, "guard: a prefix is a whole word, `git pushx` is not `git push`");
+    assert.equal(g("shell", "git status"), null, "guard: an allowed command must pass");
+    assert.equal(g("read", "/repo/.env"), "Read(.env)", "guard: reading .env must block");
+    assert.equal(g("read", "/repo/src/env.ts"), null, "guard: a file merely named like env must pass");
+    assert.equal(guardVerdict("read", "C:\\repo\\.env.local", ["Read(.env.*)"]), "Read(.env.*)", "guard: glob rule + Windows path must block");
+    assert.equal(g("read", "/repo/.git/push"), null, "guard: a Bash rule never matches a read");
+  }
+
   // ruleFloor: the cost half that does not need anyone to fill telemetry in.
   {
     const rd = (r) => `role/${r}.md`;
@@ -2821,6 +2899,15 @@ if (args.has("--preflight")) {
   // Present and loaded still says nothing about armed.
   if (reach === "ok")
     for (const gap of denyGaps(readFileSync(join(REPO_ROOT, ".claude/settings.json"), "utf8"))) errs.push(gap);
+
+  // Codex/Cursor do not read permissions.deny: their deny-list is a hook. A CLI
+  // layer present with the hook gone is the same failure as a missing settings.json.
+  for (const [dir, file, flag] of [[".codex", ".codex/hooks.json", "--guard codex"], [".cursor", ".cursor/hooks.json", "--guard cursor"]]) {
+    if (!existsSync(join(REPO_ROOT, dir))) continue;
+    let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}
+    if (!t.includes(flag))
+      errs.push(`${dir}/ exists but ${file} does not run \`validate-tasks.mjs ${flag}\` — on that CLI the deny-list on git push / reset --hard / .env is gone. Re-run the installer with --cli ${flag.split(" ")[1]}`);
+  }
 
   // .mcp.json: a placeholder URL kills the CLI at startup, and a credential in
   // there is committed. Neither shows up until it is expensive.

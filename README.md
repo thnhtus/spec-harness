@@ -15,7 +15,26 @@ Dùng package manager khác thì đổi lệnh chạy, không cần cài global:
 
 > **`npm i spec-harness` không cài harness.** Lệnh này chỉ tải package vào `node_modules/`, không chạy `install.mjs`. Package cố ý không có `postinstall`: installer hỏi `[y/N]` trước khi ghi đè file, và pnpm/bun hoặc `--ignore-scripts` đều chặn lifecycle script. Muốn ghim version làm devDependency thì chạy `npm i -D spec-harness`, rồi `npx spec-harness`. Lệnh sau dùng bản trong `node_modules/.bin`, không tải lại. Nâng cấp thì chạy `npx spec-harness@latest`, vì nếu không ghi `@latest` thì `npx` sẽ chạy lại bản cũ đã cài.
 
-Rồi mở CLI agent tại đó và chạy hai lệnh:
+### Codex, Cursor
+
+```bash
+npx spec-harness --cli codex,cursor   # thêm lớp cho CLI khác; .claude/ luôn được cài
+```
+
+Cài lại không cần `--cli`: installer tự nhận các lớp đã có và nâng luôn.
+
+| Lớp | Claude Code | Codex | Cursor |
+|---|---|---|---|
+| Gate (pre-commit + CI) | ✅ | ✅ | ✅ |
+| 7 role | `.claude/agents/` | `.codex/agents/*.toml` | đọc `.claude/agents/` |
+| Skills + `start-task` / `init-project-rules` | `.claude/` | `.agents/skills/` | `.agents/skills/` |
+| Deny `git push` / `reset --hard` / `.env` | `permissions.deny` | hook `PreToolUse` → `--guard codex` | hook `beforeShellExecution` + `beforeReadFile` → `--guard cursor` |
+| Gợi ý khi dán link task | ✅ | ✅ | ❌ (Cursor không chèn được context) |
+| MCP | `.mcp.json` | `.codex/config.toml` | `.cursor/mcp.json` |
+
+Guard dùng **một** danh sách: luật bắt buộc của harness cộng với `permissions.deny` trong `.claude/settings.json`. Thêm luật ở đó là cả ba CLI cùng nhận. **Codex bỏ qua hook cho tới khi bạn trust nó**: mở `codex` trong project, trust project, rồi gõ `/hooks` và trust hai hook spec-harness. Chưa trust thì guard đang tắt.
+
+Rồi mở CLI agent tại đó và chạy hai lệnh (Codex/Cursor: gọi skill `init-project-rules` / `start-task`):
 
 ```
 /init-project-rules                              # điền config cho project của bạn
@@ -64,7 +83,7 @@ adapters/                            ← phần mỗi project tự viết
 
 Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh ra sao. Bốn mục đó — và chỉ bốn mục đó — nằm ở `ProjectRules.md`. Số mục giữ nguyên **1/2/3/7** để mọi tham chiếu chéo `SharedRules §n` trong kernel vẫn trỏ đúng.
 
-Kernel cũng không gắn với một CLI: file role không khai `model:`, không hardcode tên tool MCP. Đổi Claude Code ↔ Codex ↔ Gemini thì sửa `models` trong config, không đụng kernel.
+Kernel cũng không gắn với một CLI: file role không khai `model:`, không hardcode tên tool MCP. Đổi Claude Code ↔ Codex ↔ Cursor thì cài thêm lớp bằng `--cli` và sửa `models` trong config, không đụng kernel.
 
 ## Đặt harness ở đâu
 
@@ -325,6 +344,8 @@ Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny
 > **Trần của lớp này — đừng nhầm nó với sandbox.** Deny khớp theo **tool + tiền tố lệnh**. `Read(.env)` một mình từng là cái biển cấm treo nhầm cửa: nó chặn tool Read, nhưng agent còn Bash, và `cat .env` đi thẳng qua. Thêm bốn rule trên hạ **xác suất tai nạn**, không đóng được cửa: `python3 -c "print(open('.env').read())"` vẫn lọt, và không danh sách deny nào đuổi kịp số cách đọc một file. Lớp bảo vệ thật là **không để secret trong repo** — deny-list chỉ mua thêm thời gian.
 
 ## Giới hạn đã biết
+
+**Guard trên Codex/Cursor chỉ khớp prefix lệnh**, giống trần của `permissions.deny` trên Claude: `bash -c "git push"`, `git -C x push`, `python -c "open('.env')"` vẫn lọt. Nó chặn tai nạn, không chặn chủ ý. Trên CLI không có subagent, 7 role chạy tuần tự trong cùng context, nên Gate 5 (adversary) không còn độc lập với implementer; 4 gate chặn bằng exit code thì vẫn giữ nguyên.
 
 **Lease chỉ đúng trên filesystem cục bộ.** `scripts/lease.mjs` chặn hai phiên `/start-task` cùng một task bằng `mkdir` (loại trừ) + `mtime` (TTL 30'). Trên NFS/SMB cả hai vế đều gãy: `mkdir` không đảm bảo nguyên tử, và server đóng dấu `mtime` bằng đồng hồ **của nó** — hai máy lệch giờ sẽ đọc một lease còn sống thành hết hạn rồi cướp, và hai phiên ghi đè handoff của nhau. Để `docs/tasks/` trên ổ mạng thì lease này là đồ trang trí. Không vá được rẻ: sửa đúng nghĩa là đổi cơ chế (lock server / trao token có fsync), và ngay cả việc *phát hiện* đang chạy trên FS mạng cũng không có cách nào đủ tin để cảnh báo.
 
