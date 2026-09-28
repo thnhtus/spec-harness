@@ -1727,6 +1727,18 @@ if (args.has("--self-check")) {
     "harness.config.json must declare docEnums — without it the doc tables have no schema at all",
   );
 
+  // strayTaskFolders (#54): a task the group scan skips must be reported, a
+  // non-task dir and the group dirs themselves must not.
+  {
+    const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const d = mkdtempSync(join(tmpdir(), "sh-st-"));
+    for (const x of ["ABC-1", "archive", "_templates", "sprint-1"]) mkdirSync(join(d, x));
+    for (const x of ["ABC-1", "_templates", "sprint-1"]) writeFileSync(join(d, x, "task.agent.json"), "{}");
+    assert.deepEqual(strayTaskFolders(d, "sprint-"), ["ABC-1"], "only a task.agent.json dir outside the group prefix is stray");
+    assert.deepEqual(strayTaskFolders(join(d, "nope"), "sprint-"), [], "missing tasksDir is not a crash");
+  }
+
   // handoffDefects: presence of the two fields the coordinator routes on.
   {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
@@ -3404,6 +3416,18 @@ function findTaskFolders(only = ONLY) {
   return folders;
 }
 
+// A task folder the scan above cannot see: `docs/tasks/ABC-1/task.agent.json`
+// (no group dir) is skipped by findTaskFolders, so whole-repo validation says
+// "0 errors" about a task it never looked at (#54). Only dirs holding a
+// task.agent.json count — an `archive/` of plain notes is not a task.
+export function strayTaskFolders(tasksDir, groupPrefix) {
+  if (!existsSync(tasksDir)) return [];
+  return readdirSync(tasksDir, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && !d.name.startsWith("_") && !d.name.startsWith(groupPrefix))
+    .filter((d) => existsSync(join(tasksDir, d.name, "task.agent.json")))
+    .map((d) => d.name);
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -3429,9 +3453,18 @@ const folders = findTaskFolders();
 // (the commit touched no task).
 if (TASK_ARG && !folders.length) {
   console.error(`✖ --task "${TASK_ARG}": no task folder matching "${taskKeyOf(TASK_ARG)}" under ${rel(TASKS_DIR)}`);
+  console.error(`  expected layout: ${rel(TASKS_DIR)}/${GROUP_PREFIX}<n>/<taskId>-<slug>/`);
+  const leaf = taskKeyOf(TASK_ARG).split("/").pop();
+  const near = findTaskFolders(null).filter((f) => f.task.startsWith(leaf) || leaf.startsWith(f.task)).map((f) => rel(f.path));
+  const stray = strayTaskFolders(TASKS_DIR, GROUP_PREFIX).filter((s) => s === leaf).map((s) => `${rel(TASKS_DIR)}/${s} (not under ${GROUP_PREFIX}<n>/ — move it)`);
+  for (const n of [...near, ...stray]) console.error(`  did you mean: ${n}`);
   process.exit(2);
 }
 const results = []; // {folder, errors:[], warnings:[]}
+if (!ONLY)
+  for (const s of strayTaskFolders(TASKS_DIR, GROUP_PREFIX))
+    results.push({ folder: rel(join(TASKS_DIR, s)), warnings: [], errors: [
+      `task folder outside ${GROUP_PREFIX}<n>/ — no gate ever checks it. Move it to ${rel(TASKS_DIR)}/${GROUP_PREFIX}<n>/${s}/`] });
 const allTasks = []; // parsed task.agent.json, for --calibrate
 const taskIdMap = new Map(); // taskId -> [folder rel paths]
 
