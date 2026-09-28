@@ -26,15 +26,16 @@ Mọi CLI khác Claude nhận `AGENTS.md` + `.agents/skills/`. Guard deny (`git 
 | Hạng | CLI | File guard | Kiểm |
 |---|---|---|---|
 | A | codex, cursor | `.codex/hooks.json`, `.cursor/hooks.json` | codex e2e |
-| A | gemini · qwen | `.gemini/settings.json` · `.qwen/settings.json` (merge, giữ config của bạn) + `agents/` | payload theo docs |
-| A | copilot · droid · windsurf · kiro · antigravity | `.github/hooks/spec-harness.json` · `.factory/hooks.json` (+`droids/`) · `.windsurf/hooks.json` · `.kiro/hooks/spec-harness.json` · `.agents/hooks.json` | payload theo docs |
-| A | cline | `.clinerules/hooks/PreToolUse` (bật Enable Hooks) | payload theo docs |
-| A | goose · pi · opencode | `.agents/plugins/spec-harness/` · `.pi/extensions/spec-harness.js` · `.opencode/plugins/spec-harness.js` | goose, pi e2e; opencode gọi thật plugin |
+| A | gemini · qwen | `.gemini/settings.json` · `.qwen/settings.json` (merge, giữ config của bạn) + `agents/` | e2e |
+| A | copilot · droid · antigravity | `.github/hooks/spec-harness.json` · `.factory/hooks.json` (+`droids/`) · `.agents/hooks.json` | e2e |
+| A | windsurf (IDE) · devin (CLI) · kiro | `.windsurf/hooks.json` · `.devin/hooks.v1.json` · `.kiro/hooks/spec-harness.json` | payload theo docs / `devin migrate` |
+| A | cline | `.clinerules/hooks/PreToolUse` — chặn = dừng cả task | e2e (3.0.65) |
+| A | goose · pi · opencode | `.agents/plugins/spec-harness/` · `.pi/extensions/spec-harness.js` · `.opencode/plugins/spec-harness.js` | e2e |
 | B | hermes | không ghi gì ngoài repo; installer in snippet cho `~/.hermes/config.yaml` | `hermes hooks test` |
 | B | amp, codewhale | không có hook chặn được (CodeWhale: hook mới là observer) | — |
 | C | aider, continue, zed, roo, kilo, crush, augment, junie, warp, trae | tự trỏ vào `AGENTS.md`; guard = pre-commit + CI | — |
 
-Nhiều CLI tắt hook project tới khi bạn trust (Codex `/hooks`, Gemini/Qwen trusted folder, Cline Enable Hooks, pi trust project) — installer in đúng bước cho CLI bạn chọn. `node scripts/validate-tasks.mjs --preflight` báo lỗi nếu file guard của CLI nào mất `--guard <cli>` (đọc `.agents/spec-harness-guards.json`).
+Nhiều CLI tắt hook project tới khi bạn trust (Codex `/hooks`, Gemini/Qwen trusted folder, Copilot `trustedFolders`, pi trust project) — installer in đúng bước cho CLI bạn chọn. `node scripts/validate-tasks.mjs --preflight` báo lỗi nếu file guard của CLI nào mất `--guard <cli>` (đọc `.agents/spec-harness-guards.json`).
 
 Cài lại không cần `--cli`: installer tự nhận các lớp đã có và nâng luôn.
 

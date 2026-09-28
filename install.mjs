@@ -143,7 +143,7 @@ function kernelVersion() {
 // `.claude/` is always installed: it is the base layer, and Cursor reads
 // `.claude/agents`, `.claude/skills` and the hooks in `.claude/settings.json`
 // natively. The per-CLI layer only fills what that CLI cannot read from there.
-const CLIS = ["claude", "codex", "cursor", "gemini", "qwen", "copilot", "droid", "windsurf", "kiro",
+const CLIS = ["claude", "codex", "cursor", "gemini", "qwen", "copilot", "droid", "windsurf", "devin", "kiro",
   "antigravity", "cline", "goose", "codewhale", "opencode", "pi", "hermes", "amp"];
 
 // What is already installed — so re-running without --cli refreshes every CLI
@@ -241,7 +241,7 @@ function installCursor(P, keep) {
 // we own. Every command runs `--guard <cli>` — that string is also how
 // installedClis and preflight recognise the layer, so it must stay literal.
 // cwd per CLI: gemini/qwen/droid export the project dir; copilot, windsurf,
-// kiro, antigravity run hooks from the workspace root (relative path);
+// kiro run hooks from the workspace root (relative path); antigravity from .agents/;
 // cline/goose/opencode/pi locate the script from their own file.
 const V = "scripts/validate-tasks.mjs", g = (cli) => `${V} --guard ${cli}`;
 // cli → hook file (null = no project hook). preflight reads THIS, so the
@@ -264,11 +264,15 @@ const ADAPTERS = {
   windsurf: { file: ".windsurf/hooks.json", json: { hooks: {
     pre_run_command: [{ command: `node ${g("windsurf")}`, show_output: true }],
     pre_read_code: [{ command: `node ${g("windsurf")}`, show_output: true }] } } },
+  // Devin CLI (Windsurf's successor) ignores .windsurf/hooks.json; this is the shape
+  // `devin migrate hooks` itself emits (devin 3000.10.27), Claude-style exit 2 = deny.
+  devin: { file: ".devin/hooks.v1.json", json: { PreToolUse: [{ matcher: "^(exec|read|notebook_read)$",
+    hooks: [{ type: "command", command: `node ${g("devin")}`, timeout: 30 }] }] } },
   // ponytail: Kiro tool names are undocumented, so no matcher — the guard sees every tool.
   kiro: { file: ".kiro/hooks/spec-harness.json", json: { version: "v1", hooks: [{ name: "spec-harness-guard",
     trigger: "PreToolUse", action: { type: "command", command: `node ${g("kiro")}` }, timeout: 30 }] } },
   antigravity: { file: ".agents/hooks.json", json: { "spec-harness-guard": { PreToolUse: [{ matcher: "run_command|view_file",
-    hooks: [{ type: "command", command: `node ${g("antigravity")}`, timeout: 30 }] }] } } },
+    hooks: [{ type: "command", command: `node ../${V} --guard antigravity`, timeout: 30 }] }] } } },
   cline: { file: ".clinerules/hooks/PreToolUse", exec: true,
     text: `#!/bin/sh\n# spec-harness deny-list guard. Enable hooks in Cline settings.\nexec node "$(dirname "$0")/../../${V}" --guard cline\n` },
   goose: { file: ".agents/plugins/spec-harness/hooks/hooks.json", json: { hooks: { PreToolUse: [{ matcher: "shell|developer__shell",
@@ -1066,7 +1070,7 @@ if (args[0] === "--self-test") {
   // ── multi-CLI (#43) — each check runs the REAL artifact, not a mirror of it ──
   {
     // R7: the default install adds no CLI layer.
-    for (const d of [".codex", ".cursor", ".agents", "AGENTS.md", ".gemini", ".qwen", ".factory", ".windsurf", ".kiro", ".clinerules", ".opencode", ".pi", ".github/hooks"])
+    for (const d of [".codex", ".cursor", ".agents", "AGENTS.md", ".gemini", ".qwen", ".factory", ".windsurf", ".devin", ".kiro", ".clinerules", ".opencode", ".pi", ".github/hooks"])
       if (existsSync(join(T, d))) fail(`cài mặc định (không --cli) mà vẫn sinh ${d}`);
 
     const self = fileURLToPath(import.meta.url);
@@ -1194,14 +1198,18 @@ if (args[0] === "--self-test") {
         (c) => ({ tool_name: "Execute", tool_input: { command: c } }), (p) => ({ tool_name: "Read", tool_input: { file_path: p } }), exitDeny, exitAllow],
       ["windsurf", sh(J(".windsurf/hooks.json").hooks.pre_run_command[0].command, A),
         (c) => ({ tool_info: { command_line: c } }), (p) => ({ tool_info: { file_path: p } }), exitDeny, exitAllow],
+      ["devin", sh(J(".devin/hooks.v1.json").PreToolUse[0].hooks[0].command, A),
+        (c) => ({ hook_event_name: "PreToolUse", tool_name: "exec", tool_input: { command: c } }), (p) => ({ hook_event_name: "PreToolUse", tool_name: "read", tool_input: { file_path: p } }), exitDeny, exitAllow],
       ["kiro", sh(J(".kiro/hooks/spec-harness.json").hooks[0].action.command, A),
         (c) => ({ tool_name: "shell", tool_input: { command: c } }), (p) => ({ tool_name: "read", tool_input: { path: p } }), exitDeny, exitAllow],
-      ["antigravity", sh(J(".agents/hooks.json")["spec-harness-guard"].PreToolUse[0].hooks[0].command, A),
+      // cwd = the dir holding hooks.json (observed e2e, agy 1.2.12), not the workspace root.
+      ["antigravity", sh(J(".agents/hooks.json")["spec-harness-guard"].PreToolUse[0].hooks[0].command, join(A, ".agents")),
         (c) => ({ toolCall: { name: "run_command", args: { CommandLine: c } }, workspacePaths: [A] }),
         (p) => ({ toolCall: { name: "view_file", args: { AbsolutePath: p } }, workspacePaths: [A] }), jsonIs("decision", "deny"), jsonIs("decision", "ask")],
+      // cline 3.0.65 shapes, observed e2e: run_commands{commands[]}, read_files{files: JSON string}.
       ["cline", sh(join(A, ".clinerules/hooks/PreToolUse"), sub),
-        (c) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "execute_command", parameters: { command: c } } }),
-        (p) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "read_file", parameters: { path: p } } }), jsonIs("cancel", true), jsonIs("cancel", false)],
+        (c) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "run_commands", parameters: { commands: ["ls", c] } } }),
+        (p) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "read_files", parameters: { files: JSON.stringify([{ path: p, start_line: null }]) } } }), jsonIs("cancel", true), jsonIs("cancel", false)],
       ["goose", sh(J(".agents/plugins/spec-harness/hooks/hooks.json").hooks.PreToolUse[0].hooks[0].command, sub),
         (c) => ({ event: "PreToolUse", tool_name: "shell", tool_input: { command: c }, working_dir: A }), null, exitDeny, exitAllow],
     ];
@@ -1213,6 +1221,18 @@ if (args[0] === "--self-test") {
       if (!isAllow(ok)) fail(`${cli}: hook chặn/sai hợp đồng với lệnh hợp lệ — CLI sẽ chặn MỌI lệnh hoặc user tắt hook`, ok.stdout + ok.stderr);
     }
     if (!(statSync(join(A, ".clinerules/hooks/PreToolUse")).mode & 0o100)) fail("cline: hook không executable — Cline bỏ qua trong im lặng");
+    // Matchers: a wrong one means the CLI never calls the hook. Tool names below
+    // were read off real payloads (e2e) or the CLI's own migrate output (devin).
+    const matchers = [
+      ["gemini", J(".gemini/settings.json").hooks.BeforeTool[0].matcher, ["run_shell_command", "read_file"]],
+      ["qwen", J(".qwen/settings.json").hooks.PreToolUse[0].matcher, ["run_shell_command", "read_file"]],
+      ["droid", J(".factory/hooks.json").PreToolUse[0].matcher, ["Execute", "Read"]],
+      ["devin", J(".devin/hooks.v1.json").PreToolUse[0].matcher, ["exec", "read"]],
+      ["antigravity", J(".agents/hooks.json")["spec-harness-guard"].PreToolUse[0].matcher, ["run_command", "view_file"]],
+      ["goose", J(".agents/plugins/spec-harness/hooks/hooks.json").hooks.PreToolUse[0].matcher, ["shell"]],
+    ];
+    for (const [cli, m, tools] of matchers) for (const t of tools)
+      if (!new RegExp(`^(?:${m})$`).test(t)) fail(`${cli}: matcher "${m}" không khớp tool "${t}" — CLI không bao giờ gọi guard`);
 
     // In-process plugins: load the generated file and call it like the CLI does.
     let piH; (await import(join(A, ".pi/extensions/spec-harness.js"))).default({ on: (ev, h) => { if (ev === "tool_call") piH = h; } });
@@ -1316,7 +1336,9 @@ if (done.includes("cursor")) console.log(`
 
 const trustNote = { gemini: "Gemini chỉ chạy hook project trong folder đã trust (/permissions)",
   qwen: "Qwen chỉ chạy hook project trong folder đã trust", droid: "Droid: xem /hooks tab Project",
-  cline: "Cline: bật Settings → Feature → Enable Hooks",
+  cline: "Cline: chặn = dừng CẢ task (cancel của Cline 3.x không chặn riêng 1 tool); IDE cũ: bật Enable Hooks",
+  copilot: "Copilot: hook repo chỉ chạy khi folder nằm trong trustedFolders (~/.copilot/config.json) — trả lời Yes lúc mở lần đầu",
+  devin: "Devin CLI đọc .devin/hooks.v1.json (không đọc .windsurf/hooks.json của IDE)",
   pi: "pi: trust project để nạp .pi/extensions", kiro: "Kiro: hook có trong .kiro/hooks, bật enabled nếu IDE tắt" };
 const notes = done.filter((c) => trustNote[c]).map((c) => `    · ${trustNote[c]}`);
 if (notes.length) console.log(`\nℹ️  guard đã ghi, nhưng vài CLI tắt hook project tới khi bạn đồng ý:\n${notes.join("\n")}`);

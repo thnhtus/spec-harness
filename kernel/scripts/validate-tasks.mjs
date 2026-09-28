@@ -102,6 +102,8 @@ export function guardVerdict(kind, subject, deny) {
 // Every CLI names the same two things differently (command / command_line /
 // CommandLine, file_path / path / AbsolutePath…) and nests them differently
 // (tool_input, toolArgs as a JSON string, toolCall.args, preToolUse.parameters).
+// Cline 3.x batches: run_commands {commands: ["a", {command, args}]} — one
+// subject per element; exec form {command:"git", args:["push"]} is joined.
 // So: walk the payload, collect by KEY, never by position. Only these keys are
 // read — a `content` string that merely mentions `git push` is not a push.
 const GUARD_CMD_KEYS = new Set(["command", "command_line", "CommandLine"]);
@@ -111,9 +113,11 @@ export function guardSubjects(payload) {
   const walk = (v, depth) => {
     if (depth > 6 || v == null || typeof v !== "object") return;
     for (const [k, x] of Object.entries(v)) {
-      if (GUARD_CMD_KEYS.has(k) && (typeof x === "string" || Array.isArray(x))) out.shell.push(Array.isArray(x) ? x.join(" ") : x);
+      if (GUARD_CMD_KEYS.has(k) && (typeof x === "string" || Array.isArray(x)))
+        out.shell.push([x, Array.isArray(v.args) ? v.args : []].flat().join(" "));
+      else if (k === "commands" && Array.isArray(x)) { for (const c of x) typeof c === "string" ? out.shell.push(c) : walk(c, depth + 1); }
       else if (GUARD_PATH_KEYS.has(k) && typeof x === "string") out.read.push(x);
-      else if (typeof x === "string" && /^(toolArgs|tool_args|arguments)$/.test(k)) { try { walk(JSON.parse(x), depth + 1); } catch {} }
+      else if (typeof x === "string" && /^(toolArgs|tool_args|arguments|files)$/.test(k)) { try { walk(JSON.parse(x), depth + 1); } catch {} }
       else walk(x, depth + 1);
     }
   };
@@ -127,7 +131,7 @@ export function guardSubjects(payload) {
 // Antigravity allow is "ask", not "allow": "allow" would auto-approve every
 // command the guard does not know about, i.e. the guard would LOOSEN the CLI.
 const GUARD_MODES = {
-  codex: "exit", gemini: "exit", qwen: "exit", copilot: "exit", droid: "exit", windsurf: "exit", kiro: "exit",
+  codex: "exit", gemini: "exit", qwen: "exit", copilot: "exit", droid: "exit", windsurf: "exit", devin: "exit", kiro: "exit",
   goose: "exit", hermes: "exit", opencode: "exit", pi: "exit",
   cursor: "cursor", antigravity: "antigravity", cline: "cline",
 };
@@ -2549,6 +2553,10 @@ if (args.has("--self-check")) {
     assert.deepEqual(guardSubjects({ toolCall: { args: { CommandLine: "git push" } } }).shell, ["git push"], "guard walker: nested CommandLine");
     assert.deepEqual(guardSubjects({ toolArgs: '{"command":"git push"}' }).shell, ["git push"], "guard walker: toolArgs as a JSON string");
     assert.deepEqual(guardSubjects({ tool_input: { command: ["git", "push"] } }).shell, ["git push"], "guard walker: argv array");
+    // Cline 3.x run_commands (observed e2e, cline 3.0.65): a batch, each element its own subject.
+    assert.deepEqual(guardSubjects({ parameters: { commands: ["ls", "git push"] } }).shell, ["ls", "git push"], "guard walker: commands[] batch");
+    assert.deepEqual(guardSubjects({ commands: [{ command: "git", args: ["push"] }] }).shell, ["git push"], "guard walker: exec form {command,args}");
+    assert.deepEqual(guardSubjects({ preToolUse: { toolName: "read_files", parameters: { files: '[{"path":"/r/.env"}]' } } }).read, ["/r/.env"], "guard walker: read_files JSON-string files");
     assert.deepEqual(guardSubjects({ preToolUse: { parameters: { path: ".env" } } }).read, [".env"], "guard walker: nested path");
     assert.deepEqual(guardSubjects({ tool_input: { file_path: "a.md", content: "git push; cat .env" } }),
       { shell: [], read: ["a.md"] }, "guard walker: file CONTENT mentioning git push is not a push");
