@@ -348,6 +348,8 @@ node install.mjs --eval --agent 'claude -p --model sonnet --agent adversary --pe
 
 Một case đúng khi thoả cả ba: verdict khớp (`status` role đã set, không có thì đọc dòng `Result`), 09 nêu đúng chỗ lỗi (`mustMention`), và role không sửa file nào ngoài task folder. Sai ở bất kỳ case nào thì exit 1. Eval tốn tiền model nên chỉ chạy trước release, không chạy trong CI. Phần CI kiểm là `--self-test`: fixture sạch ở điểm bàn giao, tên case không lộ vào sandbox, scorer đỏ/xanh đúng, và một agent luôn-PASS thì bị `--eval` đánh trượt.
 
+Trên CI: **Actions → eval → Run workflow** (`.github/workflows/eval.yml`, mỗi case một job, runner sạch). Cần secret `ANTHROPIC_API_KEY`; thiếu thì job đỏ chứ không xanh giả.
+
 ## Vì sao có cái này
 
 Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là gate mà model **chọn** tuân thủ. Gate bằng exit code thì không có chỗ để chọn. Harness gốc mất một thời gian mới học được điều đó; phần đắt nhất ở đây là `validate-tasks.mjs` + chuỗi truy vết AC, không phải mấy file markdown.
