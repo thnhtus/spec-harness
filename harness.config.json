@@ -114,7 +114,8 @@
       },
       {
         "doc": "08-Test-Evidence.md",
-        "fromStage": "adversarial_review"
+        "fromStage": "adversarial_review",
+        "cell": "first"
       }
     ],
     "since": "2026-07-28"

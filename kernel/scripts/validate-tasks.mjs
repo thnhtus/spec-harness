@@ -1219,20 +1219,26 @@ function declaredACsIn(text) {
 // An AC is "reached" only when its id appears in a TABLE ROW. Matching anywhere
 // in the text was asymmetric with declaredACsIn (which is strict): "AC-01 to be
 // done later" in prose, or an HTML comment, used to satisfy the trace.
-function acsMissingIn(text, acs) {
-  const rows = text
-    .split("\n")
-    .filter((l) => l.trimStart().startsWith("|"))
-    .join("\n");
-  return acs.filter((a) => !new RegExp(`\\b${a}\\b`).test(rows));
+//
+// cell:"first" (#56): the AC must OPEN a row, like declaredACsIn. Without it an
+// AC listed in 08's "Covers AC" column satisfied the trace while its own row
+// in the AC coverage table -- the one naming the test -- was gone.
+function acsMissingIn(text, acs, cell) {
+  const rows = text.split("\n").filter((l) => l.trimStart().startsWith("|"));
+  if (cell === "first") {
+    const first = new Set(rows.map((l) => /^\s*\|\s*([^|]*?)\s*\|/.exec(l)?.[1]));
+    return acs.filter((a) => !first.has(a));
+  }
+  const joined = rows.join("\n");
+  return acs.filter((a) => !new RegExp(`\\b${a}\\b`).test(joined));
 }
 
 // --- path wrappers (missing file = nothing reached) -------------------------
 
 const hasRealEvidence = (f) => existsSync(f) && hasRealEvidenceIn(readFileSync(f, "utf8"));
 const declaredACs = (f) => (existsSync(f) ? declaredACsIn(readFileSync(f, "utf8")) : []);
-const acsMissingFrom = (f, acs) =>
-  existsSync(f) ? acsMissingIn(readFileSync(f, "utf8"), acs) : acs;
+const acsMissingFrom = (f, acs, cell) =>
+  existsSync(f) ? acsMissingIn(readFileSync(f, "utf8"), acs, cell) : acs;
 
 // ---------------------------------------------------------------------------
 // Self-check: node scripts/validate-tasks.mjs --self-check
@@ -1465,6 +1471,10 @@ if (args.has("--self-check")) {
   // acsMissingIn: word-boundary, so AC-1 must not be satisfied by AC-10.
   assert.deepEqual(acsMissingIn("| AC-01 | x |\n| AC-02 | y |", ["AC-01", "AC-03"]), ["AC-03"]);
   assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"]), ["AC-1"], "AC-1 ≠ AC-10");
+  // cell:"first" (#56): a "Covers AC" cell is not the AC's own coverage row
+  assert.deepEqual(acsMissingIn("| Unit | `t` | AC-01, AC-03 | ok |\n| AC-01 | `a::b` | PASS |", ["AC-01", "AC-03"], "first"), ["AC-03"]);
+  assert.deepEqual(acsMissingIn("| Unit | `t` | AC-01, AC-03 | ok |", ["AC-03"]), [], "without cell any table cell still counts (03 lists ACs in Related AC)");
+  assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"], "first"), ["AC-1"], "first cell is matched whole, AC-1 ≠ AC-10");
   // Prose, comments and "not covered" notes are not coverage. declaredACsIn is
   // strict about table rows; the reached-side must be exactly as strict.
   assert.deepEqual(acsMissingIn("Note: AC-01 to be done later", ["AC-01"]), ["AC-01"], "prose is not coverage");
@@ -1522,9 +1532,10 @@ if (args.has("--self-check")) {
       [],
       `${AC_TRACE.declaredIn} template declares no real AC`,
     );
-  for (const { doc, fromStage } of AC_REACHED) {
+  for (const { doc, fromStage, cell } of AC_REACHED) {
+    assert.ok(cell === undefined || cell === "first", `acTrace.reachedIn "${doc}": cell must be "first" or absent, got ${JSON.stringify(cell)}`);
     assert.deepEqual(
-      acsMissingIn(tpl(doc), ["AC-01"]),
+      acsMissingIn(tpl(doc), ["AC-01"], cell),
       ["AC-01"],
       `${doc} template must not pre-cover a real AC`,
     );
@@ -3916,12 +3927,12 @@ for (const { sprint, task, path } of folders) {
     );
   if (declared.length) {
     const sink = (data.updatedAt ?? "") >= AC_TRACE_SINCE ? errors : warnings;
-    for (const { doc, fromStage } of AC_REACHED) {
+    for (const { doc, fromStage, cell } of AC_REACHED) {
       const due = fromStage
         ? stageIdx >= STAGE_ORDER.indexOf(fromStage)
         : GATE4_DONE.has(data.status);
       if (!due) continue;
-      const miss = acsMissingFrom(join(path, doc), declared);
+      const miss = acsMissingFrom(join(path, doc), declared, cell);
       if (miss.length)
         sink.push(
           `AC not traced into ${doc} (${miss.length}/${declared.length}): ${miss.join(", ")} — SharedRules §9.1`,

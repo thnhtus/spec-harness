@@ -1509,6 +1509,14 @@ if (args[0] === "--self-test") {
       const tree = spawnSync("git", ["rev-parse", "HEAD:src", "HEAD:test"], { cwd: P, encoding: "utf8" }).stdout.trim();
       if (trees.has(tree)) fail(`eval case ${c.id}: code giống hệt case ${trees.get(tree)} — delta của case không được áp`);
       trees.set(tree, c.id);
+      if (c.id === "clean") {
+        // #56: 08 bỏ dòng AC coverage của AC-03 (vẫn còn trong cột Covers AC) → gate phải đỏ
+        const e8 = join(P, T, "08-Test-Evidence.md");
+        writeFileSync(e8, readFileSync(e8, "utf8").replace(/^\| AC-03 \|.*\n/m, ""));
+        const r = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+        if (!JSON.parse(r.stdout).results[0].errors.some((e) => e.includes("AC-03")))
+          fail("acTrace #56: 08 mất dòng AC-03 mà validator vẫn xanh (AC ở cột Covers AC không phải coverage)");
+      }
       rmSync(root, { recursive: true, force: true });
     }
     const c = { expect: "FAIL", mustMention: ["AC-03"] };
