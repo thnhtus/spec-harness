@@ -73,7 +73,7 @@ flowchart TD
 
 Gate fail → `status = blocked` / `needs_clarification`, ghi blocker vào doc + `.agent-memory/{role}.md`, **báo user thật to** (bốn điểm bắt buộc — [`agents/SharedRules.md` §4](./agents/SharedRules.md)), và dừng automation cho tới khi user/BA gỡ.
 
-**Cô lập context theo stage:** mỗi stage chạy như **subagent riêng** (context mới), nhận input qua artifact + handoff `.agent-memory/` chứ không qua hội thoại. Vòng lặp chính chỉ điều phối gate. Chi tiết dispatch: lệnh `/start-task` (`.claude/commands/start-task.md`).
+**Cô lập context theo stage:** mỗi stage chạy như **subagent riêng** (context mới), nhận input qua artifact + handoff `.agent-memory/` chứ không qua hội thoại. Vòng lặp chính chỉ điều phối gate. Chi tiết dispatch: lệnh `/start-task` (`.claude/commands/start-task.md`); phần lý do nằm ở [`agents/StartTask-Appendix.md`](./agents/StartTask-Appendix.md).
 
 ---
 

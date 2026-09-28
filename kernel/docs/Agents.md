@@ -72,7 +72,7 @@ flowchart TD
 
 A failed gate → `status = blocked` / `needs_clarification`, record the blocker in the doc + `.agent-memory/{role}.md`, **tell the user loudly** (the four mandatory points — [`agents/SharedRules.md` §4](./agents/SharedRules.md)), and stop automation until the user/BA resolves it.
 
-**Per-stage context isolation:** each stage runs as **its own subagent** (fresh context), receiving its input through artifacts + `.agent-memory/` handoffs rather than through conversation. The main loop only coordinates gates. Dispatch details: the `/start-task` command (`.claude/commands/start-task.md`).
+**Per-stage context isolation:** each stage runs as **its own subagent** (fresh context), receiving its input through artifacts + `.agent-memory/` handoffs rather than through conversation. The main loop only coordinates gates. Dispatch details: the `/start-task` command (`.claude/commands/start-task.md`); its rationale lives in [`agents/StartTask-Appendix.md`](./agents/StartTask-Appendix.md).
 
 ---
 

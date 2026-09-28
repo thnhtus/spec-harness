@@ -681,6 +681,28 @@ if (args[0] === "--self-test") {
   }
   if (!existsSync(join(T, ".claude/commands/init-project-rules.md"))) fail("thiếu lệnh /init-project-rules");
 
+  // #55: coordinator nạp start-task.md ở MỌI task — file đắt nhất mà §8 không cap.
+  // Lý do + nhánh điều kiện nằm ở StartTask-Appendix.md; mọi link/anchor sang đó
+  // phải resolve trên bản cài, nếu không tách file = xóa nội dung.
+  const checkAppendix = (T) => {
+    const cap = 20 * 1024, size = statSync(join(SRC, "commands/start-task.md")).size;
+    if (size > cap) fail(`commands/start-task.md ${size} B > ${cap} B — dời lý do sang docs/agents/StartTask-Appendix.md (#55)`);
+    const slug = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s/g, "-");
+    for (const f of [".claude/commands/start-task.md", ".agents/skills/start-task/SKILL.md"]) {
+      const p = join(T, f);
+      if (!existsSync(p)) continue; // .agents/ chỉ có khi cài --cli
+      const links = [...read(p).matchAll(/\]\(([^)#]*StartTask-Appendix\.md)(#[^)]*)?\)/g)];
+      if (!links.length) fail(`${f} không còn link nào sang StartTask-Appendix.md — nội dung dời đi đã mồ côi`);
+      for (const [, href, anchor] of links) {
+        const tgt = join(dirname(p), href);
+        if (!existsSync(tgt)) fail(`${f}: link ${href} không resolve trên bản cài (${tgt})`);
+        const anchors = new Set(read(tgt).split("\n").filter((l) => /^#+ /.test(l)).map((l) => "#" + slug(l.replace(/^#+ /, ""))));
+        if (anchor && !anchors.has(anchor)) fail(`${f}: anchor ${anchor} không có trong StartTask-Appendix.md`);
+      }
+    }
+  };
+  checkAppendix(T);
+
   // Mọi check ở trên đọc config và template RỜI NHAU, nên chúng đều xanh khi hai
   // bên nói về hai bộ file khác nhau. Đó là cách `06-FE-Implementation-Notes.md`
   // sống sót trong adapter sau khi template đã đổi tên: config đòi một file
@@ -1202,6 +1224,8 @@ if (args[0] === "--self-test") {
     const all = Object.keys(ADAPTERS).concat("hermes", "amp", "codewhale").join(",");
     const r = spawnSync(process.execPath, [self, A, "--yes", "--cli", all], { encoding: "utf8" });
     if (r.status !== 0) fail(`--cli ${all} cài hỏng`, r.stderr);
+    if (!existsSync(join(A, ".agents/skills/start-task/SKILL.md"))) fail("--cli không sinh skill start-task");
+    checkAppendix(A);
     const gem = JSON.parse(read(join(A, ".gemini/settings.json")));
     if (gem.theme !== "mine" || !gem.context.fileName.includes("MINE.md") || !gem.context.fileName.includes("AGENTS.md"))
       fail(".gemini/settings.json: merge làm mất cấu hình của user hoặc không thêm AGENTS.md", JSON.stringify(gem));
