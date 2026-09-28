@@ -15,11 +15,26 @@ Dùng package manager khác thì đổi lệnh chạy, không cần cài global:
 
 > **`npm i spec-harness` không cài harness.** Lệnh này chỉ tải package vào `node_modules/`, không chạy `install.mjs`. Package cố ý không có `postinstall`: installer hỏi `[y/N]` trước khi ghi đè file, và pnpm/bun hoặc `--ignore-scripts` đều chặn lifecycle script. Muốn ghim version làm devDependency thì chạy `npm i -D spec-harness`, rồi `npx spec-harness`. Lệnh sau dùng bản trong `node_modules/.bin`, không tải lại. Nâng cấp thì chạy `npx spec-harness@latest`, vì nếu không ghi `@latest` thì `npx` sẽ chạy lại bản cũ đã cài.
 
-### Codex, Cursor
+### CLI khác (Codex, Cursor, Gemini, Copilot, Droid, Qwen, Windsurf, Kiro, Antigravity, Cline, Goose, OpenCode, pi, Hermes, Amp, CodeWhale)
 
 ```bash
-npx spec-harness --cli codex,cursor   # thêm lớp cho CLI khác; .claude/ luôn được cài
+npx spec-harness --cli codex,gemini   # thêm lớp cho CLI khác; .claude/ luôn được cài
 ```
+
+Mọi CLI khác Claude nhận `AGENTS.md` + `.agents/skills/`. Guard deny (`git push` / `reset --hard` / `stash` / `clean` / `.env`) chỉ có ở CLI có hook project:
+
+| Hạng | CLI | File guard | Kiểm |
+|---|---|---|---|
+| A | codex, cursor | `.codex/hooks.json`, `.cursor/hooks.json` | codex e2e |
+| A | gemini · qwen | `.gemini/settings.json` · `.qwen/settings.json` (merge, giữ config của bạn) + `agents/` | payload theo docs |
+| A | copilot · droid · windsurf · kiro · antigravity | `.github/hooks/spec-harness.json` · `.factory/hooks.json` (+`droids/`) · `.windsurf/hooks.json` · `.kiro/hooks/spec-harness.json` · `.agents/hooks.json` | payload theo docs |
+| A | cline | `.clinerules/hooks/PreToolUse` (bật Enable Hooks) | payload theo docs |
+| A | goose · pi · opencode | `.agents/plugins/spec-harness/` · `.pi/extensions/spec-harness.js` · `.opencode/plugins/spec-harness.js` | goose, pi e2e; opencode gọi thật plugin |
+| B | hermes | không ghi gì ngoài repo; installer in snippet cho `~/.hermes/config.yaml` | `hermes hooks test` |
+| B | amp, codewhale | không có hook chặn được (CodeWhale: hook mới là observer) | — |
+| C | aider, continue, zed, roo, kilo, crush, augment, junie, warp, trae | tự trỏ vào `AGENTS.md`; guard = pre-commit + CI | — |
+
+Nhiều CLI tắt hook project tới khi bạn trust (Codex `/hooks`, Gemini/Qwen trusted folder, Cline Enable Hooks, pi trust project) — installer in đúng bước cho CLI bạn chọn. `node scripts/validate-tasks.mjs --preflight` báo lỗi nếu file guard của CLI nào mất `--guard <cli>` (đọc `.agents/spec-harness-guards.json`).
 
 Cài lại không cần `--cli`: installer tự nhận các lớp đã có và nâng luôn.
 
@@ -345,7 +360,7 @@ Và một lớp nữa không nằm trong validator: `.claude/settings.json` deny
 
 ## Giới hạn đã biết
 
-**Guard trên Codex/Cursor chỉ khớp prefix lệnh**, giống trần của `permissions.deny` trên Claude: `bash -c "git push"`, `git -C x push`, `python -c "open('.env')"` vẫn lọt. Nó chặn tai nạn, không chặn chủ ý. Trên CLI không có subagent, 7 role chạy tuần tự trong cùng context, nên Gate 5 (adversary) không còn độc lập với implementer; 4 gate chặn bằng exit code thì vẫn giữ nguyên.
+**Guard trên mọi CLI (`--guard <cli>`) chỉ khớp prefix lệnh**, giống trần của `permissions.deny` trên Claude: `bash -c "git push"`, `git -C x push`, `python -c "open('.env')"` vẫn lọt. Nó chặn tai nạn, không chặn chủ ý. Trên CLI không có subagent, 7 role chạy tuần tự trong cùng context, nên Gate 5 (adversary) không còn độc lập với implementer; 4 gate chặn bằng exit code thì vẫn giữ nguyên.
 
 **Lease chỉ đúng trên filesystem cục bộ.** `scripts/lease.mjs` chặn hai phiên `/start-task` cùng một task bằng `mkdir` (loại trừ) + `mtime` (TTL 30'). Trên NFS/SMB cả hai vế đều gãy: `mkdir` không đảm bảo nguyên tử, và server đóng dấu `mtime` bằng đồng hồ **của nó** — hai máy lệch giờ sẽ đọc một lease còn sống thành hết hạn rồi cướp, và hai phiên ghi đè handoff của nhau. Để `docs/tasks/` trên ổ mạng thì lease này là đồ trang trí. Không vá được rẻ: sửa đúng nghĩa là đổi cơ chế (lock server / trao token có fsync), và ngay cả việc *phát hiện* đang chạy trên FS mạng cũng không có cách nào đủ tin để cảnh báo.
 

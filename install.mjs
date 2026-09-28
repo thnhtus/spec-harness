@@ -143,7 +143,8 @@ function kernelVersion() {
 // `.claude/` is always installed: it is the base layer, and Cursor reads
 // `.claude/agents`, `.claude/skills` and the hooks in `.claude/settings.json`
 // natively. The per-CLI layer only fills what that CLI cannot read from there.
-const CLIS = ["claude", "codex", "cursor"];
+const CLIS = ["claude", "codex", "cursor", "gemini", "qwen", "copilot", "droid", "windsurf", "kiro",
+  "antigravity", "cline", "goose", "codewhale", "opencode", "pi", "hermes", "amp"];
 
 // What is already installed — so re-running without --cli refreshes every CLI
 // layer instead of silently leaving a stale one behind.
@@ -151,6 +152,7 @@ function installedClis(P) {
   const out = [];
   if (existsSync(join(P, ".codex/agents/orchestrator.toml"))) out.push("codex");
   try { if (read(join(P, ".cursor/hooks.json")).includes("--guard cursor")) out.push("cursor"); } catch {}
+  try { out.push(...Object.keys(JSON.parse(read(join(P, GUARDS))))); } catch {}
   return out;
 }
 
@@ -232,6 +234,94 @@ function installCursor(P, keep) {
       beforeShellExecution: [guard], beforeReadFile: [guard] } }, null, 2) + "\n");
   else keep(null, hooksPath);
   keep(join(P, ".mcp.json"), join(P, ".cursor/mcp.json"));
+}
+
+// One entry per hook-capable CLI. `json` is deep-merged into a possibly shared
+// file (settings.json that also holds the user's own config); `text` is a file
+// we own. Every command runs `--guard <cli>` — that string is also how
+// installedClis and preflight recognise the layer, so it must stay literal.
+// cwd per CLI: gemini/qwen/droid export the project dir; copilot, windsurf,
+// kiro, antigravity run hooks from the workspace root (relative path);
+// cline/goose/opencode/pi locate the script from their own file.
+const V = "scripts/validate-tasks.mjs", g = (cli) => `${V} --guard ${cli}`;
+// cli → hook file (null = no project hook). preflight reads THIS, so the
+// adapter table lives in one place and a deleted hook file is still noticed.
+const GUARDS = ".agents/spec-harness-guards.json";
+const ADAPTERS = {
+  gemini: { file: ".gemini/settings.json", roles: ".gemini/agents", json: {
+    context: { fileName: ["AGENTS.md", "GEMINI.md"] },
+    hooks: { BeforeTool: [{ matcher: "run_shell_command|read_file", hooks: [{ type: "command", name: "spec-harness-guard",
+      command: `node "$GEMINI_PROJECT_DIR/${V}" --guard gemini` }] }] } } },
+  qwen: { file: ".qwen/settings.json", roles: ".qwen/agents", json: {
+    context: { fileName: ["AGENTS.md", "QWEN.md"] },
+    hooks: { PreToolUse: [{ matcher: "run_shell_command|read_file", hooks: [{ type: "command", name: "spec-harness-guard",
+      command: `node "$QWEN_PROJECT_DIR/${V}" --guard qwen` }] }] } } },
+  // Copilot fails CLOSED on a crashed hook: no `git rev-parse` that dies outside a repo.
+  copilot: { file: ".github/hooks/spec-harness.json", json: { version: 1, hooks: { preToolUse: [
+    { type: "command", bash: `node ${g("copilot")}`, powershell: `node ${g("copilot")}`, timeoutSec: 30 }] } } },
+  droid: { file: ".factory/hooks.json", roles: ".factory/droids", json: { PreToolUse: [{ matcher: "Execute|Read",
+    hooks: [{ type: "command", command: `node "$FACTORY_PROJECT_DIR"/${g("droid")}`, timeout: 30 }] }] } },
+  windsurf: { file: ".windsurf/hooks.json", json: { hooks: {
+    pre_run_command: [{ command: `node ${g("windsurf")}`, show_output: true }],
+    pre_read_code: [{ command: `node ${g("windsurf")}`, show_output: true }] } } },
+  // ponytail: Kiro tool names are undocumented, so no matcher — the guard sees every tool.
+  kiro: { file: ".kiro/hooks/spec-harness.json", json: { version: "v1", hooks: [{ name: "spec-harness-guard",
+    trigger: "PreToolUse", action: { type: "command", command: `node ${g("kiro")}` }, timeout: 30 }] } },
+  antigravity: { file: ".agents/hooks.json", json: { "spec-harness-guard": { PreToolUse: [{ matcher: "run_command|view_file",
+    hooks: [{ type: "command", command: `node ${g("antigravity")}`, timeout: 30 }] }] } } },
+  cline: { file: ".clinerules/hooks/PreToolUse", exec: true,
+    text: `#!/bin/sh\n# spec-harness deny-list guard. Enable hooks in Cline settings.\nexec node "$(dirname "$0")/../../${V}" --guard cline\n` },
+  goose: { file: ".agents/plugins/spec-harness/hooks/hooks.json", json: { hooks: { PreToolUse: [{ matcher: "shell|developer__shell",
+    hooks: [{ type: "command", command: `node "\${PLUGIN_ROOT}/../../../${V}" --guard goose` }] }] } },
+    also: [[".agents/plugins/spec-harness/plugin.json", JSON.stringify({ name: "spec-harness", version: "1.0.0",
+      description: "spec-harness deny-list guard (git push / reset --hard / .env)" }, null, 2) + "\n"]] },
+  opencode: { file: ".opencode/plugins/spec-harness.js", own: true, text: pluginSrc("opencode") },
+  pi: { file: ".pi/extensions/spec-harness.js", own: true, text: pluginSrc("pi") },
+};
+
+// OpenCode and pi take an in-process JS plugin, not a command: the plugin
+// spawns the SAME guard so there is still one deny list.
+function pluginSrc(cli) {
+  const run = `const r = spawnSync("node", [fileURLToPath(new URL("../../scripts/validate-tasks.mjs", import.meta.url)), "--guard", "${cli}"],
+      { input: JSON.stringify(payload), encoding: "utf8" });`;
+  // The literal `--guard <cli>` line is how preflight recognises the layer.
+  const head = `// spec-harness deny-list guard (validate-tasks.mjs --guard ${cli}) — generated by install.mjs.\n` +
+    `import { spawnSync } from "node:child_process";\nimport { fileURLToPath } from "node:url";\n`;
+  return cli === "pi"
+    ? head + `export default function (pi) {\n  pi.on("tool_call", (event, ctx) => {\n    const payload = { tool_input: event.input, cwd: ctx.cwd };\n    ${run}\n` +
+      `    if (r.status === 2) return { block: true, reason: r.stderr.trim() };\n  });\n}\n`
+    : head + `export const SpecHarness = async () => ({\n  "tool.execute.before": async (input, output) => {\n    const payload = { tool_input: output.args };\n    ${run}\n` +
+      `    if (r.status === 2) throw new Error(r.stderr.trim());\n  },\n});\n`;
+}
+
+// Shared config files hold the user's own settings: merge, never replace.
+// Already wired (flag present) = leave it exactly as the user left it.
+function mergeJson(p, ours, flag, keep) {
+  if (!existsSync(p)) { mkdirSync(dirname(p), { recursive: true }); return writeFileSync(p, JSON.stringify(ours, null, 2) + "\n"); }
+  const t = read(p);
+  if (t.includes(flag)) return keep(null, p);
+  let cur; try { cur = JSON.parse(t); } catch { return console.warn(`⚠️  ${p} không phải JSON hợp lệ — không đụng, tự thêm guard ${flag}`); }
+  const deep = (a, b) => {
+    // Gemini/Qwen accept context.fileName as a string OR a list.
+    if (typeof a === "string" && Array.isArray(b)) a = [a];
+    if (Array.isArray(a) && Array.isArray(b)) return [...a, ...b.filter((x) => !a.some((y) => JSON.stringify(y) === JSON.stringify(x)))];
+    if (a && b && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const o = { ...a }; for (const k of Object.keys(b)) o[k] = k in a ? deep(a[k], b[k]) : b[k]; return o;
+    }
+    return a; // the user's scalar wins
+  };
+  writeFileSync(p, JSON.stringify(deep(cur, ours), null, 2) + "\n");
+}
+
+function installAdapter(P, cli, keep) {
+  const a = ADAPTERS[cli], p = join(P, a.file), flag = `--guard ${cli}`;
+  if (a.json) mergeJson(p, a.json, flag, keep);
+  else if (a.own || !existsSync(p)) { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, a.text); if (a.exec) chmodSync(p, 0o755); }
+  else if (!read(p).includes(flag)) console.warn(`⚠️  ${a.file} đã có sẵn, không đè — tự thêm guard:\n${a.text}`);
+  else keep(null, p);
+  for (const [f, t] of a.also ?? []) writeFileSync(join(P, f), t);
+  // Role files only where the format IS Claude's (name/description frontmatter + body).
+  if (a.roles) cpSync(join(SRC, "agents"), join(P, a.roles), { recursive: true });
 }
 
 function installAgentsLayer(P, keep) {
@@ -331,9 +421,13 @@ function installInto(P, clis = []) {
 
   // CLI layers, after .mcp.json and the commands exist (both are read above).
   const want = [...new Set([...clis, ...installedClis(P)])];
-  if (want.includes("codex") || want.includes("cursor")) installAgentsLayer(P, keep);
+  if (want.some((c) => c !== "claude")) installAgentsLayer(P, keep);
   if (want.includes("codex")) installCodex(P, keep);
   if (want.includes("cursor")) installCursor(P, keep);
+  for (const c of want) if (ADAPTERS[c]) installAdapter(P, c, keep);
+  const layers = want.filter((c) => ADAPTERS[c] || ["hermes", "amp", "codewhale"].includes(c));
+  if (layers.length) writeFileSync(join(P, GUARDS),
+    JSON.stringify(Object.fromEntries(layers.map((c) => [c, ADAPTERS[c]?.file ?? null])), null, 2) + "\n");
 
   const hookSkipped = installHook(P);
   const signpost = installSignpost(P, wasEmpty);
@@ -972,7 +1066,7 @@ if (args[0] === "--self-test") {
   // ── multi-CLI (#43) — each check runs the REAL artifact, not a mirror of it ──
   {
     // R7: the default install adds no CLI layer.
-    for (const d of [".codex", ".cursor", ".agents", "AGENTS.md"])
+    for (const d of [".codex", ".cursor", ".agents", "AGENTS.md", ".gemini", ".qwen", ".factory", ".windsurf", ".kiro", ".clinerules", ".opencode", ".pi", ".github/hooks"])
       if (existsSync(join(T, d))) fail(`cài mặc định (không --cli) mà vẫn sinh ${d}`);
 
     const self = fileURLToPath(import.meta.url);
@@ -1059,6 +1153,102 @@ if (args[0] === "--self-test") {
     rmSync(dirname(M), { recursive: true, force: true });
   }
 
+  // ── #44: every adapter, hook run EXACTLY as written with that CLI's payload ──
+  {
+    const self = fileURLToPath(import.meta.url);
+    const A = mkrepo("every");
+    // M5: a shared settings file keeps the user's own keys.
+    mkdirSync(join(A, ".gemini"), { recursive: true });
+    writeFileSync(join(A, ".gemini/settings.json"), JSON.stringify({ theme: "mine", context: { fileName: "MINE.md" } }));
+    { const f = join(A, "m.json"); writeFileSync(f, '{"v":1}'); mergeJson(f, { v: 2, w: 3 }, "--x", () => {});
+      const m = JSON.parse(read(f)); rmSync(f);
+      if (m.v !== 1 || m.w !== 3) fail("mergeJson: giá trị của user bị đè hoặc key mới không vào", JSON.stringify(m)); }
+    if (spawnSync(process.execPath, [join(SRC, "kernel/scripts/validate-tasks.mjs"), "--guard", "cursorr"], { input: "{}" }).status !== 64)
+      fail("--guard nhận tên CLI gõ sai — hook trỏ nhầm tên thành guard cho qua hết");
+    const all = Object.keys(ADAPTERS).concat("hermes", "amp", "codewhale").join(",");
+    const r = spawnSync(process.execPath, [self, A, "--yes", "--cli", all], { encoding: "utf8" });
+    if (r.status !== 0) fail(`--cli ${all} cài hỏng`, r.stderr);
+    const gem = JSON.parse(read(join(A, ".gemini/settings.json")));
+    if (gem.theme !== "mine" || !gem.context.fileName.includes("MINE.md") || !gem.context.fileName.includes("AGENTS.md"))
+      fail(".gemini/settings.json: merge làm mất cấu hình của user hoặc không thêm AGENTS.md", JSON.stringify(gem));
+    for (const f of [".gemini/agents/adversary.md", ".qwen/agents/adversary.md", ".factory/droids/adversary.md"])
+      if (!existsSync(join(A, f))) fail(`thiếu ${f} — CLI đó mất role adversary, Gate 5 không còn độc lập`);
+
+    const J = (f) => JSON.parse(read(join(A, f)));
+    const sub = join(A, "src"); mkdirSync(sub, { recursive: true });
+    const env = { ...process.env, GEMINI_PROJECT_DIR: A, QWEN_PROJECT_DIR: A, FACTORY_PROJECT_DIR: A,
+      PLUGIN_ROOT: join(A, ".agents/plugins/spec-harness") };
+    const sh = (cmd, cwd) => (p) => spawnSync("sh", ["-c", cmd], { cwd, env, input: JSON.stringify(p), encoding: "utf8" });
+    const PUSH = "npm test && git push origin main", ENV = join(A, ".env");
+    // [cli, runner, shell payload(cmd), read payload(path), how a DENY looks, how an ALLOW looks]
+    const exitDeny = (x) => x.status === 2, exitAllow = (x) => x.status === 0 && !x.stdout.trim();
+    const jsonIs = (k, v) => (x) => { try { return x.status === 0 && JSON.parse(x.stdout)[k] === v; } catch { return false; } };
+    const cases = [
+      ["gemini", sh(J(".gemini/settings.json").hooks.BeforeTool[0].hooks[0].command, sub),
+        (c) => ({ tool_name: "run_shell_command", tool_input: { command: c } }), (p) => ({ tool_name: "read_file", tool_input: { file_path: p } }), exitDeny, exitAllow],
+      ["qwen", sh(J(".qwen/settings.json").hooks.PreToolUse[0].hooks[0].command, sub),
+        (c) => ({ tool_name: "run_shell_command", tool_input: { command: c } }), (p) => ({ tool_name: "read_file", tool_input: { absolute_path: p } }), exitDeny, exitAllow],
+      ["copilot", sh(J(".github/hooks/spec-harness.json").hooks.preToolUse[0].bash, A),
+        (c) => ({ toolName: "bash", toolArgs: JSON.stringify({ command: c }) }), (p) => ({ toolName: "view", toolArgs: JSON.stringify({ path: p }) }), exitDeny, exitAllow],
+      ["droid", sh(J(".factory/hooks.json").PreToolUse[0].hooks[0].command, sub),
+        (c) => ({ tool_name: "Execute", tool_input: { command: c } }), (p) => ({ tool_name: "Read", tool_input: { file_path: p } }), exitDeny, exitAllow],
+      ["windsurf", sh(J(".windsurf/hooks.json").hooks.pre_run_command[0].command, A),
+        (c) => ({ tool_info: { command_line: c } }), (p) => ({ tool_info: { file_path: p } }), exitDeny, exitAllow],
+      ["kiro", sh(J(".kiro/hooks/spec-harness.json").hooks[0].action.command, A),
+        (c) => ({ tool_name: "shell", tool_input: { command: c } }), (p) => ({ tool_name: "read", tool_input: { path: p } }), exitDeny, exitAllow],
+      ["antigravity", sh(J(".agents/hooks.json")["spec-harness-guard"].PreToolUse[0].hooks[0].command, A),
+        (c) => ({ toolCall: { name: "run_command", args: { CommandLine: c } }, workspacePaths: [A] }),
+        (p) => ({ toolCall: { name: "view_file", args: { AbsolutePath: p } }, workspacePaths: [A] }), jsonIs("decision", "deny"), jsonIs("decision", "ask")],
+      ["cline", sh(join(A, ".clinerules/hooks/PreToolUse"), sub),
+        (c) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "execute_command", parameters: { command: c } } }),
+        (p) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "read_file", parameters: { path: p } } }), jsonIs("cancel", true), jsonIs("cancel", false)],
+      ["goose", sh(J(".agents/plugins/spec-harness/hooks/hooks.json").hooks.PreToolUse[0].hooks[0].command, sub),
+        (c) => ({ event: "PreToolUse", tool_name: "shell", tool_input: { command: c }, working_dir: A }), null, exitDeny, exitAllow],
+    ];
+    for (const [cli, run, shellP, readP, isDeny, isAllow] of cases) {
+      const d = run(shellP(PUSH));
+      if (!isDeny(d)) fail(`${cli}: hook không chặn \`git push\` sau && — deny-list trên ${cli} là giả`, d.stdout + d.stderr);
+      if (readP && !isDeny(run(readP(ENV)))) fail(`${cli}: hook không chặn đọc .env`);
+      const ok = run(shellP("git status"));
+      if (!isAllow(ok)) fail(`${cli}: hook chặn/sai hợp đồng với lệnh hợp lệ — CLI sẽ chặn MỌI lệnh hoặc user tắt hook`, ok.stdout + ok.stderr);
+    }
+    if (!(statSync(join(A, ".clinerules/hooks/PreToolUse")).mode & 0o100)) fail("cline: hook không executable — Cline bỏ qua trong im lặng");
+
+    // In-process plugins: load the generated file and call it like the CLI does.
+    let piH; (await import(join(A, ".pi/extensions/spec-harness.js"))).default({ on: (ev, h) => { if (ev === "tool_call") piH = h; } });
+    if (!piH?.({ toolName: "bash", input: { command: PUSH } }, { cwd: A })?.block) fail("pi: extension không chặn git push");
+    if (!piH({ toolName: "read", input: { path: ENV } }, { cwd: A })?.block) fail("pi: extension không chặn đọc .env");
+    if (piH({ toolName: "bash", input: { command: "git status" } }, { cwd: A })) fail("pi: extension chặn lệnh hợp lệ");
+    const oc = (await (await import(join(A, ".opencode/plugins/spec-harness.js"))).SpecHarness({}))["tool.execute.before"];
+    const ocRun = (args) => oc({ tool: "bash" }, { args }).then(() => "ok", () => "blocked");
+    if (await ocRun({ command: PUSH }) !== "blocked") fail("opencode: plugin không chặn git push");
+    if (await ocRun({ filePath: ENV }) !== "blocked") fail("opencode: plugin không chặn đọc .env");
+    if (await ocRun({ command: "git status" }) !== "ok") fail("opencode: plugin chặn lệnh hợp lệ");
+
+    // M4: a fresh install is clean, and preflight sees EVERY adapter's hook go missing.
+    const guards = J(".agents/spec-harness-guards.json");
+    const pf0 = JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight", "--json"], { cwd: A, encoding: "utf8" }).stdout);
+    const bad = (pf0.errors ?? []).filter((e) => e.includes("--guard"));
+    if (bad.length) fail("cài mới mà preflight đã báo guard hỏng", bad.join("\n"));
+    for (const [cli, file] of Object.entries(guards)) {
+      if (!file) continue;
+      const p = join(A, file), saved = read(p);
+      writeFileSync(p, saved.replaceAll(`--guard ${cli}`, "--guard-gone"));
+      const pf = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight", "--json"], { cwd: A, encoding: "utf8" });
+      if (!(JSON.parse(pf.stdout).errors ?? []).some((e) => e.includes(`--guard ${cli}`)))
+        fail(`preflight im lặng khi ${file} mất guard — deny-list ${cli} mất mà không ai biết`);
+      writeFileSync(p, saved);
+    }
+    for (const c of ["hermes", "amp", "codewhale"]) if (!(c in guards)) fail(`${c} không được ghi vào manifest — cài lại sẽ bỏ rơi skills của nó`);
+    // M7: re-install without --cli refreshes a deleted adapter file.
+    rmSync(join(A, ".kiro/hooks/spec-harness.json"));
+    writeFileSync(join(A, ".pi/extensions/spec-harness.js"), "// stale plugin from an older version\n");
+    spawnSync(process.execPath, [self, A, "--yes"], { stdio: "ignore" });
+    if (!read(join(A, ".pi/extensions/spec-harness.js")).includes("--guard pi")) fail("cài lại không làm mới plugin sinh ra — plugin cũ giữ lại mãi");
+    if (!existsSync(join(A, ".kiro/hooks/spec-harness.json"))) fail("cài lại không --cli bỏ rơi lớp Kiro");
+    rmSync(dirname(A), { recursive: true, force: true });
+  }
+
   rmSync(dirname(T), { recursive: true, force: true });
   console.log("✅ install self-test passed");
   process.exit(0);
@@ -1069,9 +1259,9 @@ const yes = args.includes("--yes") || args.includes("-y");
 const cliAt = args.indexOf("--cli");
 const clis = cliAt === -1 ? [] : String(args[cliAt + 1] ?? "").split(",").filter(Boolean);
 if (cliAt !== -1 && (!clis.length || clis.some((c) => !CLIS.includes(c))))
-  die(`✖ --cli nhận danh sách phẩy trong: ${CLIS.join(", ")} (vd --cli codex,cursor)`);
+  die(`✖ --cli nhận danh sách phẩy trong: ${CLIS.join(", ")} (vd --cli codex,gemini)`);
 const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)));
-if (rest.length > 1) die("dùng: node install.mjs [project-root] [--yes] [--cli claude,codex,cursor]");
+if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--cli ${CLIS.join(",")}]`);
 const where = rest[0] ?? ".";
 const target = resolve(where);
 if (!existsSync(target)) die(`✖ không có thư mục: ${where}`);
@@ -1123,6 +1313,24 @@ if (done.includes("codex")) console.log(`
 if (done.includes("cursor")) console.log(`
 ℹ️  Cursor: guard ở .cursor/hooks.json chạy ngay. Không có hook gợi ý khi dán link task
     (beforeSubmitPrompt của Cursor không chèn được context) — gõ /start-task.`);
+
+const trustNote = { gemini: "Gemini chỉ chạy hook project trong folder đã trust (/permissions)",
+  qwen: "Qwen chỉ chạy hook project trong folder đã trust", droid: "Droid: xem /hooks tab Project",
+  cline: "Cline: bật Settings → Feature → Enable Hooks",
+  pi: "pi: trust project để nạp .pi/extensions", kiro: "Kiro: hook có trong .kiro/hooks, bật enabled nếu IDE tắt" };
+const notes = done.filter((c) => trustNote[c]).map((c) => `    · ${trustNote[c]}`);
+if (notes.length) console.log(`\nℹ️  guard đã ghi, nhưng vài CLI tắt hook project tới khi bạn đồng ý:\n${notes.join("\n")}`);
+if (done.includes("hermes")) console.log(`
+⚠️  Hermes: hook chỉ đọc ~/.hermes/config.yaml — installer KHÔNG ghi ra ngoài repo. Tự dán:
+      hooks:
+        pre_tool_call:
+          - command: >-
+              sh -c 'f="$(git rev-parse --show-toplevel 2>/dev/null)/scripts/validate-tasks.mjs"; [ -f "$f" ] || exit 0; exec node "$f" --guard hermes'
+    rồi: hermes hooks doctor   (và hermes skills trust cho .agents/skills)`);
+if (done.includes("codewhale")) console.log(`
+ℹ️  CodeWhale: hook tool_call_before hiện là observer chỉ-đọc (#455) — không chặn được. Chỉ có AGENTS.md + .agents/skills.`);
+if (done.includes("amp")) console.log(`
+ℹ️  Amp: không có hook — chỉ có AGENTS.md + .agents/skills. Guard deny = pre-commit + CI, không chặn lúc agent chạy.`);
 
 if (hookSkipped) console.log(`
 ℹ️  pre-commit hook chưa cắm (${hookSkipped}) — harness vẫn chạy bình thường.

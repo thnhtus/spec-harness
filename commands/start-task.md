@@ -291,7 +291,8 @@ The worktree is always created **in the repo that will be modified**
 Dispatch each stage through the CLI's subagent mechanism (Claude Code: the
 `Agent` tool, `subagent_type` = the role name registered in `.claude/agents/`;
 Codex: spawn the custom agent of that name from `.codex/agents/`; Cursor: the
-subagent of that name from `.claude/agents/`).
+subagent of that name from `.claude/agents/`; Gemini / Qwen / Droid: the
+same-named agent from `.gemini/agents/`, `.qwen/agents/`, `.factory/droids/`).
 Other CLIs: read the matching role file and run it in a clean context. Every
 subagent prompt **must** begin with this preamble:
 

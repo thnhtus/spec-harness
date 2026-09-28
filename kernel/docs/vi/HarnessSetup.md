@@ -77,6 +77,8 @@ Luật cốt lõi: **merge, không đè** — chỉ thay vùng giữa marker `SP
 | Claude Code | `.claude/agents/{role}.md` (7 file) | file ngắn trỏ về `docs/agents/{Role}.md`, marker dạng HTML comment |
 | Codex | `AGENTS.md` + `.codex/agents/{role}.toml` (7 file) + `.codex/hooks.json` (`--guard codex`) | do `install.mjs --cli codex` sinh, bị đè khi nâng cấp |
 | Cursor | đọc thẳng `.claude/agents/` + `.cursor/hooks.json` (`--guard cursor`) | do `install.mjs --cli cursor` sinh |
+| Gemini, Qwen, Droid | `.gemini/agents/`, `.qwen/agents/`, `.factory/droids/` (cùng file `.md`) + file hook | do `install.mjs --cli <tên>` sinh; file settings dùng chung được merge |
+| Mọi CLI khác | `AGENTS.md` + `.agents/skills/` + file hook ghi trong `.agents/spec-harness-guards.json` | role chạy inline từ `docs/agents/` |
 
 Bảy `{role}`: `orchestrator`, `fsd-writer`, `fsd-reviewer`, `technical-planner`, `implementer`, `fixer`, **`adversary`**.
 

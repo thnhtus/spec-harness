@@ -99,26 +99,73 @@ export function guardVerdict(kind, subject, deny) {
   return null;
 }
 
+// Every CLI names the same two things differently (command / command_line /
+// CommandLine, file_path / path / AbsolutePath…) and nests them differently
+// (tool_input, toolArgs as a JSON string, toolCall.args, preToolUse.parameters).
+// So: walk the payload, collect by KEY, never by position. Only these keys are
+// read — a `content` string that merely mentions `git push` is not a push.
+const GUARD_CMD_KEYS = new Set(["command", "command_line", "CommandLine"]);
+const GUARD_PATH_KEYS = new Set(["file_path", "path", "absolute_path", "AbsolutePath", "filePath"]);
+export function guardSubjects(payload) {
+  const out = { shell: [], read: [] };
+  const walk = (v, depth) => {
+    if (depth > 6 || v == null || typeof v !== "object") return;
+    for (const [k, x] of Object.entries(v)) {
+      if (GUARD_CMD_KEYS.has(k) && (typeof x === "string" || Array.isArray(x))) out.shell.push(Array.isArray(x) ? x.join(" ") : x);
+      else if (GUARD_PATH_KEYS.has(k) && typeof x === "string") out.read.push(x);
+      else if (typeof x === "string" && /^(toolArgs|tool_args|arguments)$/.test(k)) { try { walk(JSON.parse(x), depth + 1); } catch {} }
+      else walk(x, depth + 1);
+    }
+  };
+  walk(payload, 0);
+  return out;
+}
+
+// How each CLI reads an answer. "exit" = exit 2 + stderr denies, exit 0 and
+// silence allows. The JSON modes MUST print on allow too: Cursor denies on
+// invalid JSON, Cline requires `cancel`, Antigravity requires `decision`.
+// Antigravity allow is "ask", not "allow": "allow" would auto-approve every
+// command the guard does not know about, i.e. the guard would LOOSEN the CLI.
+const GUARD_MODES = {
+  codex: "exit", gemini: "exit", qwen: "exit", copilot: "exit", droid: "exit", windsurf: "exit", kiro: "exit",
+  goose: "exit", hermes: "exit", opencode: "exit", pi: "exit",
+  cursor: "cursor", antigravity: "antigravity", cline: "cline",
+};
+
 if (args.has("--guard")) {
   const cli = argv[argv.indexOf("--guard") + 1];
-  if (cli !== "codex" && cli !== "cursor") { console.error("usage: --guard codex|cursor  (hook payload on stdin)"); process.exit(64); }
-  const allow = () => { if (cli === "cursor") console.log('{"permission":"allow"}'); process.exit(0); };
+  const mode = GUARD_MODES[cli];
+  // A typo here would otherwise be a guard that allows everything, silently.
+  if (!mode) { console.error(`usage: --guard ${Object.keys(GUARD_MODES).join("|")}  (hook payload on stdin)`); process.exit(64); }
+  const say = (o) => console.log(JSON.stringify(o));
+  const allow = () => {
+    if (mode === "cursor") say({ permission: "allow" });
+    if (mode === "cline") say({ cancel: false });
+    if (mode === "antigravity") say({ decision: "ask" });
+    process.exit(0);
+  };
   let input;
   // Fail OPEN on an unreadable payload: it means the CLI changed its hook
   // format, and failing closed there blocks every command until someone
   // disables the hook — the guardrail then stays gone for good.
-  try { input = JSON.parse(readFileSync(0, "utf8")); } catch { allow(); }
+  // A TTY stdin (run by hand) would block forever.
+  try { input = JSON.parse(process.stdin.isTTY ? "" : readFileSync(0, "utf8")); } catch { allow(); }
   const deny = new Set(REQUIRED_DENY);
-  const settings = findUpward(join(".claude", "settings.json"), input.cwd ?? process.cwd());
+  const root = [input.cwd, input.workspaceRoots?.[0], input.workspacePaths?.[0], input.working_dir]
+    .find((x) => typeof x === "string") ?? process.cwd();
+  const settings = findUpward(join(".claude", "settings.json"), root);
   if (settings) try { for (const r of JSON.parse(readFileSync(settings, "utf8"))?.permissions?.deny ?? []) deny.add(r); } catch {}
-  const cmd = input.tool_input?.command ?? input.command;
-  const hit = input.file_path != null
-    ? guardVerdict("read", input.file_path, deny)
-    : cmd != null ? guardVerdict("shell", Array.isArray(cmd) ? cmd.join(" ") : cmd, deny) : null;
+  const s = guardSubjects(input);
+  // ponytail: a path key on ANY tool is checked as a read, so writing `.env`
+  // is blocked too. Fail-safe on purpose; split by tool name if it bites.
+  const hit = s.read.map((p) => guardVerdict("read", p, deny)).find(Boolean)
+    ?? s.shell.map((c) => guardVerdict("shell", c, deny)).find(Boolean);
   if (!hit) allow();
   const why = `blocked by spec-harness deny rule ${hit} (docs/Instructions.md §1)`;
-  if (cli === "cursor") console.log(JSON.stringify({ permission: "deny", user_message: why, agent_message: why }));
-  else console.error(why);
+  if (mode === "cursor") say({ permission: "deny", user_message: why, agent_message: why });
+  if (mode === "cline") { say({ cancel: true, errorMessage: why }); process.exit(0); }
+  if (mode === "antigravity") { say({ decision: "deny", reason: why }); process.exit(0); }
+  console.error(why);
   process.exit(2);
 }
 
@@ -2498,6 +2545,13 @@ if (args.has("--self-check")) {
     assert.equal(g("read", "/repo/src/env.ts"), null, "guard: a file merely named like env must pass");
     assert.equal(guardVerdict("read", "C:\\repo\\.env.local", ["Read(.env.*)"]), "Read(.env.*)", "guard: glob rule + Windows path must block");
     assert.equal(g("read", "/repo/.git/push"), null, "guard: a Bash rule never matches a read");
+    // guardSubjects: one shape per branch.
+    assert.deepEqual(guardSubjects({ toolCall: { args: { CommandLine: "git push" } } }).shell, ["git push"], "guard walker: nested CommandLine");
+    assert.deepEqual(guardSubjects({ toolArgs: '{"command":"git push"}' }).shell, ["git push"], "guard walker: toolArgs as a JSON string");
+    assert.deepEqual(guardSubjects({ tool_input: { command: ["git", "push"] } }).shell, ["git push"], "guard walker: argv array");
+    assert.deepEqual(guardSubjects({ preToolUse: { parameters: { path: ".env" } } }).read, [".env"], "guard walker: nested path");
+    assert.deepEqual(guardSubjects({ tool_input: { file_path: "a.md", content: "git push; cat .env" } }),
+      { shell: [], read: ["a.md"] }, "guard walker: file CONTENT mentioning git push is not a push");
   }
 
   // ruleFloor: the cost half that does not need anyone to fill telemetry in.
@@ -2907,6 +2961,18 @@ if (args.has("--preflight")) {
     let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}
     if (!t.includes(flag))
       errs.push(`${dir}/ exists but ${file} does not run \`validate-tasks.mjs ${flag}\` — on that CLI the deny-list on git push / reset --hard / .env is gone. Re-run the installer with --cli ${flag.split(" ")[1]}`);
+  }
+  // Every other CLI layer: install.mjs records cli → hook file. null = the CLI
+  // has no project hook (hermes, amp) — nothing to check, by design.
+  {
+    let guards = {};
+    try { guards = JSON.parse(readFileSync(join(REPO_ROOT, ".agents/spec-harness-guards.json"), "utf8")); } catch {}
+    for (const [cli, file] of Object.entries(guards)) {
+      if (!file) continue;
+      let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}
+      if (!t.includes(`--guard ${cli}`))
+        errs.push(`${file} does not run \`validate-tasks.mjs --guard ${cli}\` — on ${cli} the deny-list on git push / reset --hard / .env is gone. Re-run the installer with --cli ${cli}`);
+    }
   }
 
   // .mcp.json: a placeholder URL kills the CLI at startup, and a credential in
