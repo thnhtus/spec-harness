@@ -39,7 +39,7 @@ Three commands, not one. Skipping `status --porcelain` skips the single most dan
 
 | Check | Finding when |
 | --- | --- |
-| Files in the diff **+ untracked files** vs the `03` list | a file outside the list that `06` did not declare under Plan Deviations |
+| Files in the diff **+ untracked files** vs the `03` list | a file outside the list that `06` did not declare under Plan Deviations — **or** declared, but serving no AC in `02` (a deviation changes *how* an AC is met, never *what* ships: new behaviour is scope widening, Instructions.md §2) |
 | ACs in `02` vs the `08` AC coverage table | a missing row, or a `manual` that is absent from the AC-manual table in `03` |
 | Commands in `08` vs the ProjectRules §7 commands | a command not on the valid list, or a watch-mode one |
 | Amendment log | an AC the code diverged from with no amendment line in `02` ([SharedRules §9.2](./SharedRules.md)) |

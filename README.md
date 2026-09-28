@@ -336,6 +336,18 @@ node scripts/validate-tasks.mjs --cost
 
 `--calibrate` trả lời "có đáng không" nhưng phải đợi task đóng. `--cost` trả lời được **ngay**, vì sàn đọc luật không phụ thuộc vào kết quả chạy: nó là file trên đĩa. Kernel phình 16% thì hiện ở đây, không thì chỉ hiện trên hoá đơn cuối tháng mà không quy được về nguyên nhân. Đo bằng **byte, không phải token** — tokenisation khác theo vendor và trôi theo phiên bản model.
 
+### Eval adversary trước release — `--eval`
+
+`--self-check` chỉ chấm **hình** của 09. Nó không biết adversary có **bắt được bug** hay không. `--eval` trả lời câu đó: 8 case trong `kernel/eval/adversary/cases.json`, mỗi case là cùng một task đã cài sẵn một bug (hoặc không có bug, làm đối chứng PASS). Evidence trong `08` do `run-evidence.mjs` ký thật, rồi case được giao cho agent CLI thật.
+
+```bash
+node install.mjs --eval --agent 'claude -p --model sonnet --agent adversary --permission-mode bypassPermissions --strict-mcp-config'
+# --strict-mcp-config: bỏ MCP user-level, nếu không thì đo máy bạn chứ không đo harness
+# --case <id>  một case · --timeout <giây> (mặc định 1500) · --keep  giữ sandbox + agent.log
+```
+
+Một case đúng khi thoả cả ba: verdict khớp (`status` role đã set, không có thì đọc dòng `Result`), 09 nêu đúng chỗ lỗi (`mustMention`), và role không sửa file nào ngoài task folder. Sai ở bất kỳ case nào thì exit 1. Eval tốn tiền model nên chỉ chạy trước release, không chạy trong CI. Phần CI kiểm là `--self-test`: fixture sạch ở điểm bàn giao, tên case không lộ vào sandbox, scorer đỏ/xanh đúng, và một agent luôn-PASS thì bị `--eval` đánh trượt.
+
 ## Vì sao có cái này
 
 Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là gate mà model **chọn** tuân thủ. Gate bằng exit code thì không có chỗ để chọn. Harness gốc mất một thời gian mới học được điều đó; phần đắt nhất ở đây là `validate-tasks.mjs` + chuỗi truy vết AC, không phải mấy file markdown.

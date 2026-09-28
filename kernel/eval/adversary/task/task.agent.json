@@ -1,0 +1,69 @@
+{
+  "taskId": "SHOP-7",
+  "taskName": "Giảm giá 10% cho đơn từ 100",
+  "trackerUrl": "https://tracker.example/t/SHOP-7",
+  "repoName": "shop",
+  "sprintNumber": 1,
+  "developer": "dev",
+  "branchType": "feature",
+  "layer": "frontend",
+  "taskComplexity": "trivial",
+  "currentStage": "adversarial_review",
+  "status": "in_progress",
+  "branch": "feature/SHOP-7-discount",
+  "branchActual": "",
+  "parentTaskId": "",
+  "docsPath": "docs/tasks/sprint-1/SHOP-7-discount/",
+  "agents": {
+    "orchestrator": {
+      "status": "done"
+    },
+    "fsd-writer": {
+      "status": "done"
+    },
+    "fsd-reviewer": {
+      "status": "done"
+    },
+    "technical-planner": {
+      "status": "done"
+    },
+    "implementer": {
+      "status": "done"
+    },
+    "fixer": {
+      "status": "not_applicable"
+    },
+    "adversary": {
+      "status": "pending"
+    }
+  },
+  "attempts": {
+    "bootstrap": 1,
+    "fsd_write": 1,
+    "fsd_review": 1,
+    "technical_plan": 1,
+    "implementation": 1
+  },
+  "complexity": {
+    "vector": {
+      "scope": 0,
+      "uncertainty": 0,
+      "dependency": 0,
+      "dataImpact": 0,
+      "integration": 0,
+      "testing": 1,
+      "blastRadius": 0,
+      "reversibility": 1
+    },
+    "counts": {
+      "symbol": "discount",
+      "filesTouched": 1,
+      "existingTests": 0
+    },
+    "questions": [],
+    "note": "discount is a new file; nothing imports it yet",
+    "assessedAt": "technical_plan"
+  },
+  "createdAt": "2026-09-28",
+  "updatedAt": "2026-09-28"
+}

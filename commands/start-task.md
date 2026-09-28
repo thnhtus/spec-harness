@@ -12,8 +12,8 @@ under `docs/`).
 (step 2) → dispatch each stage. Complexity assessment goes **first** because it
 decides the worktree, the model, and how heavy Gate 1/2 run.
 
-No stage is skipped because a change "looks small" — `taskComplexity = trivial`
-makes Gate 1–2 run **shorter**, it does not delete them.
+No stage is skipped because a change "looks small" — `trivial` only makes
+Gate 1–2 **shorter**.
 
 ## Architecture: you are the COORDINATOR, not the worker
 
@@ -35,7 +35,7 @@ Your responsibilities only:
    (paths + IDs, never pasted file contents).
 3. After each subagent returns, read ONLY:
    - `task.agent.json` (`status`, `currentStage`)
-   - the last `## Next Handoff` block of `.agent-memory/{role}.md`
+   - the last `## Next Handoff` block of `$TASK/.agent-memory/{role}.md`
 4. Gate PASS (`Continue automation: yes`) → dispatch the next stage.
    Gate FAIL → **stop everything** and report loudly (see Gate-fail handling).
 5. Never read `01-FSD.md` / `02-FSD-Review.md` / `03-Technical-Plan.md`
@@ -221,8 +221,8 @@ subagent prompt **must** begin with this preamble:
 > files your role owns. **If this is a re-run (`attempts[<stage>] > 1`), read
 > only the newest `## Update` / `## Cập Nhật` block of `06`/`08`/`09` plus the last handoff —
 > not the whole history; earlier rounds are already distilled there.** When done,
-> append your `## Next Handoff` block (≤ 30 lines) to `.agent-memory/{role}.md`
-> and update `task.agent.json`. End your final message with: gate verdict
+> append your `## Next Handoff` block (≤ 30 lines) to `$TASK/.agent-memory/{role}.md`
+> and update `$TASK/task.agent.json`. End your final message with: gate verdict
 > (PASS/FAIL), status set, and the one-line reason.
 
 Why sections, not files: [appendix §E](../../docs/agents/StartTask-Appendix.md#e-why-the-preamble-names-sections).

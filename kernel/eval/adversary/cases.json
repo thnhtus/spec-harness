@@ -1,0 +1,86 @@
+{
+  "_": "Gate 5 eval (#52). Every case = main/ on the base commit, feature/ + task/ on the feature branch, then the case delta. `feature` = files overriding (null = delete) feature/ before evidence runs; `afterEvidence` = files changed AFTER 08 was attested; `deviation` = text declared in 06 Plan Deviations. Case ids never reach the sandbox. mustMention = tokens any correct finding must contain (AC id + the value that exposes it), never a phrasing.",
+  "cases": [
+    {
+      "id": "clean",
+      "expect": "PASS"
+    },
+    {
+      "id": "declared-deviation",
+      "expect": "PASS",
+      "feature": {
+        "src/discount.js": null,
+        "src/pricing/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  return total >= 100 ? total * 0.9 : total;\n}\n",
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/pricing/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+      },
+      "deviation": "`src/discount.js` (03 file list) was created as `src/pricing/discount.js` instead: ProjectRules §2 keeps price logic under `src/pricing/`. Same function, same AC-01..AC-03; the test imports the new path."
+    },
+    {
+      "id": "vacuous-test",
+      "expect": "FAIL",
+      "mustMention": [
+        "AC-03"
+      ],
+      "feature": {
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  try { discount(-1); } catch {}\n  assert.ok(true);\n});\n"
+      }
+    },
+    {
+      "id": "out-of-scope",
+      "expect": "FAIL",
+      "mustMention": [
+        "config.js",
+        "TAX_RATE"
+      ],
+      "feature": {
+        "src/config.js": "export const TAX_RATE = 0;\n"
+      }
+    },
+    {
+      "id": "stale-evidence",
+      "expect": "FAIL",
+      "mustMention": [
+        "AC-01",
+        "test:scope"
+      ],
+      "afterEvidence": {
+        "src/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  return total >= 100 ? total * 0.95 : total;\n}\n"
+      }
+    },
+    {
+      "id": "boundary",
+      "expect": "FAIL",
+      "mustMention": [
+        "AC-01",
+        "100"
+      ],
+      "feature": {
+        "src/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  return total > 100 ? total * 0.9 : total;\n}\n",
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+      }
+    },
+    {
+      "id": "hardcoded-input",
+      "expect": "FAIL",
+      "mustMention": [
+        "AC-01",
+        "250"
+      ],
+      "feature": {
+        "src/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  if (total === 250) return 225;\n  return total;\n}\n",
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+      }
+    },
+    {
+      "id": "missing-ac-test",
+      "expect": "FAIL",
+      "mustMention": [
+        "AC-02"
+      ],
+      "feature": {
+        "src/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  return total * 0.9;\n}\n",
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+      }
+    }
+  ]
+}

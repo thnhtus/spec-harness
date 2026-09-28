@@ -40,7 +40,7 @@ Ba lệnh, không phải một. Bỏ `status --porcelain` là bỏ đúng ca ngu
 
 | Kiểm | Finding khi |
 | --- | --- |
-| File trong diff **+ file untracked** so với danh sách `03` | có file ngoài danh sách mà `06` không khai dưới Plan Deviations |
+| File trong diff **+ file untracked** so với danh sách `03` | có file ngoài danh sách mà `06` không khai dưới Plan Deviations — **hoặc** có khai nhưng không phục vụ AC nào trong `02` (deviation đổi *cách* đạt một AC, không bao giờ đổi *thứ được ship*: hành vi mới là mở rộng scope, Instructions.md §2) |
 | AC trong `02` so với bảng AC coverage của `08` | thiếu một dòng, hoặc một `manual` không có trong bảng AC-manual của `03` |
 | Lệnh trong `08` so với lệnh ProjectRules §7 | có lệnh không nằm trong danh sách hợp lệ, hoặc lệnh watch-mode |
 | Amendment log | có AC mà code đi lệch nhưng `02` không có dòng amendment ([SharedRules §9.2](./SharedRules.md)) |

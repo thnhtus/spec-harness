@@ -506,6 +506,142 @@ settings.json, nên guardrail biến mất trong im lặng.
 // ── self-test ──────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 
+// ── --eval: đo chính lớp LLM, không chỉ validator (#52) ──────────────────────────
+// Validator chỉ chấm HÌNH 09 (có verdict, có lệnh tự chạy). Nó không thể biết
+// adversary có TÌM RA bug không — câu đó chỉ trả lời được bằng task có bug
+// cài sẵn và đáp án biết trước. Mỗi case: sandbox cài sạch, task ở stage
+// adversarial_review với 08 do run-evidence.mjs thật ký, rồi gọi --agent.
+//   node install.mjs --eval --agent 'claude -p --model sonnet --agent adversary --permission-mode bypassPermissions --strict-mcp-config'
+// --strict-mcp-config: eval đầu tiên chết vì 105 tool MCP user-level làm tràn
+// context — đo máy người chạy chứ không đo harness. ponytail: hook user-level
+// vẫn chạy (--setting-sources bỏ chúng thì mất luôn login); máy "sạch" thật cần
+// một CLAUDE_CONFIG_DIR riêng đã login, thêm khi eval chạy trên máy CI.
+// Prompt đi qua stdin, cwd = sandbox. Tốn tiền model → chạy trước release,
+// không chạy trong CI.
+const EVAL = join(SRC, "kernel/eval/adversary");
+const EVAL_PROMPT = (task) =>
+  `You are the \`adversary\` subagent (stage adversarial_review, Gate 5) for the task in \`${task}\`.\n` +
+  "Read, in order: `docs/Instructions.md`, then `docs/agents/SharedRules.md` §4 §5 §6 §8 §9, then `docs/agents/Adversary.md`. " +
+  "Obey the artifact size caps in SharedRules §8. Work only inside the task folder. Write `09-Adversarial-Review.md` in the task folder, " +
+  `append your \`## Next Handoff\` block to \`${task}/.agent-memory/adversary.md\`, update \`${task}/task.agent.json\`. ` +
+  "Remind: default FAIL, re-run the ProjectRules §7 commands yourself instead of trusting `08`, do not touch `src/`. " +
+  "End your final message with: gate verdict (PASS/FAIL), status set, and the one-line reason.\n";
+
+function evalCases() {
+  const j = JSON.parse(read(join(EVAL, "cases.json")));
+  return j.cases;
+}
+
+// Case → sandbox repo ở đúng điểm bàn giao cho adversary. Tên case KHÔNG đi vào
+// sandbox (tên thư mục, branch, commit message đều trung tính) — "out-of-scope"
+// nằm trong path là đưa đáp án cho model.
+function buildEvalCase(c, root) {
+  const P = join(root, "shop");
+  mkdirSync(P, { recursive: true });
+  const git = (...a) => {
+    const r = spawnSync("git", ["-c", "user.email=eval@x", "-c", "user.name=eval", ...a], { cwd: P, encoding: "utf8" });
+    if (r.status !== 0) die(`✖ eval: git ${a.join(" ")}: ${r.stderr}`);
+    return r.stdout.trim();
+  };
+  const put = (files) => { for (const [f, s] of Object.entries(files ?? {})) { if (s === null) { rmSync(join(P, f)); continue; } mkdirSync(dirname(join(P, f)), { recursive: true }); writeFileSync(join(P, f), s); } };
+  git("init", "-q", "-b", "main");
+  cpSync(join(EVAL, "main"), P, { recursive: true });
+  const quiet = console.log; console.log = () => {};
+  try { installInto(P); } finally { console.log = quiet; }
+  // ProjectRules §7 + config: thứ một repo thật đã điền xong trước task đầu tiên.
+  const cfg = JSON.parse(read(join(P, "harness.config.json")));
+  cfg.repos = [{ name: "shop", path: ".", layer: cfg.layers[0] }];
+  cfg.tracker.urlPattern = "^https://tracker\\.example/t/.+";
+  writeFileSync(join(P, "harness.config.json"), JSON.stringify(cfg, null, 2) + "\n");
+  const pr = join(P, "docs/agents/ProjectRules.md");
+  writeFileSync(pr, read(pr)
+    .replace("| `<path-scoped unit test command>` |", "| `npm run test:scope` |")
+    .replace(/\| `<whole-repo unit test command>` \|.*\n\| `<type-check command>` \|.*\n\| `<lint command>` \|.*\n\| `<build command>` \|.*\n/, "")
+    .replace("`<dev server, test watch, preview…>`", "none")
+    .replace("`<browser | api | cli | none>`", "`cli` (call the exported function)")
+    .replace("`<path, e.g. e2e/ or test/integration/>`", "none"));
+  git("add", "-A"); git("commit", "--no-verify", "-qm", "base");
+  const base = git("rev-parse", "--short", "HEAD");
+
+  // step 0 thật: _triage.log là thứ validator đối chiếu vector bootstrap
+  const vec = JSON.parse(read(join(EVAL, "task/task.agent.json"))).complexity.vector;
+  spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-7"], { cwd: P, stdio: "ignore" });
+  git("switch", "-qc", "feature/SHOP-7-discount");
+  cpSync(join(EVAL, "feature"), P, { recursive: true });
+  put(c.feature);
+  const T = "docs/tasks/sprint-1/SHOP-7-discount";
+  const t = join(P, T);
+  cpSync(join(EVAL, "task"), t, { recursive: true });
+  cpSync(join(P, "docs/tasks/_templates/task.agent.schema.json"), join(t, "task.agent.schema.json"));
+  const dev = c.deviation ?? "None — the diff matches the 03 file list.";
+  writeFileSync(join(t, "06-Implementation-Notes.md"), read(join(t, "06-Implementation-Notes.md")).replace("{deviation}", dev).replace("{base}", base));
+  git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-7 discount");
+  // 08 do wrapper thật ký trên đúng code đã commit — không dán tay.
+  const ev = spawnSync(process.execPath, ["scripts/run-evidence.mjs", "--append", `${T}/08-Test-Evidence.md`, "--", "npm", "run", "test:scope"], { cwd: P, encoding: "utf8" });
+  if (ev.status !== 0) die(`✖ eval: evidence run failed on the base fixture:\n${ev.stdout}${ev.stderr}`);
+  git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-7 evidence");
+  if (c.afterEvidence) { put(c.afterEvidence); git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-7 tidy"); }
+  return { P, T };
+}
+
+// Verdict: `status` role đã set là thứ coordinator THẬT SỰ route theo (blocked =
+// FAIL, reviewing = PASS) nên nó thắng. Chưa set (timeout, quên) → dòng
+// Result/Verdict trong 09, trên chính dòng đó hoặc dòng không rỗng kế tiếp — eval
+// thật cho thấy `## Verdict\n\n**Gate 5: FAIL.**`. Dòng template chưa điền không tính.
+function verdictOf(nine, status) {
+  if (status === "blocked") return "FAIL";
+  if (status === "reviewing") return "PASS";
+  const lines = (nine ?? "").split("\n").filter((l) => l.trim() && !/PASS \| FAIL/.test(l));
+  for (let i = 0; i < lines.length; i++)
+    if (/\b(?:Result|Verdict)\b/i.test(lines[i]))
+      for (const l of [lines[i], lines[i + 1] ?? ""]) {
+        const m = /\b(PASS|FAIL|UNCERTAIN)\b/.exec(l.replace(/^[^:]*\b(?:Result|Verdict)\b/i, ""));
+        if (m) return m[1];
+      }
+  return null;
+}
+function scoreAdversary(c, nine, srcChanged, status) {
+  const out = [];
+  const got = verdictOf(nine, status);
+  if (!got) out.push(nine == null ? "no 09 written" : "no verdict: status not set and no Result/Verdict line in 09");
+  // UNCERTAIN trên một task có bug vẫn chặn merge → đếm là bắt được. Trên task
+  // sạch thì không: một adversary luôn nói "không chắc" là một gate không ai qua.
+  else if (c.expect === "PASS" ? got !== "PASS" : got === "PASS") out.push(`verdict ${got}, expected ${c.expect}`);
+  if (got && got !== "PASS")
+    for (const s of c.mustMention ?? []) if (!(nine ?? "").includes(s)) out.push(`09 does not mention "${s}"`);
+  if (srcChanged.length) out.push(`role edited outside the task folder: ${srcChanged.join(", ")}`);
+  return out;
+}
+
+if (args[0] === "--eval") {
+  const at = args.indexOf("--agent"), cmd = at === -1 ? null : args[at + 1];
+  const only = args.includes("--case") ? args[args.indexOf("--case") + 1] : null;
+  const perCase = Number(args.includes("--timeout") ? args[args.indexOf("--timeout") + 1] : 1500) * 1000;
+  const cases = evalCases().filter((c) => !only || c.id === only);
+  if (!cmd || !cases.length) die("dùng: node install.mjs --eval --agent '<lệnh đọc prompt từ stdin>' [--case <id>] [--timeout <giây>] [--keep]");
+  const rows = [];
+  for (const c of cases) {
+    const root = mkdtempSync(join(tmpdir(), "sh-eval-"));
+    const { P, T } = buildEvalCase(c, root);
+    const r = spawnSync(cmd, { cwd: P, shell: true, input: EVAL_PROMPT(T), encoding: "utf8", timeout: perCase, maxBuffer: 64 << 20 });
+    const nineP = join(P, T, "09-Adversarial-Review.md");
+    const nine = existsSync(nineP) ? read(nineP) : null;
+    const changed = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: P, encoding: "utf8" }).stdout
+      .split("\n").filter(Boolean).map((l) => l.slice(3)).filter((f) => !f.startsWith(T + "/"));
+    let status; try { status = JSON.parse(read(join(P, T, "task.agent.json"))).status; } catch {}
+    // timeout vẫn chấm: 09 đã ghi thì verdict đã có, chỉ thiếu bước cập nhật trạng thái
+    const defects = scoreAdversary(c, nine, changed, status);
+    if (r.error) defects.push(`agent: ${r.error.code ?? r.error.message}`);
+    writeFileSync(join(root, "agent.log"), `${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
+    rows.push({ id: c.id, expect: c.expect, ok: !defects.length, defects });
+    console.log(`${defects.length ? "✖" : "✔"} ${c.id.padEnd(20)} expect ${c.expect.padEnd(4)} ${defects.join("; ")}`);
+    if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
+  }
+  const bad = rows.filter((r) => !r.ok).length;
+  console.log(`\n${bad ? "✖" : "✅"} eval: ${rows.length - bad}/${rows.length} correct`);
+  process.exit(bad ? 1 : 0);
+}
+
 if (args[0] === "--self-test") {
   const fail = (m, extra) => { console.error(`✖ self-test: ${m}`); if (extra) console.error(extra); process.exit(1); };
   const git = (cwd, ...a) => spawnSync("git", a, { cwd, stdio: "ignore" });
@@ -1343,6 +1479,60 @@ if (args[0] === "--self-test") {
     if (!read(join(A, ".pi/extensions/spec-harness.js")).includes("--guard pi")) fail("cài lại không làm mới plugin sinh ra — plugin cũ giữ lại mãi");
     if (!existsSync(join(A, ".kiro/hooks/spec-harness.json"))) fail("cài lại không --cli bỏ rơi lớp Kiro");
     rmSync(dirname(A), { recursive: true, force: true });
+  }
+
+  // --eval (#52): model thật không chạy ở đây (tốn tiền, không tất định), nhưng mọi
+  // thứ quanh nó thì phải xanh: (1) mỗi fixture đúng là điểm bàn giao cho adversary
+  // — validator chỉ còn thiếu 09, không thiếu gì khác (fixture hỏng thì eval đo
+  // nhầm "agent kêu fixture hỏng"); (2) scorer đỏ/xanh đúng trên 09 viết sẵn.
+  {
+    const cases = evalCases();
+    if (!cases.some((c) => c.expect === "PASS") || !cases.some((c) => c.expect === "FAIL"))
+      fail("eval cần cả case PASS lẫn FAIL — thiếu PASS thì adversary luôn nói FAIL cũng được điểm tuyệt đối");
+    const trees = new Map();
+    for (const c of cases) {
+      if (c.expect === "FAIL" && !(c.mustMention ?? []).length) fail(`eval case ${c.id}: FAIL mà không có mustMention — đoán mò FAIL cũng qua`);
+      const root = mkdtempSync(join(tmpdir(), "sh-evst-"));
+      const { P, T } = buildEvalCase(c, root);
+      const j = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+      const res = JSON.parse(j.stdout).results[0];
+      if (res.errors.length || res.warnings.length)
+        fail(`eval fixture ${c.id} không sạch ở điểm bàn giao:`, [...res.errors, ...res.warnings].join("\n"));
+      const leak = spawnSync("git", ["grep", "-l", "-F", c.id, "HEAD", "--", "src", "test", T, "package.json"], { cwd: P, encoding: "utf8" }).stdout.trim();
+      if (c.id.length > 5 && leak) fail(`eval case ${c.id}: tên case lộ vào sandbox (${leak}) — model đọc được đáp án`);
+      const tests = spawnSync("npm", ["run", "-s", "test:scope"], { cwd: P, encoding: "utf8", shell: process.platform === "win32" });
+      if ((tests.status === 0) !== (c.id !== "stale-evidence"))
+        fail(`eval case ${c.id}: test:scope exit ${tests.status} — chỉ stale-evidence được đỏ khi chạy lại (08 đã attest xanh)`);
+      for (const [f, v] of Object.entries(c.feature ?? {}))
+        if (v === null && existsSync(join(P, f))) fail(`eval case ${c.id}: ${f} = null nhưng vẫn còn trong sandbox`);
+      // mỗi case phải là một cây code KHÁC: delta không được áp thì mọi case là bản sao của clean
+      const tree = spawnSync("git", ["rev-parse", "HEAD:src", "HEAD:test"], { cwd: P, encoding: "utf8" }).stdout.trim();
+      if (trees.has(tree)) fail(`eval case ${c.id}: code giống hệt case ${trees.get(tree)} — delta của case không được áp`);
+      trees.set(tree, c.id);
+      rmSync(root, { recursive: true, force: true });
+    }
+    const c = { expect: "FAIL", mustMention: ["AC-03"] };
+    const ok = (x, want, why) => { if (!x.length !== want) fail(`scoreAdversary: ${why} → ${JSON.stringify(x)}`); };
+    ok(scoreAdversary(c, "**Result: FAIL** · x\nAC-03 không assert", []), true, "FAIL + nhắc đúng AC phải đậu");
+    ok(scoreAdversary(c, "**Result: UNCERTAIN**\nAC-03", []), true, "UNCERTAIN trên task có bug vẫn chặn merge → đậu");
+    ok(scoreAdversary(c, "**Result: FAIL**\nkhông nói gì cụ thể", []), false, "FAIL không nhắc bug = đoán mò");
+    ok(scoreAdversary(c, "**Result: PASS**\nAC-03", []), false, "PASS trên task có bug");
+    ok(scoreAdversary(c, null, []), false, "không có 09");
+    ok(scoreAdversary({ expect: "PASS" }, "**Result: PASS | FAIL | UNCERTAIN** · {date}", []), false, "dòng template chưa điền không phải verdict");
+    ok(scoreAdversary({ expect: "PASS" }, "**Verdict: PASS**", []), true, "PASS đúng trên task sạch");
+    ok(scoreAdversary({ expect: "PASS" }, "**Result: UNCERTAIN**", []), false, "UNCERTAIN trên task sạch = gate không ai qua");
+    ok(scoreAdversary(c, "## Verdict\n\n**FAIL.** AC-03 không assert", []), true, "heading Verdict + FAIL ở dòng sau (eval thật) → đậu");
+    ok(scoreAdversary(c, "## Verdict\n\n**Gate 5: FAIL.** AC-03", []), true, "dòng kế tiếp có chữ khác trước FAIL (eval thật) → đậu");
+    ok(scoreAdversary({ expect: "PASS" }, "## Verdict\n\nAC-01 ok\n\nPASS", []), false, "verdict chỉ đọc 1 dòng kế, không quét cả file");
+    ok(scoreAdversary(c, "**Result: PASS**\nAC-03", [], "blocked"), true, "status=blocked thắng chữ trong 09");
+    ok(scoreAdversary({ expect: "PASS" }, "**Result: FAIL**", [], "reviewing"), true, "status=reviewing = PASS");
+    ok(scoreAdversary({ expect: "PASS" }, "**Result: PASS**", ["src/discount.js"]), false, "role sửa src/ là sai dù verdict đúng");
+    // và cả vòng --eval end-to-end với một agent giả luôn nói PASS: phải exit 1
+    const e = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--eval", "--agent",
+      `node -e "require('fs').writeFileSync(process.argv[1]+'/09-Adversarial-Review.md','**Result: PASS**')" docs/tasks/sprint-1/SHOP-7-discount`],
+      { encoding: "utf8" });
+    if (e.status !== 1 || !/✔ clean/.test(e.stdout) || !/✖ boundary/.test(e.stdout))
+      fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", e.stdout + e.stderr);
   }
 
   rmSync(dirname(T), { recursive: true, force: true });
