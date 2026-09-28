@@ -25,11 +25,11 @@ Mọi CLI khác Claude nhận `AGENTS.md` + `.agents/skills/`. Guard deny (`git 
 
 | Hạng | CLI | File guard | Kiểm |
 |---|---|---|---|
-| A | codex, cursor | `.codex/hooks.json`, `.cursor/hooks.json` | codex e2e |
+| A | codex, cursor | `.codex/hooks.json`, `.cursor/hooks.json` | codex e2e (trust thật) |
 | A | gemini · qwen | `.gemini/settings.json` · `.qwen/settings.json` (merge, giữ config của bạn) + `agents/` | e2e |
 | A | copilot · droid · antigravity | `.github/hooks/spec-harness.json` · `.factory/hooks.json` (+`droids/`) · `.agents/hooks.json` | e2e |
-| A | windsurf (IDE) · devin (CLI) · kiro | `.windsurf/hooks.json` · `.devin/hooks.v1.json` · `.kiro/hooks/spec-harness.json` | payload theo docs / `devin migrate` |
-| A | cline | `.clinerules/hooks/PreToolUse` — chặn = dừng cả task | e2e (3.0.65) |
+| A | windsurf / Devin Desktop · devin (CLI) · kiro | `.devin/hooks.json` (+ `.windsurf/hooks.json` cho IDE cũ) · `.devin/hooks.v1.json` · `.kiro/hooks/spec-harness.json` | payload theo docs / `devin migrate` |
+| A | cline | `.clinerules/hooks/PreToolUse` (chặn từng lệnh/file, task chạy tiếp) | e2e (3.0.65) |
 | A | goose · pi · opencode | `.agents/plugins/spec-harness/` · `.pi/extensions/spec-harness.js` · `.opencode/plugins/spec-harness.js` | e2e |
 | B | hermes | không ghi gì ngoài repo; installer in snippet cho `~/.hermes/config.yaml` | `hermes hooks test` |
 | B | amp, codewhale | không có hook chặn được (CodeWhale: hook mới là observer) | — |
@@ -48,7 +48,7 @@ Cài lại không cần `--cli`: installer tự nhận các lớp đã có và n
 | Gợi ý khi dán link task | ✅ | ✅ | ❌ (Cursor không chèn được context) |
 | MCP | `.mcp.json` | `.codex/config.toml` | `.cursor/mcp.json` |
 
-Guard dùng **một** danh sách: luật bắt buộc của harness cộng với `permissions.deny` trong `.claude/settings.json`. Thêm luật ở đó là cả ba CLI cùng nhận. **Codex bỏ qua hook cho tới khi bạn trust nó**: mở `codex` trong project, trust project, rồi gõ `/hooks` và trust hai hook spec-harness. Chưa trust thì guard đang tắt.
+Guard dùng **một** danh sách: luật bắt buộc của harness cộng với `permissions.deny` trong `.claude/settings.json`. Thêm luật ở đó là cả ba CLI cùng nhận. **Codex bỏ qua hook cho tới khi bạn trust nó**: mở `codex` trong project, trust project, rồi gõ `/hooks` và trust hai hook spec-harness. Chưa trust thì guard đang tắt. Trust gắn với đường dẫn thật (realpath) và hash của hook, nên mở qua symlink hay sửa `.codex/hooks.json` là phải trust lại. Codex trên Windows chưa gọi `PreToolUse` cho lệnh shell ([openai/codex#24453](https://github.com/openai/codex/issues/24453)), nên ở đó chỉ còn pre-commit/CI.
 
 Rồi mở CLI agent tại đó và chạy hai lệnh (Codex/Cursor: gọi skill `init-project-rules` / `start-task`):
 

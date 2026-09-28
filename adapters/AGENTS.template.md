@@ -6,4 +6,4 @@ This repo runs **spec-harness**: every tracker task goes through 7 roles and 5 g
 - First run after install: use the **`init-project-rules`** skill.
 - Global rules: [`docs/Instructions.md`](docs/Instructions.md). Roles: [`docs/Agents.md`](docs/Agents.md).
 - Before any commit: `node scripts/validate-tasks.mjs` must exit 0.
-- Never `git push`, `git reset --hard`, `git stash`, `git clean`, never read `.env`. A hook blocks these; do not work around it.
+- Never `git push`, `git reset --hard`, `git stash`, `git clean`, never read `.env`. Where your CLI supports hooks, a hook blocks these (`.agents/spec-harness-guards.json` lists which); where it does not, nothing stops you but this line. Do not work around either.

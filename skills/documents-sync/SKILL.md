@@ -165,23 +165,22 @@ From the target's heading text: lowercase → delete all punctuation **except** 
 **Never guess the anchor — read the target file's actual heading first.** Then verify every anchor you wrote resolves:
 
 ```bash
-python3 - <<'PY'
-import re, io, glob, os
-def slug(h):
-    s = re.sub(r'[^\w\s-]', '', h.strip().lower(), flags=re.UNICODE)
-    return re.sub(r'\s', '-', s)
-heads = {os.path.normpath(f): {slug(m.group(2)) for m in
-         re.finditer(r'^(#{1,6})\s+(.*)$', io.open(f, encoding='utf-8').read(), re.M)}
-         for f in glob.glob('docs/srs/**/*.md', recursive=True) + glob.glob('docs/fsd/**/*.md', recursive=True)}
-bad = 0
-for f, hs in heads.items():
-    txt = io.open(f, encoding='utf-8').read()
-    for m in re.finditer(r'\[[^\]]*\]\(([^)#]*)#([^)]+)\)', txt):
-        tgt = os.path.normpath(os.path.join(os.path.dirname(f), m.group(1))) if m.group(1) else f
-        if m.group(2) not in heads.get(tgt, hs if not m.group(1) else set()):
-            print('BROKEN', f, '->', m.group(1) + '#' + m.group(2)); bad += 1
-print('broken anchors:', bad)
-PY
+node - <<'JS'
+const fs = require("fs"), path = require("path");
+// GitHub slug: lowercase, drop punctuation except - and _, each space -> "-". Diacritics kept.
+const slug = (h) => h.trim().toLowerCase().replace(/[^\p{L}\p{N}\p{M}_\s-]/gu, "").replace(/\s/g, "-");
+const files = ["docs/srs", "docs/fsd"].filter((d) => fs.existsSync(d))
+  .flatMap((d) => fs.readdirSync(d, { recursive: true }).map((f) => path.normalize(path.join(d, f))))
+  .filter((f) => f.endsWith(".md"));
+const heads = new Map(files.map((f) => [f, new Set([...fs.readFileSync(f, "utf8").matchAll(/^#{1,6}\s+(.*)$/gm)].map((m) => slug(m[1])))]));
+let bad = 0;
+for (const [f, hs] of heads)
+  for (const m of fs.readFileSync(f, "utf8").matchAll(/\[[^\]]*\]\(([^)#]*)#([^)]+)\)/g)) {
+    const tgt = m[1] ? path.normalize(path.join(path.dirname(f), m[1])) : f;
+    if (!(heads.get(tgt) ?? (m[1] ? new Set() : hs)).has(m[2])) { console.log("BROKEN", f, "->", m[1] + "#" + m[2]); bad++; }
+  }
+console.log("broken anchors:", bad);
+JS
 ```
 
 ### Two carve-outs

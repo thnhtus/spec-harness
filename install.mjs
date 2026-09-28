@@ -261,7 +261,10 @@ const ADAPTERS = {
     { type: "command", bash: `node ${g("copilot")}`, powershell: `node ${g("copilot")}`, timeoutSec: 30 }] } } },
   droid: { file: ".factory/hooks.json", roles: ".factory/droids", json: { PreToolUse: [{ matcher: "Execute|Read",
     hooks: [{ type: "command", command: `node "$FACTORY_PROJECT_DIR"/${g("droid")}`, timeout: 30 }] }] } },
-  windsurf: { file: ".windsurf/hooks.json", json: { hooks: {
+  // #47: Devin Desktop (ex-Windsurf) reads .devin/hooks.json and falls back to
+  // .windsurf/hooks.json ONLY when the new file is absent or empty — a user's own
+  // .devin/hooks.json would silently drop a guard that lives only in the legacy one.
+  windsurf: { file: ".devin/hooks.json", legacy: ".windsurf/hooks.json", json: { hooks: {
     pre_run_command: [{ command: `node ${g("windsurf")}`, show_output: true }],
     pre_read_code: [{ command: `node ${g("windsurf")}`, show_output: true }] } } },
   // Devin CLI (Windsurf's successor) ignores .windsurf/hooks.json; this is the shape
@@ -320,6 +323,7 @@ function mergeJson(p, ours, flag, keep) {
 function installAdapter(P, cli, keep) {
   const a = ADAPTERS[cli], p = join(P, a.file), flag = `--guard ${cli}`;
   if (a.json) mergeJson(p, a.json, flag, keep);
+  if (a.legacy) mergeJson(join(P, a.legacy), a.json, flag, keep);
   else if (a.own || !existsSync(p)) { mkdirSync(dirname(p), { recursive: true }); writeFileSync(p, a.text); if (a.exec) chmodSync(p, 0o755); }
   else if (!read(p).includes(flag)) console.warn(`⚠️  ${a.file} đã có sẵn, không đè — tự thêm guard:\n${a.text}`);
   else keep(null, p);
@@ -926,6 +930,18 @@ if (args[0] === "--self-test") {
       );
   }
 
+  // #49: Node is the only runtime the installer checks for. A python step in a
+  // command/skill fails on a machine that passed every install check.
+  {
+    const py = [];
+    for (const r of ["commands", "skills"]) for (const f of walk(join(SRC, r))) {
+      const relp = f.slice(SRC.length + 1);
+      if (f.endsWith(".py")) py.push(relp);
+      else read(f).split("\n").forEach((l, i) => { if (/\bpython3?\b/.test(l)) py.push(`${relp}:${i + 1}`); });
+    }
+    if (py.length) fail(`python trong đường chạy — Node là runtime duy nhất installer kiểm tra:\n  ${py.join("\n  ")}`);
+  }
+
   const pr = read(join(T, "docs/agents/ProjectRules.md"));
   if (!pr.includes("NOT-FILLED-IN")) fail("ProjectRules không phải template rỗng");
   if (!/^## 7\./m.test(pr)) fail("template mất mục §7 (kernel trỏ chéo bằng số)");
@@ -1107,6 +1123,9 @@ if (args[0] === "--self-test") {
     }
     if (!existsSync(join(M, ".agents/skills/fix-bug/SKILL.md"))) fail("Codex không thấy skills — thiếu .agents/skills/");
     if (!existsSync(join(M, "AGENTS.md"))) fail("thiếu AGENTS.md — Codex/Cursor không biết repo này chạy harness");
+    // #48: AGENTS.md is read by tier B/C CLIs too, which have NO hook.
+    if (/(^|\. )A hook blocks/m.test(read(join(M, "AGENTS.md"))))
+      fail("AGENTS.md hứa 'A hook blocks' vô điều kiện — sai trên CLI không có hook (tier B/C)");
     if (!/\[mcp_servers\."tracker"\]/.test(read(join(M, ".codex/config.toml")))) fail(".codex/config.toml không mirror MCP từ .mcp.json");
     if (!existsSync(join(M, ".cursor/mcp.json"))) fail("thiếu .cursor/mcp.json");
 
@@ -1126,7 +1145,9 @@ if (args[0] === "--self-test") {
     // path must print valid JSON — silence would block every command.
     const ok = hookRun(cu.beforeShellExecution[0].command, { command: "git status", cwd: M }, M);
     let okJ; try { okJ = JSON.parse(ok.stdout); } catch {}
-    if (ok.status !== 0 || okJ?.permission !== "allow") fail("Cursor guard: lệnh hợp lệ không ra {permission:allow} — Cursor sẽ chặn MỌI lệnh", ok.stdout + ok.stderr);
+    // #45: allow = `{}`: "allow" may skip Cursor's own approval, "ask" breaks beforeReadFile's schema.
+    if (ok.status !== 0 || !okJ || typeof okJ !== "object" || "permission" in okJ)
+      fail("Cursor guard: lệnh hợp lệ phải ra `{}` — JSON hỏng thì Cursor chặn MỌI lệnh, `allow` thì guard nới lỏng Cursor", ok.stdout + ok.stderr);
     const no = hookRun(cu.beforeReadFile[0].command, { file_path: join(M, ".env") }, M);
     if (no.status !== 2 || JSON.parse(no.stdout).permission !== "deny") fail("Cursor beforeReadFile không chặn đọc .env");
     // R1: the project's own deny rules count too — one list, not a copy.
@@ -1164,6 +1185,9 @@ if (args[0] === "--self-test") {
     // M5: a shared settings file keeps the user's own keys.
     mkdirSync(join(A, ".gemini"), { recursive: true });
     writeFileSync(join(A, ".gemini/settings.json"), JSON.stringify({ theme: "mine", context: { fileName: "MINE.md" } }));
+    // #47: a user's own .devin/hooks.json is exactly what disables the legacy file.
+    mkdirSync(join(A, ".devin"), { recursive: true });
+    writeFileSync(join(A, ".devin/hooks.json"), JSON.stringify({ hooks: { post_write_code: [{ command: "mine-fmt" }] } }));
     { const f = join(A, "m.json"); writeFileSync(f, '{"v":1}'); mergeJson(f, { v: 2, w: 3 }, "--x", () => {});
       const m = JSON.parse(read(f)); rmSync(f);
       if (m.v !== 1 || m.w !== 3) fail("mergeJson: giá trị của user bị đè hoặc key mới không vào", JSON.stringify(m)); }
@@ -1175,6 +1199,10 @@ if (args[0] === "--self-test") {
     const gem = JSON.parse(read(join(A, ".gemini/settings.json")));
     if (gem.theme !== "mine" || !gem.context.fileName.includes("MINE.md") || !gem.context.fileName.includes("AGENTS.md"))
       fail(".gemini/settings.json: merge làm mất cấu hình của user hoặc không thêm AGENTS.md", JSON.stringify(gem));
+    const dv = JSON.parse(read(join(A, ".devin/hooks.json"))).hooks;
+    if (dv.post_write_code?.[0]?.command !== "mine-fmt" || !JSON.stringify(dv.pre_run_command ?? "").includes("--guard windsurf"))
+      fail(".devin/hooks.json: mất hook của user hoặc thiếu guard — Devin Desktop bỏ qua .windsurf/hooks.json khi file này có hook", JSON.stringify(dv));
+    if (!read(join(A, ".windsurf/hooks.json")).includes("--guard windsurf")) fail(".windsurf/hooks.json (bản IDE cũ) mất guard");
     for (const f of [".gemini/agents/adversary.md", ".qwen/agents/adversary.md", ".factory/droids/adversary.md"])
       if (!existsSync(join(A, f))) fail(`thiếu ${f} — CLI đó mất role adversary, Gate 5 không còn độc lập`);
 
@@ -1196,7 +1224,7 @@ if (args[0] === "--self-test") {
         (c) => ({ toolName: "bash", toolArgs: JSON.stringify({ command: c }) }), (p) => ({ toolName: "view", toolArgs: JSON.stringify({ path: p }) }), exitDeny, exitAllow],
       ["droid", sh(J(".factory/hooks.json").PreToolUse[0].hooks[0].command, sub),
         (c) => ({ tool_name: "Execute", tool_input: { command: c } }), (p) => ({ tool_name: "Read", tool_input: { file_path: p } }), exitDeny, exitAllow],
-      ["windsurf", sh(J(".windsurf/hooks.json").hooks.pre_run_command[0].command, A),
+      ["windsurf", sh(J(".devin/hooks.json").hooks.pre_run_command[0].command, A),
         (c) => ({ tool_info: { command_line: c } }), (p) => ({ tool_info: { file_path: p } }), exitDeny, exitAllow],
       ["devin", sh(J(".devin/hooks.v1.json").PreToolUse[0].hooks[0].command, A),
         (c) => ({ hook_event_name: "PreToolUse", tool_name: "exec", tool_input: { command: c } }), (p) => ({ hook_event_name: "PreToolUse", tool_name: "read", tool_input: { file_path: p } }), exitDeny, exitAllow],
@@ -1208,8 +1236,14 @@ if (args[0] === "--self-test") {
         (p) => ({ toolCall: { name: "view_file", args: { AbsolutePath: p } }, workspacePaths: [A] }), jsonIs("decision", "deny"), jsonIs("decision", "ask")],
       // cline 3.0.65 shapes, observed e2e: run_commands{commands[]}, read_files{files: JSON string}.
       ["cline", sh(join(A, ".clinerules/hooks/PreToolUse"), sub),
-        (c) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "run_commands", parameters: { commands: ["ls", c] } } }),
-        (p) => ({ hookName: "PreToolUse", workspaceRoots: [A], preToolUse: { toolName: "read_files", parameters: { files: JSON.stringify([{ path: p, start_line: null }]) } } }), jsonIs("cancel", true), jsonIs("cancel", false)],
+        (c) => ({ hookName: "tool_call", workspaceRoots: [A], tool_call: { name: "run_commands", input: { commands: ["ls", c] } },
+          preToolUse: { toolName: "run_commands", parameters: { commands: JSON.stringify(["ls", c]) } } }),
+        (p) => ({ hookName: "tool_call", workspaceRoots: [A], tool_call: { name: "read_files", input: { files: [{ path: p, start_line: null }] } },
+          preToolUse: { toolName: "read_files", parameters: { files: JSON.stringify([{ path: p, start_line: null }]) } } }),
+        // #46: deny rewrites the denied entry (task keeps running), never cancels.
+        (x) => { try { const o = JSON.parse(x.stdout), e = o.overrideInput?.commands ?? o.overrideInput?.files;
+          return x.status === 0 && !o.cancel && JSON.stringify(e).includes("blocked by spec-harness"); } catch { return false; } },
+        jsonIs("cancel", false)],
       ["goose", sh(J(".agents/plugins/spec-harness/hooks/hooks.json").hooks.PreToolUse[0].hooks[0].command, sub),
         (c) => ({ event: "PreToolUse", tool_name: "shell", tool_input: { command: c }, working_dir: A }), null, exitDeny, exitAllow],
     ];
@@ -1329,14 +1363,17 @@ if (signpost) console.log(`
 if (done.includes("codex")) console.log(`
 ⚠️  Codex: hook guard (deny git push/reset --hard/.env) TẮT cho tới khi bạn trust.
     Mở codex trong project → trust project → gõ /hooks → trust 2 hook spec-harness.
-    Chưa trust thì Codex bỏ qua hook trong im lặng — preflight không thấy được.`);
+    Chưa trust thì Codex bỏ qua hook trong im lặng — preflight không thấy được.
+    Trust gắn với ĐƯỜNG DẪN THẬT (realpath) + hash của hook: mở qua symlink/đường khác
+    hoặc sửa .codex/hooks.json = phải /hooks trust lại. Windows: Codex chưa bắn
+    PreToolUse cho lệnh shell (openai/codex#24453) — trên Windows chỉ còn pre-commit/CI.`);
 if (done.includes("cursor")) console.log(`
 ℹ️  Cursor: guard ở .cursor/hooks.json chạy ngay. Không có hook gợi ý khi dán link task
     (beforeSubmitPrompt của Cursor không chèn được context) — gõ /start-task.`);
 
 const trustNote = { gemini: "Gemini chỉ chạy hook project trong folder đã trust (/permissions)",
   qwen: "Qwen chỉ chạy hook project trong folder đã trust", droid: "Droid: xem /hooks tab Project",
-  cline: "Cline: chặn = dừng CẢ task (cancel của Cline 3.x không chặn riêng 1 tool); IDE cũ: bật Enable Hooks",
+  cline: "Cline: chặn run_commands/read_files = chỉ lệnh/file đó lỗi, task chạy tiếp; tool khác = dừng cả task; IDE cũ: bật Enable Hooks",
   copilot: "Copilot: hook repo chỉ chạy khi folder nằm trong trustedFolders (~/.copilot/config.json) — trả lời Yes lúc mở lần đầu",
   devin: "Devin CLI đọc .devin/hooks.v1.json (không đọc .windsurf/hooks.json của IDE)",
   pi: "pi: trust project để nạp .pi/extensions", kiro: "Kiro: hook có trong .kiro/hooks, bật enabled nếu IDE tắt" };

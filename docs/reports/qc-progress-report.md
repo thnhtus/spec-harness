@@ -100,3 +100,17 @@ bash /tmp/regress.sh                            # regression of 7 CLIs on the fi
 - Release 0.6.1 immediately: BUG-001/002 are critical (the guard is fake on Antigravity and Cline 3.x under 0.6.0).
 - After release: re-install from npm and re-run `regress.sh`.
 - User: `devin auth login` so TC-13 can run; decide whether Cursor `allow` → `ask`.
+
+## 9. Follow-up round (0.7.0): issues #45–#51
+
+| Issue | Change | Verification | Level |
+|---|---|---|---|
+| #45 Cursor allow | allow → `{}` (no decision). `ask` is invalid for `beforeReadFile` in cursor-agent 2026.09.26 and would block every read | self-test + 2 mutations red | source-verified, no login |
+| #46 Cline cancel | `clineDeny`: `overrideInput` turns denied entries into `exit 1` / a `/dev/null/<why>` path; anything unrecognised still falls back to `cancel` | cline 3.0.65: blocked cmd fails with the reason, `allowed-ok` and `after-block-ok` run, the AGENTS.md read in the same batch succeeds | e2e |
+| #47 Devin Desktop | windsurf adapter merges into `.devin/hooks.json` **and** legacy `.windsurf/hooks.json`, and keeps the user's own hooks | self-test with a pre-seeded user hook + 2 mutations | simulated (no IDE) |
+| #48 AGENTS.md | claim made conditional on CLI hook support | self-test + mutation | unit |
+| #49 python | `snapdiff.py` deleted (unreferenced); anchor checker ported to `node -e`; self-test bans python in `commands/`, `skills/` | the Node and Python versions give identical output on a Vietnamese-heading fixture; mutation red | unit + differential |
+| #50 Codex trust | trust persisted through Codex's own app-server (`hooks/list` → `config/batchWrite hooks.state.<key>.trusted_hash`), then plain `codex exec` **without** bypass: untrusted → `spec-probe ok` ran; trusted → `PreToolUse Blocked`, `allowed-ok` ran. Finding: the key is the **realpath** (`/private/tmp/...`); trusting `/tmp/...` protected nothing. Windows: documented ceiling (openai/codex#24453) | e2e codex 0.154.0 | e2e |
+| #51 login-gated | cursor / devin / kiro still need a human login | — | blocked |
+
+Mutation harness: 44/44 red, baseline green. Regression on codex, pi, goose, agy, opencode, qwen and copilot: all green.

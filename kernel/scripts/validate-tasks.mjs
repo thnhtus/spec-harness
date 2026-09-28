@@ -130,11 +130,40 @@ export function guardSubjects(payload) {
 // invalid JSON, Cline requires `cancel`, Antigravity requires `decision`.
 // Antigravity allow is "ask", not "allow": "allow" would auto-approve every
 // command the guard does not know about, i.e. the guard would LOOSEN the CLI.
+// Cursor allow is `{}` for the same reason (#45): `permission` is optional in
+// both schemas (cursor-agent 2026.09 validators), "allow" may skip Cursor's own
+// approval, and "ask" is NOT in beforeReadFile's schema — an invalid answer
+// there blocks every read.
+// Cline deny (#46): `cancel` stops the whole task, so the two tools seen e2e get
+// `overrideInput` that fails with the reason instead; other tools keep cancel.
 const GUARD_MODES = {
   codex: "exit", gemini: "exit", qwen: "exit", copilot: "exit", droid: "exit", windsurf: "exit", devin: "exit", kiro: "exit",
   goose: "exit", hermes: "exit", opencode: "exit", pi: "exit",
   cursor: "cursor", antigravity: "antigravity", cline: "cline",
 };
+
+// Cline 3.x: replace ONLY the denied entries of the batch with ones that fail
+// carrying the reason; allowed entries still run and the task goes on.
+// ponytail: /dev/null/<reason> fails with ENOTDIR on POSIX only; on Windows the
+// read just fails with a less readable error. Unknown tool or shape → cancel.
+export function clineDeny(input, deny, why) {
+  const tool = input?.preToolUse?.toolName, raw = input?.tool_call?.input;
+  const hit = (kind, x) => guardSubjects(kind === "shell" ? { commands: [x] } : { path: x })[kind]
+    .some((s) => guardVerdict(kind, s, deny));
+  let n = 0;
+  const swap = (x, bad, repl) => (bad ? (n++, repl) : x);
+  let out;
+  if (tool === "run_commands" && Array.isArray(raw?.commands))
+    out = { ...raw, commands: raw.commands.map((c) =>
+      swap(c, hit("shell", c), `echo '${why.replaceAll("'", "'\\''")}' >&2; exit 1`)) };
+  if (tool === "read_files" && Array.isArray(raw?.files))
+    out = { ...raw, files: raw.files.map((f) => {
+      const p = typeof f === "string" ? f : f?.path, q = `/dev/null/${why}`;
+      return swap(f, hit("read", p), typeof f === "string" ? q : { ...f, path: q });
+    }) };
+  // Nothing replaced = the hit came from somewhere we cannot rewrite: never let it run.
+  return out && n ? { overrideInput: out } : { cancel: true, errorMessage: why };
+}
 
 if (args.has("--guard")) {
   const cli = argv[argv.indexOf("--guard") + 1];
@@ -143,7 +172,7 @@ if (args.has("--guard")) {
   if (!mode) { console.error(`usage: --guard ${Object.keys(GUARD_MODES).join("|")}  (hook payload on stdin)`); process.exit(64); }
   const say = (o) => console.log(JSON.stringify(o));
   const allow = () => {
-    if (mode === "cursor") say({ permission: "allow" });
+    if (mode === "cursor") say({});
     if (mode === "cline") say({ cancel: false });
     if (mode === "antigravity") say({ decision: "ask" });
     process.exit(0);
@@ -167,7 +196,7 @@ if (args.has("--guard")) {
   if (!hit) allow();
   const why = `blocked by spec-harness deny rule ${hit} (docs/Instructions.md §1)`;
   if (mode === "cursor") say({ permission: "deny", user_message: why, agent_message: why });
-  if (mode === "cline") { say({ cancel: true, errorMessage: why }); process.exit(0); }
+  if (mode === "cline") { say(clineDeny(input, deny, why)); process.exit(0); }
   if (mode === "antigravity") { say({ decision: "deny", reason: why }); process.exit(0); }
   console.error(why);
   process.exit(2);
@@ -2560,6 +2589,20 @@ if (args.has("--self-check")) {
     assert.deepEqual(guardSubjects({ preToolUse: { parameters: { path: ".env" } } }).read, [".env"], "guard walker: nested path");
     assert.deepEqual(guardSubjects({ tool_input: { file_path: "a.md", content: "git push; cat .env" } }),
       { shell: [], read: ["a.md"] }, "guard walker: file CONTENT mentioning git push is not a push");
+    // clineDeny (#46): rewrite only the denied entries, keep the task alive.
+    const D = ["Bash(git push:*)", "Read(.env)"];
+    const cl = (tool, input) => clineDeny({ preToolUse: { toolName: tool }, tool_call: { input } }, D, "WHY");
+    const rc = cl("run_commands", { commands: ["ls", "git push"] });
+    assert.equal(rc.cancel, undefined, "clineDeny: run_commands hit must not cancel the task");
+    assert.equal(rc.overrideInput.commands[0], "ls", "clineDeny: allowed entry of the batch unchanged");
+    assert.match(rc.overrideInput.commands[1], /^echo 'WHY' >&2; exit 1$/, "clineDeny: denied entry fails with the reason");
+    const rf = cl("read_files", { files: [{ path: "/r/.env", start_line: null }, { path: "/r/a.md" }] });
+    assert.deepEqual(rf.overrideInput.files, [{ path: "/dev/null/WHY", start_line: null }, { path: "/r/a.md" }], "clineDeny: denied read points at an unreadable path");
+    assert.deepEqual(cl("apply_patch", { path: ".env" }), { cancel: true, errorMessage: "WHY" }, "clineDeny: unknown tool falls back to cancel");
+    assert.equal(cl("run_commands", { commands: [{ command: "git", args: ["push"] }] }).cancel, undefined, "clineDeny: exec-form entry rewritten");
+    assert.equal(cl("run_commands", "git push").cancel, true, "clineDeny: unexpected shape falls back to cancel");
+    // The guard hit elsewhere in the payload but no entry matches: rewriting nothing would let it run.
+    assert.equal(cl("read_files", { files: [{ path: "/r/a.md" }] }).cancel, true, "clineDeny: nothing rewritten -> cancel, never a silent allow");
   }
 
   // ruleFloor: the cost half that does not need anyone to fill telemetry in.
