@@ -211,16 +211,20 @@ if (args.has("--guard")) {
 //
 // A target with no harness.config.json above it (the code repo in layout C) is
 // outside every tasksDir by definition → deny.
-// ponytail: Edit/Write/MultiEdit/NotebookEdit only — `sed -i` / `>` through
-// Bash still land. Backstop: `--eval` scores "src unchanged" per case. Upgrade
-// path: a Bash write-detector, if eval ever shows a role doing it.
+// Bash (#57): roleBashTargets pulls the write targets out of the command line
+// (redirects, tee/rm/touch/…, sed -i/perl -i, cp/mv dest) and each one goes
+// through the same verdict.
+// ponytail: an interpreter writing by itself (`node -e`, `python -c`, `git
+// apply`), `$(…)` and `$VAR` paths other than $PWD/$HOME pass unseen.
+// Backstop: `--eval` scores "src unchanged" per case. Upgrade path: a
+// post-hoc `git status` check at SubagentStop, if eval shows a role doing it.
 // ---------------------------------------------------------------------------
 export function roleWriteVerdict(target, cwd, cfgAt) {
   if (typeof target !== "string" || !target) return null;
   const abs = resolve(cwd, target);
   // Adversary-Mutation.md: the throwaway `git worktree add --detach /tmp/adv-$$`
   // is where the adversary IS allowed to change a constant.
-  if (/^(\/private)?\/tmp\/adv-[^/]+\//.test(abs)) return null;
+  if (/^(\/private)?\/tmp\/adv-[^/]+(\/|$)/.test(abs)) return null;
   let dir = dirname(abs);
   for (;;) {
     const cfg = cfgAt(dir);
@@ -234,17 +238,115 @@ export function roleWriteVerdict(target, cwd, cfgAt) {
   }
 }
 
+// Shell words + operators, quote-aware. Heredoc bodies are skipped: `a > b`
+// inside `<<EOF` is text, not a redirect.
+function shellTokens(cmd) {
+  const out = [];
+  let w = null, q = null, heredocs = [];
+  const flush = () => { if (w !== null) out.push({ w }); w = null; };
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (q) {
+      if (c === q) q = null;
+      else if (c === "\\" && q === '"' && i + 1 < cmd.length) w += cmd[++i];
+      else w += c;
+      continue;
+    }
+    if (c === "'" || c === '"') { q = c; w ??= ""; continue; }
+    if (c === "\\" && i + 1 < cmd.length) { w = (w ?? "") + cmd[++i]; continue; }
+    if (c === "\n") {
+      flush(); out.push({ op: ";" });
+      for (const d of heredocs) {
+        for (;;) {
+          const end = cmd.indexOf("\n", i + 1);
+          const line = cmd.slice(i + 1, end < 0 ? cmd.length : end);
+          i = end < 0 ? cmd.length : end;
+          if (line.replace(/^\t+/, "") === d || end < 0) break;
+        }
+      }
+      heredocs = [];
+      continue;
+    }
+    if (/\s/.test(c)) { flush(); continue; }
+    if (c === "<" && cmd[i + 1] === "<") {
+      flush();
+      const m = /^<<-?\s*(['"]?)([A-Za-z0-9_]+)\1/.exec(cmd.slice(i));
+      if (m) { heredocs.push(m[2]); i += m[0].length - 1; continue; }
+    }
+    const op = /^(&&|\|\||&>>?|>>|>&|>\||>|[;|()&])/.exec(cmd.slice(i))?.[0];
+    if (op) {
+      // "2>" / "2>>": the fd digit belongs to the redirect, not to the words
+      if (op[0] === ">" && w !== null && /^\d+$/.test(w)) w = null;
+      flush(); out.push({ op }); i += op.length - 1; continue;
+    }
+    w = (w ?? "") + c;
+  }
+  flush();
+  return out;
+}
+
+const WRITES_ALL = new Set(["tee", "rm", "rmdir", "touch", "truncate", "mkdir", "shred"]);
+const WRITES_LAST = new Set(["cp", "mv", "install", "ln", "rsync"]);
+const PREFIX = new Set(["sudo", "env", "command", "nohup", "time", "exec"]);
+
+// Every path a Bash command line would write, resolved against its cwd
+// (tracking `cd`, scoped by subshell parens).
+export function roleBashTargets(cmd, cwd, home = process.env.HOME ?? "/") {
+  const targets = [];
+  const stack = [];
+  const expand = (p, dir) => {
+    const v = p.replace(/^~(?=\/|$)/, home).replace(/\$\{?PWD\}?/g, dir).replace(/\$\{?HOME\}?/g, home);
+    return v.includes("$") && !/^(\/private)?\/tmp\/adv-/.test(v) ? null : resolve(dir, v);
+  };
+  let words = [], redirect = false;
+  const end = () => {
+    let a = words;
+    while (a.length && (PREFIX.has(a[0]) || /^[A-Za-z_]\w*=/.test(a[0]))) a = a.slice(1);
+    const [name, ...rest] = a;
+    const args = rest.filter((x) => !x.startsWith("-"));
+    const add = (xs) => { for (const x of xs) { const p = x && expand(x, cwd); if (p) targets.push(p); } };
+    if (name === "cd") cwd = expand(rest[0] ?? home, cwd) ?? cwd;
+    else if (WRITES_ALL.has(name)) add(args);
+    else if (WRITES_LAST.has(name)) add(args.slice(-1));
+    else if ((name === "sed" || name === "perl") && rest.some((x) => /^-[A-Za-z]*i/.test(x) || x.startsWith("--in-place")))
+      add(args.filter(Boolean).slice(1)); // first non-option is the script
+    words = [];
+  };
+  for (const t of shellTokens(cmd)) {
+    if (t.w !== undefined) {
+      if (redirect) {
+        redirect = false;
+        if (!/^&?\d*$/.test(t.w) && !/^\/dev\/(null|stdout|stderr|tty)$/.test(t.w)) {
+          const p = expand(t.w, cwd);
+          if (p) targets.push(p);
+        }
+      } else words.push(t.w);
+    } else if (t.op.includes(">")) redirect = true;
+    else {
+      end();
+      if (t.op === "(") stack.push(cwd);
+      else if (t.op === ")") cwd = stack.pop() ?? cwd;
+    }
+  }
+  end();
+  return targets;
+}
+
 if (args.has("--guard-role")) {
   let input;
   // Fail open on an unreadable payload, same reason as --guard.
   try { input = JSON.parse(process.stdin.isTTY ? "" : readFileSync(0, "utf8")); } catch { process.exit(0); }
   const ti = input?.tool_input ?? {};
   const cfgAt = (d) => { try { return JSON.parse(readFileSync(join(d, "harness.config.json"), "utf8")); } catch { return null; } };
-  const target = ti.file_path ?? ti.notebook_path;
-  const why = roleWriteVerdict(target, input?.cwd ?? process.cwd(), cfgAt);
-  if (!why) process.exit(0);
-  console.error(`blocked: role ${input?.agent_type ?? "(read-only)"} writes only inside tasksDir — ${target} is ${why} (spec-harness #53)`);
-  process.exit(2);
+  const cwd = input?.cwd ?? process.cwd();
+  const targets = typeof ti.command === "string" ? roleBashTargets(ti.command, cwd) : [ti.file_path ?? ti.notebook_path];
+  for (const target of targets) {
+    const why = roleWriteVerdict(target, cwd, cfgAt);
+    if (!why) continue;
+    console.error(`blocked: role ${input?.agent_type ?? "(read-only)"} writes only inside tasksDir — ${target} is ${why}. Scratch files go under /tmp/adv-<id>/ (spec-harness #53/#57)`);
+    process.exit(2);
+  }
+  process.exit(0);
 }
 
 const CONFIG_NAME = "harness.config.json";
@@ -1794,6 +1896,31 @@ if (args.has("--self-check")) {
     assert.equal(roleWriteVerdict(undefined, "/h", cfgAt), null, "no path in the payload is not a write");
     assert.equal(roleWriteVerdict("/tmp/adv-123/src/a.ts", "/h", cfgAt), null, "the mutation worktree (Adversary-Mutation.md) is allowed");
     assert.ok(roleWriteVerdict("/tmp/advx/src/a.ts", "/h", cfgAt), "only the adv-<pid> worktree, not any /tmp path");
+
+    // roleBashTargets (#57): one assert per write form, and the look-alikes that are not writes
+    const T = (c) => roleBashTargets(c, "/h", "/home/u");
+    assert.deepEqual(T("echo x > src/a.js"), ["/h/src/a.js"], "redirect");
+    assert.deepEqual(T("npm test 2>> log.txt"), ["/h/log.txt"], "fd redirect, append");
+    assert.deepEqual(T("npm test &> out"), ["/h/out"], "&> redirect");
+    assert.deepEqual(T("npm test 2>&1 | tee -a r.txt"), ["/h/r.txt"], "2>&1 is a dup, tee writes");
+    assert.deepEqual(T("npm test >/dev/null 2>&1"), [], "/dev/null is not a write");
+    assert.deepEqual(T("sed -i '' 's/>/</' src/a.js"), ["/h/src/a.js"], "BSD sed -i: script dropped, quoted > is text");
+    assert.deepEqual(T("sed -i.bak -e s/a/b/ src/a.js"), ["/h/src/a.js"], "GNU sed -i with -e");
+    assert.deepEqual(T("sed -n 1,5p src/a.js"), [], "sed without -i reads");
+    assert.deepEqual(T("perl -pi -e 's/a/b/' src/a.js"), ["/h/src/a.js"], "perl -pi");
+    assert.deepEqual(T("cp -r a b/c"), ["/h/b/c"], "cp: destination only");
+    assert.deepEqual(T("rm -f x y"), ["/h/x", "/h/y"], "rm: every arg");
+    assert.deepEqual(T("sudo FOO=1 touch z"), ["/h/z"], "prefix + assignment stripped");
+    assert.deepEqual(T("cd src && echo 1 > a.js"), ["/h/src/a.js"], "cd is tracked");
+    assert.deepEqual(T("(cd /tmp/adv-1 && sed -i s/1/2/ src/a.js); echo > b"), ["/tmp/adv-1/src/a.js", "/h/b"], "subshell cd does not leak");
+    assert.deepEqual(T("echo \"a > b\" 'c > d'"), [], "> inside quotes is text");
+    assert.deepEqual(T("cat > $PWD/x <<'EOF'\nfoo > src/a.js\nEOF\necho y > z"), ["/h/x", "/h/z"], "heredoc body skipped, command after it still parsed");
+    assert.deepEqual(T("echo > ~/x; echo > $TASK/09.md"), ["/home/u/x"], "~ expanded; unknown $VAR skipped (ponytail)");
+    assert.deepEqual(T("git diff main -- src | grep x"), [], "a read-only pipeline writes nothing");
+    assert.equal(roleWriteVerdict(T("rm -rf /tmp/adv-$")[0], "/h", cfgAt), null, "removing the mutation worktree itself is allowed");
+    assert.deepEqual(T("cat <<EOF > a\nx\ny > src/b.js\nEOF"), ["/h/a"], "heredoc body runs to its terminator, not one line");
+    assert.deepEqual(T("touch a 2>/dev/null"), ["/h/a"], "the fd digit is not an argument");
+    assert.deepEqual(T("echo a \\> b"), [], "an escaped > is text");
   }
 
   // strayTaskFolders (#54): a task the group scan skips must be reported, a

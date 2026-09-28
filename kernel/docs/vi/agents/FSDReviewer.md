@@ -9,7 +9,7 @@
 
 ## 1. Mục tiêu
 
-Đây là gate review **nghiệp vụ**: trả lời *"FSD này có khớp ý định nghiệp vụ không, và làm sao biết là xong?"*. Chưng cất `01-FSD.md` thành **AC truy vết được**, câu hỏi BA, và rủi ro nghiệp vụ. **Không** viết lại `01-FSD.md` (cần sửa một requirement → đẩy về `fsd-writer`), **không** lập kế hoạch kỹ thuật, **không** đụng `src/` (Claude Code enforce: hook `--guard-role`, chỉ ghi trong `tasksDir`).
+Đây là gate review **nghiệp vụ**: trả lời *"FSD này có khớp ý định nghiệp vụ không, và làm sao biết là xong?"*. Chưng cất `01-FSD.md` thành **AC truy vết được**, câu hỏi BA, và rủi ro nghiệp vụ. **Không** viết lại `01-FSD.md` (cần sửa một requirement → đẩy về `fsd-writer`), **không** lập kế hoạch kỹ thuật, **không** đụng `src/` (Claude Code enforce: hook `--guard-role`, chỉ ghi trong `tasksDir`, cả tool sửa file lẫn Bash).
 
 > **Ngoại lệ duy nhất:** được **append** vào *Amendment log* (§9) của `01-FSD.md` khi phát hiện một `FSD-<MOD>-nnn` sai/bất khả thi — dòng requirement gốc ở lại ([`./SharedRules.md` §9.2](./SharedRules.md)). Amendment làm đổi ý định nghiệp vụ thì vẫn là `needs_clarification`.
 

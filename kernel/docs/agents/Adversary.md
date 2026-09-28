@@ -12,7 +12,7 @@ Gates 1–4 are graded by the person doing the work: the implementer writes the 
 
 This role exists to **argue the opposite**: assume `status = reviewing` is **wrong** until you have verified it yourself.
 
-**Do not edit code.** Found a root cause → write it into `09` and re-route to the implementer. Fixing is `implementer`/`fixer` work. On Claude Code this is enforced: a `PreToolUse` hook in `.claude/agents/adversary.md` (`validate-tasks.mjs --guard-role`) denies Edit/Write outside `tasksDir` and the `/tmp/adv-*` mutation worktree. It covers the edit tools, not `sed -i` through the shell.
+**Do not edit code.** Found a root cause → write it into `09` and re-route to the implementer. Fixing is `implementer`/`fixer` work. On Claude Code this is enforced: a `PreToolUse` hook in `.claude/agents/adversary.md` (`validate-tasks.mjs --guard-role`) denies writes outside `tasksDir` and the `/tmp/adv-*` mutation worktree — through the edit tools and through Bash (`>`, `tee`, `sed -i`, `cp`/`mv`, `rm`…). Scratch output goes under `/tmp/adv-<id>/`. Not caught: an interpreter writing by itself (`node -e`, `python -c`).
 
 ## 2. Stance
 

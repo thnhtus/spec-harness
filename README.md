@@ -44,7 +44,7 @@ Cài lại không cần `--cli`: installer tự nhận các lớp đã có và n
 | Gate (pre-commit + CI) | ✅ | ✅ | ✅ |
 | 7 role | `.claude/agents/` | `.codex/agents/*.toml` | đọc `.claude/agents/` |
 | Skills + `start-task` / `init-project-rules` | `.claude/` | `.agents/skills/` | `.agents/skills/` |
-| `adversary` / `fsd-reviewer` chỉ ghi trong `tasksDir` | hook frontmatter → `--guard-role` (cần trust folder) | ❌ chỉ prose | ❌ chỉ prose |
+| `adversary` / `fsd-reviewer` chỉ ghi trong `tasksDir` | hook frontmatter → `--guard-role`, bắt cả Edit/Write lẫn Bash `>`/`sed -i`/`cp` (cần trust folder) | ❌ chỉ prose | ❌ chỉ prose |
 | Deny `git push` / `reset --hard` / `.env` | `permissions.deny` | hook `PreToolUse` → `--guard codex` | hook `beforeShellExecution` + `beforeReadFile` → `--guard cursor` |
 | Gợi ý khi dán link task | ✅ | ✅ | ❌ (Cursor không chèn được context) |
 | MCP | `.mcp.json` | `.codex/config.toml` | `.cursor/mcp.json` |

@@ -1378,10 +1378,14 @@ if (args[0] === "--self-test") {
     for (const r of ["adversary", "fsd-reviewer"]) {
       const cmd = /command:\s*(.+--guard-role)\s*$/m.exec(read(join(A, ".claude/agents", `${r}.md`)))?.[1];
       if (!cmd) fail(`.claude/agents/${r}.md không có hook --guard-role — "không sửa code" lại chỉ là prose`);
-      const run = (fp) => spawnSync("sh", ["-c", cmd], { cwd: A, env: { ...process.env, CLAUDE_PROJECT_DIR: A },
-        input: JSON.stringify({ cwd: A, agent_type: r, tool_name: "Edit", tool_input: { file_path: fp } }), encoding: "utf8" }).status;
-      if (run(join(A, "src/app.ts")) !== 2) fail(`${r}: Edit src/app.ts không bị chặn`);
-      if (run(join(A, "docs/tasks/sprint-1/A-1/09-Adversarial-Review.md")) !== 0) fail(`${r}: ghi task doc bị chặn — role không làm được việc`);
+      const run = (tool_name, tool_input) => spawnSync("sh", ["-c", cmd], { cwd: A, env: { ...process.env, CLAUDE_PROJECT_DIR: A },
+        input: JSON.stringify({ cwd: A, agent_type: r, tool_name, tool_input }), encoding: "utf8" }).status;
+      if (run("Edit", { file_path: join(A, "src/app.ts") }) !== 2) fail(`${r}: Edit src/app.ts không bị chặn`);
+      if (run("Edit", { file_path: join(A, "docs/tasks/sprint-1/A-1/09-Adversarial-Review.md") }) !== 0) fail(`${r}: ghi task doc bị chặn — role không làm được việc`);
+      // #57: matcher phải có Bash, và hook phải đọc tool_input.command
+      if (!/matcher:.*\bBash\b/.test(read(join(A, ".claude/agents", `${r}.md`)))) fail(`${r}: matcher thiếu Bash — sed -i src/ lọt qua (#57)`);
+      if (run("Bash", { command: "sed -i '' s/a/b/ src/app.ts" }) !== 2) fail(`${r}: Bash sed -i src/app.ts không bị chặn (#57)`);
+      if (run("Bash", { command: "npm test 2>&1 | tee docs/tasks/sprint-1/A-1/run.log" }) !== 0) fail(`${r}: Bash ghi log vào task folder bị chặn (#57)`);
     }
 
     const J = (f) => JSON.parse(read(join(A, f)));

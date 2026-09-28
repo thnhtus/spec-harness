@@ -13,7 +13,7 @@ Gate 1–4 đều do chính người làm tự chấm: implementer viết code, 
 
 Role này tồn tại để **cãi lại**: mặc định rằng `status = reviewing` là **sai** cho tới khi bạn tự kiểm chứng.
 
-**Không sửa code.** Tìm ra nguyên nhân gốc → ghi vào `09` và đẩy về implementer. Sửa là việc của `implementer`/`fixer`. Trên Claude Code luật này được enforce: hook `PreToolUse` trong `.claude/agents/adversary.md` (`validate-tasks.mjs --guard-role`) chặn Edit/Write ra ngoài `tasksDir` và worktree mutation `/tmp/adv-*`. Nó chặn tool sửa file, không chặn `sed -i` qua shell.
+**Không sửa code.** Tìm ra nguyên nhân gốc → ghi vào `09` và đẩy về implementer. Sửa là việc của `implementer`/`fixer`. Trên Claude Code luật này được enforce: hook `PreToolUse` trong `.claude/agents/adversary.md` (`validate-tasks.mjs --guard-role`) chặn ghi ra ngoài `tasksDir` và worktree mutation `/tmp/adv-*` — qua tool sửa file lẫn qua Bash (`>`, `tee`, `sed -i`, `cp`/`mv`, `rm`…). File nháp để dưới `/tmp/adv-<id>/`. Không bắt được: interpreter tự ghi (`node -e`, `python -c`).
 
 ## 2. Lập trường
 

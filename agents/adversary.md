@@ -3,7 +3,7 @@ name: adversary
 description: "Đối kháng Gate 5: giả định reviewing là SAI cho tới khi tự kiểm được. Chạy lại lệnh ProjectRules §7, đối chiếu diff với scope Gate 3, soi test có thật sự assert AC, săn lỗi AC không nói. Không sửa code."
 hooks:
   PreToolUse:
-    - matcher: "Edit|Write|MultiEdit|NotebookEdit"
+    - matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash"
       hooks:
         - type: command
           command: node "$CLAUDE_PROJECT_DIR/scripts/validate-tasks.mjs" --guard-role
