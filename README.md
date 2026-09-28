@@ -13,7 +13,7 @@ npx spec-harness     # chép kernel + skills + .claude/
 
 Dùng package manager khác thì đổi lệnh chạy, không cần cài global: `yarn dlx spec-harness` (Yarn 2+), `pnpm dlx spec-harness`, `bunx spec-harness`. Bốn lệnh chạy cùng một `install.mjs`; harness chỉ cần Node 20+.
 
-> **`npm i spec-harness` không cài harness.** Lệnh này chỉ tải package vào `node_modules/`, không chạy `install.mjs`. Package cố ý không có `postinstall`: installer hỏi `[y/N]` trước khi ghi đè file, và pnpm/bun hoặc `--ignore-scripts` đều chặn lifecycle script. Muốn ghim version làm devDependency thì chạy `npm i -D spec-harness`, rồi `npx spec-harness`. Lệnh sau dùng bản trong `node_modules/.bin`, không tải lại.
+> **`npm i spec-harness` không cài harness.** Lệnh này chỉ tải package vào `node_modules/`, không chạy `install.mjs`. Package cố ý không có `postinstall`: installer hỏi `[y/N]` trước khi ghi đè file, và pnpm/bun hoặc `--ignore-scripts` đều chặn lifecycle script. Muốn ghim version làm devDependency thì chạy `npm i -D spec-harness`, rồi `npx spec-harness`. Lệnh sau dùng bản trong `node_modules/.bin`, không tải lại. Nâng cấp thì chạy `npx spec-harness@latest`, vì nếu không ghi `@latest` thì `npx` sẽ chạy lại bản cũ đã cài.
 
 Rồi mở CLI agent tại đó và chạy hai lệnh:
 
@@ -362,6 +362,7 @@ Bật rồi thì phải chứng minh đã làm: coordinator ghi `trackerWriteBac
 
 ```bash
 npx spec-harness@0.1.0                                      # ghim version
+npx spec-harness@latest                                     # nâng cấp (bỏ qua bản cũ trong node_modules/cache)
 npx spec-harness --yes                                      # không hỏi (CI, script)
 npx spec-harness ./harness                                  # cài vào thư mục khác (phải tồn tại sẵn)
 yarn dlx spec-harness / pnpm dlx spec-harness / bunx spec-harness   # cùng installer, khác runner
@@ -376,7 +377,7 @@ Installer viết bằng **Node**, không phải bash — chạy y hệt nhau t�
 
 **Ghi đè.** Harness cài đè lên repo đang có, nên file trùng tên bị kernel ghi đè: `docs/README.md` (thường gặp nhất), `scripts/validate-tasks.mjs`, `hooks/pre-commit`. Thư mục đích không rỗng thì installer **liệt kê đúng những file sắp đè và hỏi `[y/N]` trước khi ghi byte nào** — trả lời khác `y` là thoát, không đụng gì. Không có TTY (CI, pipe) thì nó dừng hẳn thay vì tự đồng ý; thêm `--yes` để bỏ qua. Bản cũ còn trong git (`git checkout -- <file>` để lấy lại). File không trùng tên trong `docs/` không bị đụng.
 
-**Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy lại `install.mjs`, không phải chạy lại `/init-project-rules`.
+**Chạy lại được.** Kernel ghi đè, còn `harness.config.json` / `ProjectRules.md` / `start-task.md` / `.mcp.json` đã sửa thì **giữ nguyên** — nâng kernel không mất adapter. Nên nâng cấp chỉ cần chạy `npx spec-harness@latest`, không phải chạy lại `/init-project-rules`.
 
 **Có cần `git init` không?** Không bắt buộc — harness cài được vào thư mục thường, validator vẫn chạy, `--self-check` vẫn xanh. Nhưng thiếu git thì mất ba thứ:
 
