@@ -2356,6 +2356,30 @@ if (args.has("--self-check")) {
         assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
   }
 
+  // stageContract (#62): every constant a check reads must reach the contract of
+  // the stage that produces it — otherwise the role learns it by grepping this file.
+  {
+    const all = STAGE_ORDER.slice(0, -1).map((st) => stageContract(st));
+    assert.ok(all.every(Boolean), "every producing stage has a contract");
+    assert.equal(stageContract(STAGE_ORDER.at(-1)), null, "the last stage produces nothing");
+    assert.equal(stageContract("nope"), null, "an unknown stage has no contract");
+    const joined = all.join("\n");
+    for (const f of (CFG.requiredAtStage ?? []).flatMap((r) => r.files))
+      assert.ok(joined.includes("`" + f + "`"), `requiredAtStage file ${f} is in some contract`);
+    for (const [f, cap] of Object.entries(LINE_CAPS)) assert.ok(joined.includes(`${f}\` — ≤ ${cap} lines`), `lineCaps ${f}=${cap} reaches the contract`);
+    for (const [f, n] of Object.entries(LINE_WARN)) assert.ok(joined.includes(`${f}\` — soft limit ${n}`), `lineWarn ${f}=${n} reaches the contract`);
+    for (const r of Object.keys(ROLE_STAGE)) assert.ok(joined.includes(r), `role ${r} has a handoff line`);
+    assert.ok(stageContract("fsd_write", { handoffCap: 7 }).includes("≤ 7 lines"), "handoffBlockCap reaches the contract");
+    const fsd = stageContract("fsd_write");
+    for (const x of [...FSD_SECTIONS, ...CFG.fsdModal]) assert.ok(fsd.includes(x), `fsd_write contract names ${x}`);
+    const rev = stageContract("fsd_review");
+    for (const x of [...DOC_ENUMS.question.type, ...DOC_ENUMS.question.status]) assert.ok(rev.includes(x), `fsd_review contract names question enum ${x}`);
+    // ...and the stage BEFORE fromStage, the one writing the doc — not the one it is checked at.
+    for (const r of AC_REACHED) assert.ok(stageContract(r.fromStage ? STAGE_ORDER[STAGE_ORDER.indexOf(r.fromStage) - 1] : "implementation").includes(`${r.doc}\`: every declared AC`), `acTrace.reachedIn ${r.doc} reaches the contract of the stage writing it`);
+    assert.ok(stageContract("implementation").includes(EVIDENCE_RE.source), "evidenceCommandPattern reaches the implementation contract");
+    assert.ok(stageContract("adversarial_review").includes(GATE4_ARTIFACTS.adversarial), "09 reaches the adversary contract");
+  }
+
   // advanceDecision (#61): every exit of --advance, without a filesystem.
   {
     const o = { stages: ["bootstrap", "fsd_write", "implementation", "adversarial_review", "reviewing"],
@@ -3239,6 +3263,58 @@ export function advanceDecision(data, stage, { stages = STAGE_ORDER, roleStage =
   if (at === cur && halted(prev)) return { exit: 1, why: `.agent-memory/${prev}.md last handoff says "Continue automation: no" — stop and report`, prev };
   const last = stage === stages[stages.length - 1];
   return { exit: 0, role: last ? null : roleOf(stage), prev, attempt: last ? null : ((data.attempts ?? {})[stage] ?? 0) + 1 };
+}
+
+// --contract (#62): what the validator will check on a stage's output, printed
+// from the SAME constants the checks read. A real run had roles grep and sed
+// this file 25 times to learn the handoff format, the Q/AC row shapes and 09's
+// table — every read then paid again on every later turn. Built from the
+// constants, so the contract cannot drift from the check.
+export function stageContract(stage, { stages = STAGE_ORDER, roleStage = ROLE_STAGE, required = CFG.requiredAtStage ?? [], handoffCap = HANDOFF_BLOCK_CAP } = {}) {
+  const i = stages.indexOf(stage);
+  if (i < 0 || i === stages.length - 1) return null;
+  const next = stages[i + 1];
+  const files = required.filter((r) => r.stage === next || (i === 0 && r.stage === stage)).flatMap((r) => r.files);
+  if (stage === "adversarial_review" && GATE4_ARTIFACTS.adversarial) files.push(GATE4_ARTIFACTS.adversarial);
+  const roles = Object.keys(roleStage).filter((r) => roleStage[r] === stage);
+  const q = "`";
+  const L = [`# Contract: ${stage} — what validate-tasks.mjs checks on your output (source: its own constants)`, "", "## Files you produce"];
+  for (const f of files) {
+    const cap = LINE_CAPS[f]
+      ? `≤ ${LINE_CAPS[f]} lines (error); on a re-run append ${q}## Update — <date>${q} and the cap applies to the newest block`
+      : LINE_WARN[f] ? `soft limit ${LINE_WARN[f]} lines (warning) — never trim pasted output` : "no line cap";
+    L.push(`- ${q}${f}${q} — ${cap}`);
+  }
+  L.push("", "## Handoff",
+    `- append to ${q}.agent-memory/${roles.join("|")}.md${q} one block starting ${q}### ${q}, ≤ ${handoffCap} lines (warning)`,
+    `- it must contain ${q}Next agent: <role>${q} and ${q}Continue automation: yes|no${q} (error) — the coordinator routes on the LAST block`);
+  const R = [];
+  if (stage === "fsd_write")
+    R.push(`- headings: ${FSD_SECTIONS.join(" · ")} (error if one is missing)`,
+      `- ≥1 row ${q}| FSD-<MOD>-01 | <requirement using ${(CFG.fsdModal ?? []).join(" / ")}> | <source> | <status> |${q}; every such row needs a Source (error)`);
+  if (AC_TRACE.declaredIn && files.includes(AC_TRACE.declaredIn))
+    R.push(`- ${q}${AC_TRACE.declaredIn}${q}: ≥1 AC row opening ${q}| AC-<id> |${q} (AC-nn / AC-ID are placeholders) (error)`,
+      `- question rows ${q}| Q-<id> | … |${q}: type ∈ ${(DOC_ENUMS.question?.type ?? []).join("/")}, status ∈ ${(DOC_ENUMS.question?.status ?? []).join("/")} — these exact tokens whatever the doc language (unreadable row = error); ${q}${DOC_ENUMS.question?.blocksOn}${q} + ${q}${DOC_ENUMS.question?.unresolved}${q} blocks the gate`);
+  for (const r of AC_REACHED)
+    if (r.fromStage ? stages[stages.indexOf(r.fromStage) - 1] === stage : stage === "implementation")
+      R.push(`- ${q}${r.doc}${q}: every declared AC id in a table row${r.cell === "first" ? ", as the row's FIRST cell" : ""} (error)`);
+  if (stage === "implementation" && GATE4_ARTIFACTS.evidence)
+    R.push(`- ${q}${GATE4_ARTIFACTS.evidence}${q}: output pasted inside a ${q.repeat(3)} fence, a command matching /${EVIDENCE_RE.source}/ and a result (passed / exit 0 / n/n tests); a failure line needs ${q}<!-- known-failure: why -->${q} above the fence (error)`,
+      `- evidenceMode="${EVIDENCE_MODE}": ${EVIDENCE_MODE === "attested" ? "every command run through" : "an attestation block, when present, must come from"} ${q}node scripts/run-evidence.mjs -- <cmd>${q} — exitCode 0, durationMs > 0, outputHash matching the fence (error)`);
+  if (stage === "adversarial_review" && GATE4_ARTIFACTS.adversarial)
+    R.push(`- ${q}${GATE4_ARTIFACTS.adversarial}${q}: a verdict PASS / FAIL / UNCERTAIN, and your own fenced run under the same rules as 08 — not byte-identical to 08, an attestation starting after 08's newest (error)`,
+      `- a "Static layer" table, one row per command: ${q}| ${q}<cmd>${q} | <what 08 claimed> | <what you got> | ✔/✖ |${q} — the third column is the gate (error if empty)`,
+      `- FAIL → status=blocked, keep currentStage=${stage}`);
+  if (R.length) L.push("", "## Rules on content", ...R);
+  return L.join("\n");
+}
+
+if (args.has("--contract")) {
+  const st = argv[argv.indexOf("--contract") + 1];
+  const c = stageContract(st);
+  if (!c) { console.error(`✖ --contract: "${st}" is not a stage that produces output (${STAGE_ORDER.slice(0, -1).join(", ")})`); process.exit(2); }
+  console.log(c);
+  process.exit(0);
 }
 
 if (args.has("--advance")) {

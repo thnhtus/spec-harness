@@ -216,7 +216,9 @@ subagent prompt **must** begin with this preamble:
 
 > Read, in order: `docs/Instructions.md`, then `docs/agents/SharedRules.md`
 > **§4 §5 §6 §8** (add **§9** unless you are `orchestrator` — it owns no AC),
-> then your role file named below. Obey the artifact size caps and MCP payload
+> then your role file named below. Run `node scripts/validate-tasks.mjs --contract <stage>`:
+> it prints every check your output must pass (files, caps, row formats, handoff).
+> Do not read `scripts/validate-tasks.mjs` — the contract is generated from it. Obey the MCP payload
 > discipline in SharedRules §8. Work only inside the task folder and the
 > files your role owns. **If this is a re-run (`attempts[<stage>] > 1`), read
 > only the newest `## Update` / `## Cập Nhật` block of `06`/`08`/`09` plus the last handoff —

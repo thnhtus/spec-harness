@@ -361,6 +361,15 @@ node install.mjs --bench --stage full --agent 'claude -p --permission-mode bypas
 
 Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` → exit 2. Không có event `result` (CLI khác, hoặc quên `--output-format stream-json`) → exit 1, không đoán số.
 
+### Sổ sách do script làm — `--advance`, `--contract`
+
+Một lần chạy thật: coordinator tốn 16/39 lượt cho validate/attempts/lease/telemetry gõ tay (giờ bịa), các role grep `validate-tasks.mjs` 25 lần để đoán format. Giờ hai lệnh thay:
+
+```bash
+node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli claude   # trước mỗi dispatch: validate + renew lease + attempts + telemetry giờ máy + handoff cuối; exit 1 = dừng
+node scripts/validate-tasks.mjs --contract <stage>                       # mọi check output của stage phải qua, sinh từ chính hằng của validator
+```
+
 ## Vì sao có cái này
 
 Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là gate mà model **chọn** tuân thủ. Gate bằng exit code thì không có chỗ để chọn. Harness gốc mất một thời gian mới học được điều đó; phần đắt nhất ở đây là `validate-tasks.mjs` + chuỗi truy vết AC, không phải mấy file markdown.
