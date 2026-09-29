@@ -376,7 +376,7 @@ Một lần chạy thật: coordinator tốn 16/39 lượt cho validate/attempts
 node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli claude   # trước mỗi dispatch: validate + renew lease + attempts + telemetry giờ máy + handoff cuối; exit 1 = dừng
 node scripts/validate-tasks.mjs --bootstrap '<json>'                     # stage 1 không cần subagent: tạo folder từ _templates, validate, rollback nếu hỏng
 node scripts/validate-tasks.mjs --contract <stage>                       # mọi check output của stage phải qua, sinh từ chính hằng của validator
-node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (> sliceFiles file) → mỗi slice 1 dispatch theo thứ tự, retry budget tính theo slice; slice sửa file ngoài dòng của nó → exit 1
+node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (file có sẵn > sliceBytes byte) → mỗi slice 1 dispatch theo thứ tự, retry budget tính theo slice; slice sửa file ngoài dòng của nó → exit 1
 node scripts/validate-tasks.mjs --pack <task> <stage> [--base <nhánh>]   # gói input của 1 dispatch (luật + role file + contract + artifact + handoff + git không lọc), 1 lần đọc thay vì 6-10 lần Read; vượt packCap → exit 1
 ```
 

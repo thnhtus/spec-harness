@@ -659,11 +659,9 @@ function buildSlicedCase(root, { unsliced = false } = {}) {
   cpSync(join(SLICED, "task"), t, { recursive: true });
   cpSync(join(P, "docs/tasks/_templates/task.agent.schema.json"), join(t, "task.agent.schema.json"));
   if (unsliced) {
-    // Cả plan một context: bỏ cột Slice và nâng sliceFiles lên để validator không đòi slice.
+    // Cả plan một context: bỏ cột Slice (file mới = 0 B, #73 không đòi slice).
     const pl = join(t, "03-Technical-Plan.md");
     writeFileSync(pl, read(pl).replace(/ Slice \|\n/, "\n").replace(/ --- \| --- \| --- \| --- \| --- \|/, " --- | --- | --- | --- |").replace(/ S\d+ \|\n/g, "\n"));
-    const cp = join(P, "harness.config.json"), cfg = JSON.parse(read(cp));
-    writeFileSync(cp, JSON.stringify({ ...cfg, sliceFiles: 99 }, null, 2) + "\n");
   }
   git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-8 plan");
   spawnSync(process.execPath, ["scripts/lease.mjs", "acquire", T], { cwd: P });
@@ -848,7 +846,7 @@ if (args[0] === "--self-test") {
     if (!JSON.parse(read(join(EVAL, "cases.json"))).benchTask?.startsWith("/start-task ")) fail("cases.json thiếu benchTask cho --bench --stage full");
   }
   // #72: fixture chia slice là điểm bàn giao cho implementer thật — validator xanh,
-  // 03 có đúng S1/S2 và cả plan vượt sliceFiles; bản --unsliced cũng xanh và không có slice.
+  // 03 có đúng S1/S2; bản --unsliced (10 file mới, 0 B) cũng xanh — #73 không ép slice.
   for (const unsliced of [false, true]) {
     const root = mkdtempSync(join(tmpdir(), "sh-sliced-"));
     const { P, T } = buildSlicedCase(root, { unsliced });
@@ -1887,6 +1885,11 @@ if (args[0] === "--self-test") {
     const s1 = jS2.telemetry.filter((e) => e.slice === "S1");
     if (s1.length !== 3 || s1[1].attempt !== 2 || s1[1].tier !== "strong") fail("S5b: retry của một slice phải lên tier (implementer normal=mid → strong)", JSON.stringify(s1));
     if (!read(join(P, "docs/tasks/_stamp.log")).includes(`${s1[1].startedAt}\t${jS2.taskId}\timplementation\t2\tS1\tstart`)) fail("_stamp.log không ghi slice");
+    { const sF = join(P, "src/discount.js"), tF = join(P, "test/discount.test.js"), sK = read(sF), tK = read(tF);
+      writeFileSync(sF, sK + "//\n"); writeFileSync(tF, tK + "//\n");
+      const pa = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "adversarial_review", "--base", "main"], { cwd: P, encoding: "utf8" });
+      if (pa.status !== 0 || !/src\/discount\.js\s+\[S1\]/.test(pa.stdout) || !/test\/discount\.test\.js\s+\[S2\]/.test(pa.stdout)) fail("#74: --pack adversarial_review trên 03 chia slice phải gắn [S<n>] cho từng file", pa.stdout.slice(-600) + pa.stderr);
+      writeFileSync(sF, sK); writeFileSync(tF, tK); }
     // #71: entry S1 đang mở có snapshot; S1 sửa file của S2 → --advance kế tiếp exit 1, không ghi gì.
     {
       if (!s1[2].scopeSnap?.head) fail("#71: --advance --slice không lưu scopeSnap", JSON.stringify(s1[2]));
@@ -1901,6 +1904,23 @@ if (args[0] === "--self-test") {
       if (good.status !== 0) fail("#71: S1 chỉ sửa file của S1 (và task folder) phải qua", good.stderr);
       writeFileSync(srcF, srcKeep); writeFileSync(jp, jKeepS);
     }
+    // #73 e2e: bytes measured on the real repo before the first implementation dispatch.
+    {
+      const jKeepB = read(jp), cfgB = JSON.parse(cfgKeep), V = () => JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+      const unsl = planKeep; // fixture 03, no Slice column; src/discount.js + test exist (~0.6 KB)
+      writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [] }));
+      writeFileSync(planP, unsl);
+      writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: 100 }));
+      if (!V().some((x) => /existing files hold \d+ B \(> sliceBytes 100\)/.test(x))) fail("#73: 03 trên file có sẵn vượt sliceBytes, chưa có dispatch nào, không Slice → phải error", V().join("\n"));
+      writeFileSync(cfgP, cfgKeep);
+      if (V().some((x) => /sliceBytes/.test(x))) fail("#73: dưới sliceBytes 100000 không được ép slice", V().join("\n"));
+      writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: 100 }));
+      writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [{ stage: "implementation", tier: "mid", attempt: 1 }] }));
+      if (V().some((x) => /sliceBytes/.test(x))) fail("#73: sau dispatch implementation đầu tiên byte không đo lại (file lớn dần khi đang build)", V().join("\n"));
+      writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [{ stage: "implementation", slice: "S1", tier: "mid", attempt: 1 }] }));
+      if (!V().some((x) => /no longer declares a Slice column/.test(x))) fail("#73: đã dispatch slice rồi bỏ cột Slice khỏi 03 phải error", V().join("\n"));
+      writeFileSync(cfgP, cfgKeep); writeFileSync(jp, jKeepB); writeFileSync(planP, slicedPlan);
+    }
     writeFileSync(join(P, T, ".agent-memory/implementer.md"), read(join(P, T, ".agent-memory/implementer.md")).repeat(4));
     const vS = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
     const vr = JSON.parse(vS.stdout).results[0];
@@ -1913,8 +1933,9 @@ if (args[0] === "--self-test") {
     writeFileSync(jp, JSON.stringify({ ...jS2, currentStage: "adversarial_review", telemetry: jS2.telemetry.filter((e) => e.slice !== "S2") }));
     const vS4 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
     if (!JSON.parse(vS4.stdout).results[0].errors.some((w) => /no dispatch for S2/.test(w))) fail("#69: stage sau implementation đã chạy mà S2 chưa dispatch phải là error", vS4.stdout);
-    const cfgS = JSON.parse(cfgKeep); delete cfgS.sliceFiles; writeFileSync(cfgP, JSON.stringify(cfgS));
-    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--task", T], { cwd: P }).status !== 2) fail("S6: thiếu config.sliceFiles phải exit 2");
+    const cfgS = JSON.parse(cfgKeep); delete cfgS.sliceBytes; writeFileSync(cfgP, JSON.stringify({ ...cfgS, sliceFiles: 8 }));
+    const noB = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--task", T], { cwd: P, encoding: "utf8" });
+    if (noB.status !== 2 || !/sliceFiles was replaced by sliceBytes/.test(noB.stderr)) fail("S6: thiếu config.sliceBytes phải exit 2 (và chỉ đường cho config cũ còn sliceFiles)", noB.stderr);
     writeFileSync(cfgP, cfgKeep);
     writeFileSync(jp, keep); writeFileSync(planP, planKeep);
     rmSync(join(P, T, "08-Test-Evidence.md"));

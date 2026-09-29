@@ -420,10 +420,10 @@ const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
 // S6: no default. A missing cutoff would silently turn every R5 error into a warning.
 const STAMP_SINCE = CFG.stampSince;
 const STAMP_LOG = join(TASKS_DIR, "_stamp.log");
-const SLICE_FILES = CFG.sliceFiles;
-const needSliceFiles = (who) => {
-  if (Number.isInteger(SLICE_FILES) && SLICE_FILES >= 1) return;
-  console.error(`✖ ${who}: config.sliceFiles (integer ≥ 1) is required — the file count above which 03 must split implementation into slices`);
+const SLICE_BYTES = CFG.sliceBytes;
+const needSliceBytes = (who) => {
+  if (Number.isInteger(SLICE_BYTES) && SLICE_BYTES >= 1) return;
+  console.error(`✖ ${who}: config.sliceBytes (integer ≥ 1) is required — the bytes of existing files in 03 above which implementation must be split into slices${CFG.sliceFiles !== undefined ? " (config.sliceFiles was replaced by sliceBytes in #73 — rename it; 100000 is the shipped value)" : ""}`);
   process.exit(2);
 };
 const needStampSince = (who) => {
@@ -2414,6 +2414,9 @@ if (args.has("--self-check")) {
     for (const l of git.status.split("\n").filter(Boolean)) assert.ok(p.machine.includes(l), `R3b: status line "${l}" missing from the adversary pack`);
     assert.ok(/\?\? src\/evil\.js\s+← not in 03/.test(p.machine) && !/ M src\/a\.js\s+←/.test(p.machine), "R3b: out-of-scope files are marked, in-scope ones are not");
     assert.ok(p.rules.includes("h4") && p.rules.includes("ac9") && !p.rules.includes("x7"), "pack carries SharedRules §4/§9, not §7");
+    const ps = packParts({ stage: "adversarial_review", role: "adversary", docs, git, scope: ["src/a.js"], sliceOf: { "src/a.js": "S2" } });
+    assert.ok(/ M src\/a\.js\s+\[S2\]/.test(ps.machine) && /\?\? src\/evil\.js\s+← not in 03/.test(ps.machine), "#74: a sliced pack tags in-scope lines with their slice, out-of-scope still marked");
+    for (const l of git.status.split("\n").filter(Boolean)) assert.ok(ps.machine.includes(l), `#74 R3b: sliced pack dropped "${l}"`);
     const hist = "first round\n## Update — r2\nsecond\n## Update — r3\nthird";
     const re = packParts({ stage: "implementation", role: "implementer", attempt: 2, docs, artifacts: { "06.md": hist } }).prose;
     assert.ok(re.includes("third") && !re.includes("second") && !re.includes("first round"), "a re-run pack keeps only the newest ## Update block");
@@ -2425,20 +2428,23 @@ if (args.has("--self-check")) {
   {
     const tbl = (rows, slice = true) => "## Files to change\n\n| File | Type" + (slice ? " | Slice" : "") + " |\n| --- | ---" + (slice ? " | ---" : "") + " |\n" +
       rows.map(([f, x]) => `| \`${f}\` | new${slice ? ` | ${x}` : ""} |`).join("\n") + "\n\n## Test plan\n| `npm t` | x |\n";
-    assert.deepEqual(planSlices(tbl([["a", ""], ["b", ""]], false), 2), { slices: [], files: {}, errors: [] }, "at the cap with no Slice column: fine");
-    assert.equal(planSlices(tbl([["a"], ["b"], ["c"]], false), 2).errors.length, 1, "S1: over sliceFiles with no Slice column is an error");
-    assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", ""]]), 2).errors.length, 1, "S1: over sliceFiles, one row without a slice");
-    assert.deepEqual(planSlices(tbl([["a", "S2"], ["b", "S10"], ["c", "S1"]]), 2), { slices: ["S1", "S2", "S10"], files: { S2: ["a"], S10: ["b"], S1: ["c"] }, errors: [] }, "slices in numeric order, test-plan rows not counted, files per slice");
-    assert.deepEqual(planSlices(tbl([["a"], ["b"]], false).replace("| \`b\` | new |", "| _none else_ | new |"), 1).errors, [], "S1 counts backtick paths only, not a note row");
-    assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", "S1"]]), 2).errors.length, 1, "S2: a slice over sliceFiles");
-    assert.equal(planSlices(tbl([["a", "part 1"]]), 2).errors.length, 1, "S3: a Slice cell not shaped S<n>");
+    const sz = (p) => ({ a: 60, b: 60, c: 60 })[p] ?? 0; // 3 existing files of 60 B; anything else is new
+    assert.deepEqual(planSlices(tbl([["a", ""], ["b", ""]], false), 120, sz), { slices: [], files: {}, errors: [] }, "#73: at the byte cap with no Slice column: fine");
+    assert.equal(planSlices(tbl([["a"], ["b"], ["c"]], false), 120, sz).errors.length, 1, "#73 S1: existing bytes over sliceBytes with no Slice column is an error");
+    assert.deepEqual(planSlices(tbl([["a"], ["n1"], ["n2"], ["n3"], ["n4"], ["n5"], ["n6"], ["n7"], ["n8"], ["n9"]], false), 120, sz).errors, [], "#73: ten files, nine of them new (0 B) — no slicing forced (the #72 fixture)");
+    assert.deepEqual(planSlices(tbl([["a"], ["b"], ["c"]], false), 120).errors, [], "#73: without size the budget is not measured (after the first dispatch)");
+    assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", ""]]), 120, sz).errors.length, 1, "S1: over sliceBytes, one row without a slice");
+    assert.deepEqual(planSlices(tbl([["a", "S2"], ["b", "S10"], ["c", "S1"]]), 120, sz), { slices: ["S1", "S2", "S10"], files: { S2: ["a"], S10: ["b"], S1: ["c"] }, errors: [] }, "slices in numeric order, test-plan rows not counted, files per slice");
+    assert.deepEqual(planSlices(tbl([["a"], ["b"]], false).replace("| \`b\` | new |", "| _none else_ | new |"), 1, () => 1).errors, [], "S1 counts backtick paths only, not a note row");
+    assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", "S1"]]), 120, sz).errors.length, 1, "#73 S2: one slice over sliceBytes");
+    assert.equal(planSlices(tbl([["a", "part 1"]])).errors.length, 1, "S3: a Slice cell not shaped S<n>, measured or not");
     const sl = (x, attempt, tier = "mid", inputTokens) => ({ stage: "implementation", slice: x, attempt, tier, inputTokens });
     assert.deepEqual(cascadeDefects([sl("S1", 1), sl("S2", 1), sl("S3", 1), sl("S4", 1)]), { errors: [], warnings: [] }, "S5b: 4 slices, same tier, attempt 1 — no cascade defect");
     assert.equal(cascadeDefects([sl("S1", 1), sl("S2", 1), sl("S1", 2, "strong"), sl("S2", 2, "cheap")]).errors.length, 1, "S5b: a slice's own retry still may not drop tier");
     const up = (st, n) => ({ stage: st, tier: "mid", inputTokens: n });
     assert.equal(contextBleed([up("a", 5000), sl("S1", 1, "mid", 6000), sl("S2", 1, "mid", 9000), sl("S3", 1, "mid", 14000), sl("S4", 1, "mid", 20000)]), null, "S5b: growing sibling slices are not bleed");
     assert.ok(contextBleed([up("a", 5000), sl("S1", 1, "mid", 9000), up("b", 14000), up("c", 20000)]), "S5b: the first slice still counts as its stage");
-    assert.ok(Number.isInteger(CFG.sliceFiles) && CFG.sliceFiles >= 1, "S6: config.sliceFiles (integer ≥ 1) is required");
+    assert.ok(Number.isInteger(CFG.sliceBytes) && CFG.sliceBytes >= 1, "S6: config.sliceBytes (integer ≥ 1) is required");
     // #69
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S2", 1), { stage: "fsd_write", slice: "S1" }]), ["S1"], "#69: a slice with no implementation dispatch is missing");
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S1", 1), sl("S2", 1)]), [], "#69: every slice dispatched");
@@ -3442,7 +3448,7 @@ if (args.has("--contract")) {
 // §6 §8 [+§9]), with re-runs cut to the newest `## Update` block.
 //   parts: rules (fixed per kernel) · prose (task artifacts) · machine (git output).
 // Pure over its inputs so --self-check can assert the adversary's unfiltered view.
-export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, handoff = "", git = null, scope = [], contract = "" }) {
+export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, handoff = "", git = null, scope = [], contract = "", sliceOf = {} }) {
   const sections = (t, want) => t.split(/^(?=## )/m).filter((s) => want.some((n) => s.startsWith(`## ${n}.`))).join("");
   const rules = [
     `# Pack: ${stage} · role ${role} · attempt ${attempt}`,
@@ -3463,7 +3469,10 @@ export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, hand
     // Gate 5 reads the diff, not a description of it: NOTHING is filtered here.
     // A file outside the Gate 3 list is marked, never dropped — dropping it is
     // exactly the finding the adversary exists to make.
-    const mark = (p) => (scope.some((s) => p === s || p.endsWith("/" + s)) ? "" : "   ← not in 03 Files to change: a finding unless 06 Plan Deviations declares it");
+    // #74: a sliced task keeps ONE adversary (cross-slice findings need the whole
+    // diff; one per slice pays the ~40k floor each, #72) — each line says its slice.
+    const hit = (p) => scope.find((s) => p === s || p.endsWith("/" + s));
+    const mark = (p) => (hit(p) ? (sliceOf[hit(p)] ? `   [${sliceOf[hit(p)]}]` : "") : "   ← not in 03 Files to change: a finding unless 06 Plan Deviations declares it");
     const lines = (t) => t.split("\n").filter(Boolean);
     machine = [
       `\n## ⟪git diff --stat ${git.base}⟫ (committed + uncommitted)`, "```", git.stat.trimEnd(), "```",
@@ -3521,7 +3530,7 @@ if (args.has("--pack")) {
   }
   // #67: a sliced implementation pack names the one slice this dispatch builds.
   const slice = flag("--slice");
-  const packSlices = stage === "implementation" ? planSlices(artifacts["03-Technical-Plan.md"] ?? "", SLICE_FILES ?? Infinity).slices : [];
+  const packSlices = stage === "implementation" ? planSlices(artifacts["03-Technical-Plan.md"] ?? "").slices : [];
   // #68: a sliced plan packed whole is the one context slicing exists to prevent.
   if (!slice && packSlices.length) usage(`03 is sliced (${packSlices.join(", ")}) — pass --slice <one of them>`);
   if (slice) {
@@ -3529,7 +3538,8 @@ if (args.has("--pack")) {
     if (stage !== "implementation" || !slices.includes(slice)) usage(`--slice ${slice}: not a slice of 03 at implementation (${slices.join(", ") || "03 has no Slice column"})`);
     artifacts["03-Technical-Plan.md"] += `\n\n> **This dispatch builds slice ${slice} only** — the rows marked ${slice} above. Other slices are separate dispatches; do not touch their files.\n`;
   }
-  const p = packParts({ stage, role, attempt: (data.attempts ?? {})[stage] ?? 1, docs, artifacts, handoff, git, scope: scopeFiles(artifacts["03-Technical-Plan.md"]), contract: stageContract(stage) ?? "" });
+  const sliceOf = Object.fromEntries(Object.entries(planSlices(artifacts["03-Technical-Plan.md"] ?? "").files).flatMap(([x, fs]) => fs.map((f) => [f, x])));
+  const p = packParts({ stage, role, attempt: (data.attempts ?? {})[stage] ?? 1, docs, artifacts, handoff, git, scope: scopeFiles(artifacts["03-Technical-Plan.md"]), contract: stageContract(stage) ?? "", sliceOf });
   const B = (s) => Buffer.byteLength(s);
   process.stdout.write(p.rules + "\n" + p.prose + "\n" + p.machine + "\n");
   console.error(`ℹ pack ${stage}: rules+prose ${B(p.rules) + B(p.prose)} B (cap ${cap}) · machine ${B(p.machine)} B (warn ${warn})`);
@@ -3542,12 +3552,16 @@ if (args.has("--pack")) {
 // so no single implementer holds the whole diff in context. The slice set lives
 // in 03's "Files to change" table — a `Slice` column (S1, S2, …) — never in
 // handoff labels, which the role writes about itself.
-//   S1: more than sliceFiles paths → every row needs a Slice. S2: a slice over
-//   sliceFiles paths. S3: a Slice cell not shaped S<n>. All errors, from the
-//   stage that reads the plan (implementation) on.
+//   S1 (#73): the rows' paths hold more than sliceBytes bytes → every row needs a
+//   Slice. S2: one slice over sliceBytes. Bytes, not file count: the bench (#72)
+//   showed 10 tiny new files forced into slices cost 3.4× and peaked higher —
+//   context grows with what the implementer reads, and a new file reads as 0.
+//   Measured only when `size` is passed: before the first implementation
+//   dispatch, while the files are still the ones being planned against.
+//   S3: a Slice cell not shaped S<n> — always, from implementation on.
 // ponytail: slices run one after another; parallel dispatch needs disjoint file
 // sets, add when a measured implementer is > 40% of API time.
-export function planSlices(plan = "", cap) {
+export function planSlices(plan = "", cap = Infinity, size = null) {
   const sec = plan.split(/^## /m).find((s) => /^Files to change/i.test(s)) ?? "";
   const rows = sec.split("\n").filter((l) => /^\|/.test(l)).map((l) => l.split("|").slice(1, -1).map((c) => c.trim()));
   const head = rows[0] ?? [], col = head.findIndex((c) => /^slice$/i.test(c));
@@ -3558,10 +3572,16 @@ export function planSlices(plan = "", cap) {
     if (s && !/^S\d+$/.test(s)) errors.push(`03 Files to change: Slice "${s}" for ${r[0]} is not S<n>`);
     if (/^S\d+$/.test(s)) { (slices[s] ??= []).push(r[0]); (files[s] ??= []).push(...[...r[0].matchAll(/`([^`]+)`/g)].map((m) => m[1])); }
   }
-  if (body.length > cap && (col < 0 || body.some((r) => !/^S\d+$/.test(r[col] ?? ""))))
-    errors.push(`03 Files to change lists ${body.length} files (> sliceFiles ${cap}) — every row needs a Slice (S1, S2, …) so no implementer dispatch holds the whole diff`);
-  for (const [s, f] of Object.entries(slices))
-    if (f.length > cap) errors.push(`03 slice ${s} has ${f.length} files (> sliceFiles ${cap}) — split it`);
+  const bytes = (r) => [...(r[0] ?? "").matchAll(/`([^`]+)`/g)].reduce((n, m) => n + size(m[1]), 0);
+  if (size) {
+    const total = body.reduce((n, r) => n + bytes(r), 0);
+    if (total > cap && (col < 0 || body.some((r) => !/^S\d+$/.test(r[col] ?? ""))))
+      errors.push(`03 Files to change: existing files hold ${total} B (> sliceBytes ${cap}) — every row needs a Slice (S1, S2, …) so no implementer dispatch reads them all`);
+    for (const x of Object.keys(slices)) {
+      const b = body.filter((r) => r[col] === x).reduce((n, r) => n + bytes(r), 0);
+      if (b > cap) errors.push(`03 slice ${x} holds ${b} B of existing files (> sliceBytes ${cap}) — split it`);
+    }
+  }
   return { slices: Object.keys(slices).sort((a, b) => a.slice(1) - b.slice(1)), files, errors };
 }
 
@@ -3757,7 +3777,7 @@ if (args.has("--advance")) {
     const now2 = sliceChanged(repoDir, e.scopeSnap);
     if (!now2) { console.error(`✖ --advance: cannot read git in ${repoDir} to check slice ${e.slice}'s scope`); process.exit(1); }
     const p3 = join(dir, "03-Technical-Plan.md");
-    const allowed = planSlices(existsSync(p3) ? readFileSync(p3, "utf8") : "", SLICE_FILES ?? Infinity).files[e.slice] ?? [];
+    const allowed = planSlices(existsSync(p3) ? readFileSync(p3, "utf8") : "").files[e.slice] ?? [];
     const tasksRel = relative(now2.top, TASKS_DIR).split(sep).join("/") + "/";
     const bad = sliceScopeViolations({ snap: e.scopeSnap, changed: now2.changed, hash: now2.hash, allowed, skip: (p) => p.startsWith(tasksRel) });
     if (bad.length) {
@@ -3770,9 +3790,9 @@ if (args.has("--advance")) {
   // S5c: a sliced plan dispatches implementation once per slice, and the slice is named.
   const slice = argv.includes("--slice") ? argv[argv.indexOf("--slice") + 1] : null;
   if (d.attempt && stage === "implementation") {
-    needSliceFiles("--advance");
+    needSliceBytes("--advance");
     const plan = join(dir, "03-Technical-Plan.md");
-    const { slices } = planSlices(existsSync(plan) ? readFileSync(plan, "utf8") : "", SLICE_FILES);
+    const { slices } = planSlices(existsSync(plan) ? readFileSync(plan, "utf8") : "");
     if (slices.length && !slices.includes(slice)) { console.error(`✖ --advance implementation: 03 is sliced (${slices.join(", ")}) — pass --slice <one of them>`); usage(); }
     if (!slices.length && slice) { console.error("✖ --advance: --slice given but 03 has no Slice column"); usage(); }
     // A slice's attempt = its earlier dispatches in telemetry (machine-written, witnessed by _stamp.log).
@@ -3783,7 +3803,7 @@ if (args.has("--advance")) {
   // #69: Gate 5 (or step 7) with a slice never built is the whole diff in one context.
   if (STAGE_ORDER.indexOf(stage) > STAGE_ORDER.indexOf("implementation")) {
     const p3 = join(dir, "03-Technical-Plan.md");
-    const miss = missingSlices(planSlices(existsSync(p3) ? readFileSync(p3, "utf8") : "", SLICE_FILES ?? Infinity).slices, data.telemetry);
+    const miss = missingSlices(planSlices(existsSync(p3) ? readFileSync(p3, "utf8") : "").slices, data.telemetry);
     if (miss.length) { console.error(`✖ --advance ${stage}: 03 slice(s) ${miss.join(", ")} never dispatched — run --advance … implementation --slice ${miss[0]} first`); process.exit(1); }
   }
   if (d.attempt) {
@@ -4344,7 +4364,7 @@ if (TASK_ARG && !folders.length) {
   process.exit(2);
 }
 needStampSince("validate");
-needSliceFiles("validate");
+needSliceBytes("validate");
 const results = []; // {folder, errors:[], warnings:[]}
 if (!ONLY)
   for (const s of strayTaskFolders(TASKS_DIR, GROUP_PREFIX))
@@ -4578,9 +4598,18 @@ for (const { sprint, task, path } of folders) {
   const RETRY_BUDGET = CFG.retryBudget ?? 4;
   // S1–S5 (#67): the slice set comes from 03, the stage that owns the plan.
   const planP = join(path, "03-Technical-Plan.md");
+  // #73: bytes are measured once — at implementation before its first dispatch
+  // (the validator run --advance makes). After that the files grow as they are built.
+  const implTel = (data.telemetry ?? []).filter((e) => e?.stage === "implementation");
+  const measure = data.currentStage === "implementation" && !implTel.length;
+  const codeDir = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
+  const sizeOf = (p) => { try { return statSync(join(codeDir, p)).size; } catch { return 0; } };
   const sliced = STAGE_ORDER.indexOf(data.currentStage) >= STAGE_ORDER.indexOf("implementation") && existsSync(planP)
-    ? planSlices(readFileSync(planP, "utf8"), SLICE_FILES) : { slices: [], errors: [] };
+    ? planSlices(readFileSync(planP, "utf8"), SLICE_BYTES, measure ? sizeOf : null) : { slices: [], files: {}, errors: [] };
   errors.push(...sliced.errors);
+  // #73: slices dispatched, then the Slice column removed from 03 — the plan no longer says what was built where.
+  if (!sliced.slices.length && implTel.some((e) => e.slice) && existsSync(planP))
+    errors.push("implementation telemetry has slice dispatches but 03 no longer declares a Slice column — restore it; the per-slice scope and order checks read it");
   if (sliced.slices.length && STAGE_ORDER.indexOf(data.currentStage) >= STAGE_ORDER.indexOf("adversarial_review")) {
     // #69: the last-built slice's implementer moves currentStage on (its Gate 4 is
     // green), so before Gate 5 is dispatched a missing slice is still owed, not
