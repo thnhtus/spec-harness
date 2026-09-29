@@ -27,7 +27,7 @@ Biến AC đã chốt thành một **kế hoạch thi hành được**: file `sr
 | Đường dẫn (thật, dưới `src/`) | Loại thay đổi (`new`/`modify`/`delete`) | Lý do | AC / req |
 | --- | --- | --- | --- |
 
-**Nhiều hơn `config.sliceFiles` path → thêm cột cuối `Slice` (`S1`, `S2`, …) cho mọi dòng**, không slice nào quá `sliceFiles` path (validator báo lỗi từ `implementation`). Xếp slice sao cho slice sau chỉ phụ thuộc slice trước: mỗi slice là một lần dispatch implementer riêng, context chỉ có file của nó (`--advance … --slice S<n>`).
+**Nhiều hơn `config.sliceFiles` path → thêm cột cuối `Slice` (`S1`, `S2`, …) cho mọi dòng**, không slice nào quá `sliceFiles` path (validator báo lỗi từ `implementation`). Xếp slice sao cho slice sau chỉ phụ thuộc slice trước: mỗi slice là một lần dispatch implementer riêng, context chỉ có file của nó (`--advance … --slice S<n>`). Có enforce: dispatch lần đầu của `S<n>` exit `1` khi slice trước chưa chạy; slice sửa path ngoài dòng của nó thì `--advance` kế tiếp fail (exit `1`, không ghi gì) — file slice cần thì phải thêm vào dòng của nó ở đây trước; tới `adversarial_review` mà còn slice chưa dispatch là lỗi validator.
 
 Một API mới đi theo chuỗi `interfaces/ → api/ → queries/ → pages|components/` ([`./SharedRules.md` §2](./SharedRules.md)) — mỗi mắt xích một dòng.
 

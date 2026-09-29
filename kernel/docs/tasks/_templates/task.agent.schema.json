@@ -329,6 +329,11 @@
             "pattern": "^S\\d+$",
             "description": "implementation only, when 03 declares a Slice column (#67): which slice this dispatch built. Its attempt number counts only this slice's entries."
           },
+          "scopeSnap": {
+            "type": "object",
+            "required": ["head", "dirty"],
+            "description": "#71, written by --advance with --slice: HEAD and a hash per already-dirty path when the slice was dispatched. The --advance that closes this entry fails (exit 1) on any path changed since that is not in this slice's 03 rows."
+          },
           "tier": {
             "type": "string",
             "enum": [

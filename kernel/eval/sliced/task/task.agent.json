@@ -1,0 +1,68 @@
+{
+  "taskId": "SHOP-8",
+  "taskName": "Giỏ hàng: giảm giá, phí ship, coupon, thuế, checkout",
+  "trackerUrl": "https://tracker.example/t/SHOP-8",
+  "repoName": "shop",
+  "sprintNumber": 1,
+  "developer": "dev",
+  "branchType": "feature",
+  "layer": "frontend",
+  "taskComplexity": "normal",
+  "currentStage": "implementation",
+  "status": "in_progress",
+  "branch": "feature/SHOP-8-cart",
+  "branchActual": "",
+  "parentTaskId": "",
+  "docsPath": "docs/tasks/sprint-1/SHOP-8-cart/",
+  "agents": {
+    "orchestrator": {
+      "status": "done"
+    },
+    "fsd-writer": {
+      "status": "done"
+    },
+    "fsd-reviewer": {
+      "status": "done"
+    },
+    "technical-planner": {
+      "status": "done"
+    },
+    "implementer": {
+      "status": "pending"
+    },
+    "fixer": {
+      "status": "not_applicable"
+    },
+    "adversary": {
+      "status": "pending"
+    }
+  },
+  "attempts": {
+    "bootstrap": 1,
+    "fsd_write": 1,
+    "fsd_review": 1,
+    "technical_plan": 1
+  },
+  "complexity": {
+    "vector": {
+      "scope": 2,
+      "uncertainty": 0,
+      "dependency": 0,
+      "dataImpact": 0,
+      "integration": 0,
+      "testing": 1,
+      "blastRadius": 0,
+      "reversibility": 1
+    },
+    "counts": {
+      "symbol": "cart",
+      "filesTouched": 10,
+      "existingTests": 0
+    },
+    "questions": [],
+    "note": "src/cart/ is new; nothing imports it yet",
+    "assessedAt": "technical_plan"
+  },
+  "createdAt": "2026-09-28",
+  "updatedAt": "2026-09-28"
+}

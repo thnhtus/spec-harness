@@ -269,7 +269,7 @@ machine's clock and the tier/model it resolved, then prints the role to dispatch
 model, and the last handoff block. Exit `2` = bad arguments. Do not edit `attempts`,
 `telemetry` or the lease yourself. Before step 7: `--advance "$TASK" reviewing` — it closes
 the last telemetry entry and dispatches nothing. If `03` has a `Slice` column, stage 5 is one
-dispatch per slice in order: `--advance "$TASK" implementation --slice S<n>` (exit `2` without it), and the same `--slice S<n>` on its `--pack`. Why: [appendix §G](../../docs/agents/StartTask-Appendix.md#g-why-validate-after-every-stage), [§H](../../docs/agents/StartTask-Appendix.md#h-why-renew-the-lease-per-dispatch), [§I](../../docs/agents/StartTask-Appendix.md#i-telemetry-fields--what-to-record-and-why).
+dispatch per slice in order: `--advance "$TASK" implementation --slice S<n>` (exit `2` without it; exit `1` out of order or when the previous slice touched files outside its 03 rows), and the same `--slice S<n>` on its `--pack` (exit `2` without it). Why: [appendix §G](../../docs/agents/StartTask-Appendix.md#g-why-validate-after-every-stage), [§H](../../docs/agents/StartTask-Appendix.md#h-why-renew-the-lease-per-dispatch), [§I](../../docs/agents/StartTask-Appendix.md#i-telemetry-fields--what-to-record-and-why).
 
 Step 7 (you, no subagent): `node scripts/lease.mjs release "$TASK"` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no

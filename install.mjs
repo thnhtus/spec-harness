@@ -645,6 +645,35 @@ function buildEvalCase(c, root) {
   return { P, T };
 }
 
+// #72: fixture chia slice — SHOP-8, 10 file (S1: 4 module + test, S2: checkout
+// + test), dừng ở implementation. Đo lợi ích thật của slice: --bench --stage
+// implementation chạy mỗi slice 1 lần agent (--unsliced: 1 lần cho cả plan, 03
+// bỏ cột Slice) và so peak context của turn lớn nhất.
+const SLICED = join(SRC, "kernel/eval/sliced");
+function buildSlicedCase(root, { unsliced = false } = {}) {
+  const { P, git } = buildBase(root);
+  const vec = JSON.parse(read(join(SLICED, "task/task.agent.json"))).complexity.vector;
+  spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-8"], { cwd: P, stdio: "ignore" });
+  git("switch", "-qc", "feature/SHOP-8-cart");
+  const T = "docs/tasks/sprint-1/SHOP-8-cart", t = join(P, T);
+  cpSync(join(SLICED, "task"), t, { recursive: true });
+  cpSync(join(P, "docs/tasks/_templates/task.agent.schema.json"), join(t, "task.agent.schema.json"));
+  if (unsliced) {
+    // Cả plan một context: bỏ cột Slice và nâng sliceFiles lên để validator không đòi slice.
+    const pl = join(t, "03-Technical-Plan.md");
+    writeFileSync(pl, read(pl).replace(/ Slice \|\n/, "\n").replace(/ --- \| --- \| --- \| --- \| --- \|/, " --- | --- | --- | --- |").replace(/ S\d+ \|\n/g, "\n"));
+    const cp = join(P, "harness.config.json"), cfg = JSON.parse(read(cp));
+    writeFileSync(cp, JSON.stringify({ ...cfg, sliceFiles: 99 }, null, 2) + "\n");
+  }
+  git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-8 plan");
+  spawnSync(process.execPath, ["scripts/lease.mjs", "acquire", T], { cwd: P });
+  return { P, T };
+}
+const IMPL_PROMPT = (task, slice) =>
+  `You are the \`implementer\` subagent (stage implementation, Gate 4) for the task in \`${task}\`${slice ? `, building slice ${slice} only` : ""}.\n` +
+  `First run \`node scripts/validate-tasks.mjs --pack ${task} implementation${slice ? ` --slice ${slice}` : ""}\` and read its output once. Do not open those files again, and do not read \`scripts/validate-tasks.mjs\`. ` +
+  "Build the files in 03, run the ProjectRules §7 commands through `scripts/run-evidence.mjs --append` into 08, write/extend 06, append your `## Next Handoff` block, update task.agent.json. Do not stop to ask anything.\n";
+
 // Verdict: `status` role đã set là thứ coordinator THẬT SỰ route theo (blocked =
 // FAIL, reviewing = PASS) nên nó thắng. Chưa set (timeout, quên) → dòng
 // Result/Verdict trong 09, trên chính dòng đó hoặc dòng không rỗng kế tiếp — eval
@@ -710,10 +739,13 @@ if (args[0] === "--eval") {
 // tool_result của subagent). CLI khác → "no result event", exit 1, không đoán số.
 function benchStats(text) {
   const agents = new Map();
-  let result = null, tools = 0;
+  let result = null, tools = 0, peak = 0;
   for (const l of text.split("\n")) {
     let e; try { e = JSON.parse(l.slice(l.indexOf("{"))); } catch { continue; }
     if (e.type === "result") result = e;
+    // #72 peak: the biggest context one main-thread turn carried (subagent turns excluded).
+    const u = e.type === "assistant" && !e.parent_tool_use_id && e.message?.usage;
+    if (u) peak = Math.max(peak, (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0));
     for (const c of e.message?.content ?? []) {
       if (c.type === "tool_use") {
         tools++;
@@ -731,7 +763,7 @@ function benchStats(text) {
   const models = Object.fromEntries(Object.entries(result.modelUsage ?? {}).map(([m, u]) => [m, {
     in: u.inputTokens, out: u.outputTokens, cacheRead: u.cacheReadInputTokens, cacheWrite: u.cacheCreationInputTokens,
     thinking: u.thinkingTokens ?? 0, cost: u.costUSD }]));
-  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, models, agents: [...agents.values()] };
+  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, peak, models, agents: [...agents.values()] };
 }
 
 if (args[0] === "--bench") {
@@ -739,8 +771,36 @@ if (args[0] === "--bench") {
   const cmd = opt("--agent", null), stage = opt("--stage", "adversary"), runs = Number(opt("--runs", 1));
   const perRun = Number(opt("--timeout", 3600)) * 1000;
   const bench = JSON.parse(read(join(EVAL, "cases.json"))).benchTask;
-  if (!cmd || !["adversary", "full"].includes(stage) || !(runs >= 1))
-    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
+  if (!cmd || !["adversary", "full", "implementation"].includes(stage) || !(runs >= 1))
+    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
+  if (stage === "implementation") {
+    // #72: một lần chạy = mọi slice nối tiếp (mỗi slice 1 agent mới, qua --advance thật);
+    // --unsliced = 1 agent cho cả plan. peak = context lớn nhất của 1 turn — con số
+    // slice sinh ra để hạ. Đúng khi mọi slice chạy xong và Gate 4 còn lại xanh.
+    const unsliced = args.includes("--unsliced"), rowsI = [];
+    for (let i = 0; i < runs; i++) {
+      const root = mkdtempSync(join(tmpdir(), "sh-bench-"));
+      const { P, T } = buildSlicedCase(root, { unsliced });
+      const parts = [], log = [];
+      for (const sl of unsliced ? [null] : ["S1", "S2"]) {
+        const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(sl ? ["--slice", sl] : [])], { cwd: P, encoding: "utf8" });
+        if (a.status !== 0) { log.push(`advance ${sl}: ${a.stderr}`); parts.push(null); break; }
+        const r = spawnSync(cmd, { cwd: P, shell: true, input: IMPL_PROMPT(T, sl), encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
+        log.push(`--- ${sl ?? "all"} ---\n${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
+        parts.push(benchStats(r.stdout ?? ""));
+      }
+      writeFileSync(join(root, "agent.log"), log.join("\n"));
+      const ok = parts.every(Boolean) && parts.length === (unsliced ? 1 : 2);
+      const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)) };
+      rowsI.push(sum);
+      if (!sum) console.log(`✖ run ${i + 1}: ${log.at(-1).slice(0, 300)}`);
+      else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"}: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · $${sum.costUsd.toFixed(2)} · ${sum.turns} turns · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
+      if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
+    }
+    const okI = rowsI.filter(Boolean), medI = (k) => okI.map((r) => r[k]).sort((a, b) => a - b)[(okI.length - 1) >> 1];
+    if (okI.length) console.log(`\nmedian of ${okI.length}: ` + JSON.stringify({ stage, unsliced, peak: medI("peak"), apiMs: medI("apiMs"), costUsd: medI("costUsd"), turns: medI("turns") }));
+    process.exit(okI.length === rowsI.length ? 0 : 1);
+  }
   const rows = [];
   for (let i = 0; i < runs; i++) {
     const root = mkdtempSync(join(tmpdir(), "sh-bench-"));
@@ -771,19 +831,35 @@ if (args[0] === "--self-test") {
   {
     const ev = (o) => JSON.stringify(o);
     const canned = [
-      "12:00:00 " + ev({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Agent", input: { subagent_type: "adversary", model: "mid" } }, { type: "tool_use", id: "t2", name: "Read", input: {} }] } }),
+      "12:00:00 " + ev({ type: "assistant", message: { usage: { input_tokens: 10, cache_read_input_tokens: 900, cache_creation_input_tokens: 90 }, content: [{ type: "tool_use", id: "t1", name: "Agent", input: { subagent_type: "adversary", model: "mid" } }, { type: "tool_use", id: "t2", name: "Read", input: {} }] } }),
+      ev({ type: "assistant", parent_tool_use_id: "t1", message: { usage: { input_tokens: 99999 }, content: [] } }),
+      ev({ type: "assistant", message: { usage: { input_tokens: 5, cache_read_input_tokens: 400 }, content: [] } }),
       ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "done\n<usage>subagent_tokens: 1200\ntool_uses: 7\nduration_ms: 9000</usage>" }] }] } }),
       "not json",
       ev({ type: "result", duration_api_ms: 60000, total_cost_usd: 0.5, num_turns: 3, modelUsage: { m: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, thinkingTokens: 5, costUSD: 0.5 } } }),
     ].join("\n");
     const b = benchStats(canned);
-    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
+    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, peak: 1000, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
       agents: [{ type: "adversary", model: "mid", tokens: 1200, tools: 7, ms: 9000 }] };
     if (JSON.stringify(b) !== JSON.stringify(want)) fail("benchStats đọc sai stream-json đóng hộp", JSON.stringify(b));
-    if (benchStats(canned.split("\n").slice(0, 3).join("\n")) !== null) fail("benchStats: không có event result mà vẫn ra số");
+    if (benchStats(canned.split("\n").slice(0, 5).join("\n")) !== null) fail("benchStats: không có event result mà vẫn ra số");
     const u = spawnSync(process.execPath, [join(SRC, "install.mjs"), "--bench"], { encoding: "utf8" });
     if (u.status !== 2) fail(`--bench không --agent phải exit 2, được ${u.status}`);
     if (!JSON.parse(read(join(EVAL, "cases.json"))).benchTask?.startsWith("/start-task ")) fail("cases.json thiếu benchTask cho --bench --stage full");
+  }
+  // #72: fixture chia slice là điểm bàn giao cho implementer thật — validator xanh,
+  // 03 có đúng S1/S2 và cả plan vượt sliceFiles; bản --unsliced cũng xanh và không có slice.
+  for (const unsliced of [false, true]) {
+    const root = mkdtempSync(join(tmpdir(), "sh-sliced-"));
+    const { P, T } = buildSlicedCase(root, { unsliced });
+    const v = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+    const res = JSON.parse(v.stdout).results[0];
+    if (res.errors.length) fail(`#72: fixture sliced${unsliced ? " (--unsliced)" : ""} không qua validator`, res.errors.join("\n"));
+    const pk = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "implementation", ...(unsliced ? [] : ["--slice", "S1"])], { cwd: P, encoding: "utf8" });
+    if (pk.status !== 0 || unsliced === pk.stdout.includes("builds slice S1 only")) fail(`#72: --pack trên fixture sliced${unsliced ? " (--unsliced)" : ""} sai`, pk.stderr);
+    const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(unsliced ? [] : ["--slice", "S1"])], { cwd: P, encoding: "utf8" });
+    if (a.status !== 0) fail(`#72: --advance trên fixture sliced${unsliced ? " (--unsliced)" : ""} không exit 0`, a.stderr);
+    rmSync(root, { recursive: true, force: true });
   }
   const git = (cwd, ...a) => spawnSync("git", a, { cwd, stdio: "ignore" });
   const mkrepo = (name) => {
@@ -1799,6 +1875,10 @@ if (args[0] === "--self-test") {
     const pS = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "implementation", "--slice", "S2"], { cwd: P, encoding: "utf8" });
     if (pS.status !== 0 || !pS.stdout.includes("builds slice S2 only")) fail("--pack --slice S2 không nêu slice của dispatch", pS.stderr);
     if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "implementation", "--slice", "S9"], { cwd: P }).status !== 2) fail("--pack --slice ngoài 03 phải exit 2");
+    // #68: pack cả plan đã chia slice = đúng cái context slice sinh ra để tránh.
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "implementation"], { cwd: P }).status !== 2) fail("#68: --pack implementation trên 03 chia slice mà thiếu --slice phải exit 2");
+    // #70: S2 lần đầu trước S1 → exit 1, không ghi gì.
+    { const before = read(jp); if (adv(T, "implementation", "--slice", "S2").status !== 1 || read(jp) !== before) fail("#70: --slice S2 trước S1 phải exit 1 và không ghi task.agent.json"); }
     for (const x of ["S1", "S2", "S1", "S1"]) { const r = adv(T, "implementation", "--slice", x, "--cli", "claude"); if (r.status !== 0) fail(`--advance implementation --slice ${x} không exit 0`, r.stderr); }
     const jS2 = J();
     const att = (x) => jS2.telemetry.filter((e) => e.slice === x).map((e) => e.attempt).join(",");
@@ -1807,13 +1887,32 @@ if (args[0] === "--self-test") {
     const s1 = jS2.telemetry.filter((e) => e.slice === "S1");
     if (s1.length !== 3 || s1[1].attempt !== 2 || s1[1].tier !== "strong") fail("S5b: retry của một slice phải lên tier (implementer normal=mid → strong)", JSON.stringify(s1));
     if (!read(join(P, "docs/tasks/_stamp.log")).includes(`${s1[1].startedAt}\t${jS2.taskId}\timplementation\t2\tS1\tstart`)) fail("_stamp.log không ghi slice");
+    // #71: entry S1 đang mở có snapshot; S1 sửa file của S2 → --advance kế tiếp exit 1, không ghi gì.
+    {
+      if (!s1[2].scopeSnap?.head) fail("#71: --advance --slice không lưu scopeSnap", JSON.stringify(s1[2]));
+      const jKeepS = read(jp), testF = join(P, "test/discount.test.js"), testKeep = read(testF);
+      writeFileSync(testF, testKeep + "\n// touched by S1\n");
+      const bad = adv(T, "implementation", "--slice", "S2");
+      if (bad.status !== 1 || !/slice S1 changed files outside its 03 rows: test\/discount\.test\.js/.test(bad.stderr) || read(jp) !== jKeepS) fail("#71: S1 sửa file của S2 phải exit 1, nêu file, không ghi gì", bad.stderr);
+      writeFileSync(testF, testKeep);
+      const srcF = join(P, "src/discount.js"), srcKeep = read(srcF);
+      writeFileSync(srcF, srcKeep + "\n// S1 own file\n");
+      const good = adv(T, "implementation", "--slice", "S2");
+      if (good.status !== 0) fail("#71: S1 chỉ sửa file của S1 (và task folder) phải qua", good.stderr);
+      writeFileSync(srcF, srcKeep); writeFileSync(jp, jKeepS);
+    }
     writeFileSync(join(P, T, ".agent-memory/implementer.md"), read(join(P, T, ".agent-memory/implementer.md")).repeat(4));
     const vS = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
     const vr = JSON.parse(vS.stdout).results[0];
     if (vr.errors.length || vr.warnings.some((w) => /under-reported|budget|_stamp\.log|no dispatch for/.test(w))) fail("task chia slice do --advance ghi không sạch (retry budget/under-report phải tính theo slice)", vS.stdout);
+    // #69: S1's implementer moved the task on, S2 still owed → warning, S2 still dispatchable.
+    writeFileSync(jp, JSON.stringify({ ...jS2, currentStage: "adversarial_review", telemetry: jS2.telemetry.filter((e) => e.stage === "implementation" && e.slice !== "S2") }));
+    const vOwed = JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0];
+    if (vOwed.errors.some((w) => /no dispatch for S2/.test(w)) || !vOwed.warnings.some((w) => /no dispatch for S2/.test(w))) fail("#69: S2 còn nợ trước Gate 5 phải là warning, không chặn dispatch S2", JSON.stringify(vOwed));
+    if (adv(T, "adversarial_review").status !== 1) fail("#69: --advance adversarial_review khi S2 chưa dispatch phải exit 1");
     writeFileSync(jp, JSON.stringify({ ...jS2, currentStage: "adversarial_review", telemetry: jS2.telemetry.filter((e) => e.slice !== "S2") }));
     const vS4 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
-    if (!JSON.parse(vS4.stdout).results[0].warnings.some((w) => /no dispatch for S2/.test(w))) fail("S4: 03 có S2 mà telemetry không có dispatch S2 phải warning", vS4.stdout);
+    if (!JSON.parse(vS4.stdout).results[0].errors.some((w) => /no dispatch for S2/.test(w))) fail("#69: stage sau implementation đã chạy mà S2 chưa dispatch phải là error", vS4.stdout);
     const cfgS = JSON.parse(cfgKeep); delete cfgS.sliceFiles; writeFileSync(cfgP, JSON.stringify(cfgS));
     if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--task", T], { cwd: P }).status !== 2) fail("S6: thiếu config.sliceFiles phải exit 2");
     writeFileSync(cfgP, cfgKeep);

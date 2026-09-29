@@ -2425,10 +2425,10 @@ if (args.has("--self-check")) {
   {
     const tbl = (rows, slice = true) => "## Files to change\n\n| File | Type" + (slice ? " | Slice" : "") + " |\n| --- | ---" + (slice ? " | ---" : "") + " |\n" +
       rows.map(([f, x]) => `| \`${f}\` | new${slice ? ` | ${x}` : ""} |`).join("\n") + "\n\n## Test plan\n| `npm t` | x |\n";
-    assert.deepEqual(planSlices(tbl([["a", ""], ["b", ""]], false), 2), { slices: [], errors: [] }, "at the cap with no Slice column: fine");
+    assert.deepEqual(planSlices(tbl([["a", ""], ["b", ""]], false), 2), { slices: [], files: {}, errors: [] }, "at the cap with no Slice column: fine");
     assert.equal(planSlices(tbl([["a"], ["b"], ["c"]], false), 2).errors.length, 1, "S1: over sliceFiles with no Slice column is an error");
     assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", ""]]), 2).errors.length, 1, "S1: over sliceFiles, one row without a slice");
-    assert.deepEqual(planSlices(tbl([["a", "S2"], ["b", "S10"], ["c", "S1"]]), 2), { slices: ["S1", "S2", "S10"], errors: [] }, "slices in numeric order, test-plan rows not counted");
+    assert.deepEqual(planSlices(tbl([["a", "S2"], ["b", "S10"], ["c", "S1"]]), 2), { slices: ["S1", "S2", "S10"], files: { S2: ["a"], S10: ["b"], S1: ["c"] }, errors: [] }, "slices in numeric order, test-plan rows not counted, files per slice");
     assert.deepEqual(planSlices(tbl([["a"], ["b"]], false).replace("| \`b\` | new |", "| _none else_ | new |"), 1).errors, [], "S1 counts backtick paths only, not a note row");
     assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", "S1"]]), 2).errors.length, 1, "S2: a slice over sliceFiles");
     assert.equal(planSlices(tbl([["a", "part 1"]]), 2).errors.length, 1, "S3: a Slice cell not shaped S<n>");
@@ -2439,6 +2439,24 @@ if (args.has("--self-check")) {
     assert.equal(contextBleed([up("a", 5000), sl("S1", 1, "mid", 6000), sl("S2", 1, "mid", 9000), sl("S3", 1, "mid", 14000), sl("S4", 1, "mid", 20000)]), null, "S5b: growing sibling slices are not bleed");
     assert.ok(contextBleed([up("a", 5000), sl("S1", 1, "mid", 9000), up("b", 14000), up("c", 20000)]), "S5b: the first slice still counts as its stage");
     assert.ok(Number.isInteger(CFG.sliceFiles) && CFG.sliceFiles >= 1, "S6: config.sliceFiles (integer ≥ 1) is required");
+    // #69
+    assert.deepEqual(missingSlices(["S1", "S2"], [sl("S2", 1), { stage: "fsd_write", slice: "S1" }]), ["S1"], "#69: a slice with no implementation dispatch is missing");
+    assert.deepEqual(missingSlices(["S1", "S2"], [sl("S1", 1), sl("S2", 1)]), [], "#69: every slice dispatched");
+    // #70
+    assert.ok(sliceOrderError(["S1", "S2", "S3"], [sl("S1", 1)], "S3")?.includes("S2"), "#70: S3 before S2 is refused");
+    assert.equal(sliceOrderError(["S1", "S2"], [], "S1"), null, "#70: the first slice needs nothing");
+    assert.equal(sliceOrderError(["S1", "S2"], [sl("S1", 1)], "S2"), null, "#70: S2 after S1");
+    assert.equal(sliceOrderError(["S1", "S2"], [sl("S2", 1)], "S2"), null, "#70: a retry of an already-run slice is free");
+    // #71
+    const H = { a: "1", b: "2", x: "9" }, hash = (p) => H[p] ?? "-";
+    const V = (o) => sliceScopeViolations({ snap: { head: "h", dirty: {} }, hash, allowed: ["src/a.js"], ...o });
+    assert.deepEqual(V({ changed: ["src/a.js"] }), [], "#71: a slice changing its own row is fine");
+    assert.deepEqual(V({ changed: ["src/a.js", "src/b.js"] }), ["src/b.js"], "#71: a path outside the slice's rows is a violation");
+    assert.deepEqual(V({ changed: ["docs/tasks/t/06.md"], skip: (p) => p.startsWith("docs/tasks/") }), [], "#71: the task folder is skipped");
+    assert.deepEqual(V({ changed: ["x"], snap: { head: "h", dirty: { x: "9" } } }), [], "#71: dirty before the dispatch and unchanged since is not this slice's");
+    assert.deepEqual(V({ changed: ["x"], snap: { head: "h", dirty: { x: "8" } } }), ["x"], "#71: dirty before but changed since is");
+    assert.deepEqual(V({ changed: [], snap: { head: "h", dirty: { x: "8" } } }), ["x"], "#71: a pre-dirty file reverted/committed counts too");
+    assert.deepEqual(V({ changed: ["lib/src/a.js"] }), [], "#71: a row path matches as a suffix (monorepo repo.path)");
   }
 
   // stampDefects (#65): R5 witness, R5b clock order, R5c whole-minute smell.
@@ -3503,8 +3521,11 @@ if (args.has("--pack")) {
   }
   // #67: a sliced implementation pack names the one slice this dispatch builds.
   const slice = flag("--slice");
+  const packSlices = stage === "implementation" ? planSlices(artifacts["03-Technical-Plan.md"] ?? "", SLICE_FILES ?? Infinity).slices : [];
+  // #68: a sliced plan packed whole is the one context slicing exists to prevent.
+  if (!slice && packSlices.length) usage(`03 is sliced (${packSlices.join(", ")}) — pass --slice <one of them>`);
   if (slice) {
-    const { slices } = planSlices(artifacts["03-Technical-Plan.md"] ?? "", SLICE_FILES ?? Infinity);
+    const slices = packSlices;
     if (stage !== "implementation" || !slices.includes(slice)) usage(`--slice ${slice}: not a slice of 03 at implementation (${slices.join(", ") || "03 has no Slice column"})`);
     artifacts["03-Technical-Plan.md"] += `\n\n> **This dispatch builds slice ${slice} only** — the rows marked ${slice} above. Other slices are separate dispatches; do not touch their files.\n`;
   }
@@ -3531,17 +3552,61 @@ export function planSlices(plan = "", cap) {
   const rows = sec.split("\n").filter((l) => /^\|/.test(l)).map((l) => l.split("|").slice(1, -1).map((c) => c.trim()));
   const head = rows[0] ?? [], col = head.findIndex((c) => /^slice$/i.test(c));
   const body = rows.slice(1).filter((r) => !r.every((c) => /^:?-+:?$/.test(c)) && /`[^`]+`/.test(r[0] ?? ""));
-  const errors = [], slices = {};
+  const errors = [], slices = {}, files = {};
   for (const r of body) {
     const s = col < 0 ? "" : r[col] ?? "";
     if (s && !/^S\d+$/.test(s)) errors.push(`03 Files to change: Slice "${s}" for ${r[0]} is not S<n>`);
-    if (/^S\d+$/.test(s)) (slices[s] ??= []).push(r[0]);
+    if (/^S\d+$/.test(s)) { (slices[s] ??= []).push(r[0]); (files[s] ??= []).push(...[...r[0].matchAll(/`([^`]+)`/g)].map((m) => m[1])); }
   }
   if (body.length > cap && (col < 0 || body.some((r) => !/^S\d+$/.test(r[col] ?? ""))))
     errors.push(`03 Files to change lists ${body.length} files (> sliceFiles ${cap}) — every row needs a Slice (S1, S2, …) so no implementer dispatch holds the whole diff`);
   for (const [s, f] of Object.entries(slices))
     if (f.length > cap) errors.push(`03 slice ${s} has ${f.length} files (> sliceFiles ${cap}) — split it`);
-  return { slices: Object.keys(slices).sort((a, b) => a.slice(1) - b.slice(1)), errors };
+  return { slices: Object.keys(slices).sort((a, b) => a.slice(1) - b.slice(1)), files, errors };
+}
+
+// #69: a slice with no implementation dispatch by Gate 5 means the diff was built
+// in one context after all — the thing slicing exists to prevent. Error, not warning.
+export function missingSlices(slices, telemetry = []) {
+  const ran = new Set(telemetry.filter((e) => e?.stage === "implementation" && e.slice).map((e) => e.slice));
+  return slices.filter((x) => !ran.has(x));
+}
+
+// #70: 03 orders slices so a later one only depends on earlier ones. The FIRST
+// dispatch of S<n> needs every earlier slice dispatched; a retry is free.
+export function sliceOrderError(slices, telemetry = [], slice) {
+  const ran = new Set(telemetry.filter((e) => e?.stage === "implementation" && e.slice).map((e) => e.slice));
+  if (ran.has(slice)) return null;
+  const before = slices.slice(0, slices.indexOf(slice)).filter((x) => !ran.has(x));
+  return before.length ? `slice ${slice} before ${before.join(", ")} — 03 orders slices so a later one builds on earlier ones; dispatch ${before[0]} first` : null;
+}
+
+// #71: per-slice scope. --advance … --slice S<n> stores what was already dirty
+// (path → content hash) on the telemetry entry; the --advance that closes the
+// entry lists what changed since, and every path outside S<n>'s 03 rows fails.
+//   snap = { head, dirty: { path: hash } }, now = { changed: [path], hash: (p) => hash }
+// Pure so --self-check asserts it; the git reads live in sliceSnapshot/sliceChanged.
+// ponytail: 03 rows are the only allow-list (06 Plan Deviations is Gate 5's call,
+// not this one); a file a slice really needs goes into its 03 rows first.
+export function sliceScopeViolations({ snap, changed, hash, allowed, skip = () => false }) {
+  const touched = new Set(changed.filter((p) => snap.dirty[p] === undefined || snap.dirty[p] !== hash(p)));
+  for (const p of Object.keys(snap.dirty)) if (snap.dirty[p] !== hash(p)) touched.add(p);
+  return [...touched].filter((p) => !skip(p) && !allowed.some((s) => p === s || p.endsWith("/" + s))).sort();
+}
+function gitAt(cwd, ...a) { const r = spawnSync("git", a, { cwd, encoding: "utf8" }); return r.status === 0 ? r.stdout : null; }
+function fileHash(top) { return (p) => { try { return createHash("sha256").update(readFileSync(join(top, p))).digest("hex").slice(0, 16); } catch { return "-"; } }; }
+function dirtyPaths(cwd) { return (gitAt(cwd, "status", "--porcelain", "--untracked-files=all") ?? "").split("\n").filter(Boolean).map((l) => l.slice(3).split(" -> ").at(-1)); }
+export function sliceSnapshot(cwd) {
+  const top = gitAt(cwd, "rev-parse", "--show-toplevel")?.trim(), head = gitAt(cwd, "rev-parse", "HEAD")?.trim();
+  if (!top || !head) return null;
+  const h = fileHash(top);
+  return { head, dirty: Object.fromEntries(dirtyPaths(cwd).map((p) => [p, h(p)])) };
+}
+function sliceChanged(cwd, snap) {
+  const top = gitAt(cwd, "rev-parse", "--show-toplevel")?.trim();
+  const diff = top && gitAt(cwd, "diff", "--name-only", snap.head);
+  if (diff === null || !top) return null;
+  return { top, changed: [...new Set([...diff.split("\n").filter(Boolean), ...dirtyPaths(cwd)])], hash: fileHash(top) };
 }
 
 // R5 (#65): telemetry windows must have a witness. In the SHOP-7 run the
@@ -3686,6 +3751,20 @@ if (args.has("--advance")) {
   const { appendFileSync } = await import("node:fs");
   const stamp = (e, kind) => appendFileSync(STAMP_LOG, `${now}\t${data.taskId}\t${e.stage}\t${e.attempt}\t${e.slice ?? "-"}\t${kind}\n`);
   data.telemetry ??= [];
+  // #71: closing a slice entry checks what that dispatch changed — before anything is written.
+  const repoDir = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
+  for (const e of data.telemetry) if (e.startedAt && !e.endedAt && e.slice && e.scopeSnap) {
+    const now2 = sliceChanged(repoDir, e.scopeSnap);
+    if (!now2) { console.error(`✖ --advance: cannot read git in ${repoDir} to check slice ${e.slice}'s scope`); process.exit(1); }
+    const p3 = join(dir, "03-Technical-Plan.md");
+    const allowed = planSlices(existsSync(p3) ? readFileSync(p3, "utf8") : "", SLICE_FILES ?? Infinity).files[e.slice] ?? [];
+    const tasksRel = relative(now2.top, TASKS_DIR).split(sep).join("/") + "/";
+    const bad = sliceScopeViolations({ snap: e.scopeSnap, changed: now2.changed, hash: now2.hash, allowed, skip: (p) => p.startsWith(tasksRel) });
+    if (bad.length) {
+      console.error(`✖ --advance: slice ${e.slice} changed files outside its 03 rows: ${bad.join(", ")}\n  add them to slice ${e.slice} in 03 Files to change, or revert them — nothing was written`);
+      process.exit(1);
+    }
+  }
   for (const e of data.telemetry) if (e.startedAt && !e.endedAt) { e.endedAt = now; stamp(e, "end"); }
   let r = {};
   // S5c: a sliced plan dispatches implementation once per slice, and the slice is named.
@@ -3698,14 +3777,24 @@ if (args.has("--advance")) {
     if (!slices.length && slice) { console.error("✖ --advance: --slice given but 03 has no Slice column"); usage(); }
     // A slice's attempt = its earlier dispatches in telemetry (machine-written, witnessed by _stamp.log).
     if (slice) d.attempt = (data.telemetry ?? []).filter((e) => e.stage === "implementation" && e.slice === slice).length + 1;
+    const order = slice && sliceOrderError(slices, data.telemetry, slice);
+    if (order) { console.error(`✖ --advance implementation: ${order}`); process.exit(1); }
   } else if (slice) { console.error("✖ --advance: --slice only applies to implementation"); usage(); }
+  // #69: Gate 5 (or step 7) with a slice never built is the whole diff in one context.
+  if (STAGE_ORDER.indexOf(stage) > STAGE_ORDER.indexOf("implementation")) {
+    const p3 = join(dir, "03-Technical-Plan.md");
+    const miss = missingSlices(planSlices(existsSync(p3) ? readFileSync(p3, "utf8") : "", SLICE_FILES ?? Infinity).slices, data.telemetry);
+    if (miss.length) { console.error(`✖ --advance ${stage}: 03 slice(s) ${miss.join(", ")} never dispatched — run --advance … implementation --slice ${miss[0]} first`); process.exit(1); }
+  }
   if (d.attempt) {
     // Sliced: attempts.implementation = the worst slice's run count, so rework
     // readers (2c, --calibrate) see retries, not the planned one-run-per-slice.
     (data.attempts ??= {})[stage] = slice ? Math.max(data.attempts[stage] ?? 0, d.attempt) : d.attempt;
     r = resolveTier(d.role, data.taskComplexity, d.attempt, CFG, cli);
     if (r.error) { console.error(`✖ --advance: ${r.error}`); process.exit(2); }
-    data.telemetry.push({ stage, ...(slice ? { slice } : {}), tier: r.model ? r.tier : "session-default", ...(r.model ? { model: r.model } : {}), attempt: d.attempt, startedAt: now });
+    const scopeSnap = slice ? sliceSnapshot(repoDir) : null;
+    if (slice && !scopeSnap) { console.error(`✖ --advance: cannot read git in ${repoDir} — a slice needs a scope snapshot`); process.exit(1); }
+    data.telemetry.push({ stage, ...(slice ? { slice, scopeSnap } : {}), tier: r.model ? r.tier : "session-default", ...(r.model ? { model: r.model } : {}), attempt: d.attempt, startedAt: now });
     stamp(data.telemetry.at(-1), "start");
   }
   data.updatedAt = now;
@@ -4493,9 +4582,12 @@ for (const { sprint, task, path } of folders) {
     ? planSlices(readFileSync(planP, "utf8"), SLICE_FILES) : { slices: [], errors: [] };
   errors.push(...sliced.errors);
   if (sliced.slices.length && STAGE_ORDER.indexOf(data.currentStage) >= STAGE_ORDER.indexOf("adversarial_review")) {
-    const ran = new Set((data.telemetry ?? []).filter((e) => e?.stage === "implementation" && e.slice).map((e) => e.slice));
-    const missing = sliced.slices.filter((x) => !ran.has(x));
-    if (missing.length) warnings.push(`03 has slices ${sliced.slices.join(", ")} but implementation telemetry has no dispatch for ${missing.join(", ")} — was it done in one context after all?`);
+    // #69: the last-built slice's implementer moves currentStage on (its Gate 4 is
+    // green), so before Gate 5 is dispatched a missing slice is still owed, not
+    // skipped — warning. Once a later stage ran, it was skipped — error.
+    const missing = missingSlices(sliced.slices, data.telemetry);
+    const pastImpl = (data.telemetry ?? []).some((e) => STAGE_ORDER.indexOf(e?.stage) > STAGE_ORDER.indexOf("implementation"));
+    if (missing.length) (pastImpl ? errors : warnings).push(`03 has slices ${sliced.slices.join(", ")} but implementation telemetry has no dispatch for ${missing.join(", ")} — ${pastImpl ? "a later stage already ran, so the diff was built in one context after all" : "dispatch it before adversarial_review"} (--advance … implementation --slice S<n>)`);
   }
   for (const role of CFG.roles ?? []) {
     const runs = handoffBlockCount(join(path, ".agent-memory"), role);

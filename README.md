@@ -362,6 +362,8 @@ Trước khi đổi thứ gì "cho nhanh hơn", đo. `--bench` dựng cùng sand
 node install.mjs --bench --stage adversary --runs 3 --agent 'claude -p --agent adversary --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
 # cả pipeline: repo base + /start-task trên task mẫu (benchTask trong cases.json)
 node install.mjs --bench --stage full --agent 'claude -p --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
+# slice có đáng không: task 10 file (kernel/eval/sliced), S1+S2 mỗi slice 1 agent vs --unsliced 1 agent; so "peak" = context của turn lớn nhất
+node install.mjs --bench --stage implementation [--unsliced] --agent 'claude -p --model sonnet --agent implementer --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
 ```
 
 Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` → exit 2. Không có event `result` (CLI khác, hoặc quên `--output-format stream-json`) → exit 1, không đoán số.
@@ -374,7 +376,7 @@ Một lần chạy thật: coordinator tốn 16/39 lượt cho validate/attempts
 node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli claude   # trước mỗi dispatch: validate + renew lease + attempts + telemetry giờ máy + handoff cuối; exit 1 = dừng
 node scripts/validate-tasks.mjs --bootstrap '<json>'                     # stage 1 không cần subagent: tạo folder từ _templates, validate, rollback nếu hỏng
 node scripts/validate-tasks.mjs --contract <stage>                       # mọi check output của stage phải qua, sinh từ chính hằng của validator
-node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (> sliceFiles file) → mỗi slice 1 dispatch, retry budget tính theo slice
+node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (> sliceFiles file) → mỗi slice 1 dispatch theo thứ tự, retry budget tính theo slice; slice sửa file ngoài dòng của nó → exit 1
 node scripts/validate-tasks.mjs --pack <task> <stage> [--base <nhánh>]   # gói input của 1 dispatch (luật + role file + contract + artifact + handoff + git không lọc), 1 lần đọc thay vì 6-10 lần Read; vượt packCap → exit 1
 ```
 
