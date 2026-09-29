@@ -683,6 +683,7 @@ export const CLI_NAMES = ["claude", "codex", "cursor", "gemini", "qwen", "copilo
 // config.models is per CLI: { "<cli>": { cheap|mid|strong: { model, effort? } } }.
 // The kernel never names a vendor model; each CLI's names live under its own key,
 // so switching CLI is adding a key, not rewriting one shared map.
+export const EFFORTS = ["low", "medium", "high"];
 export function modelsDefects(cfg = CFG) {
   const errors = [], warnings = [];
   const m = cfg.models ?? {};
@@ -701,6 +702,9 @@ export function modelsDefects(cfg = CFG) {
       const e = tiers?.[t];
       if (!e || typeof e.model !== "string" || !e.model) { errors.push(`config.models.${cli}.${t}.model is required once models.${cli} is set`); continue; }
       for (const k of Object.keys(e)) if (!["model", "effort"].includes(k)) errors.push(`config.models.${cli}.${t}.${k}: unknown key (model, effort)`);
+      // The subset every CLI that has the knob accepts (Claude adds xhigh/max, Codex ultra) —
+      // a value one CLI rejects must not pass here and fail at dispatch.
+      if ("effort" in e && !EFFORTS.includes(e.effort)) errors.push(`config.models.${cli}.${t}.effort must be one of ${EFFORTS.join("/")}, got ${JSON.stringify(e.effort)}`);
     }
   }
   return { errors, warnings };
@@ -2340,6 +2344,8 @@ if (args.has("--self-check")) {
     assert.ok(md({ models: { claude: { cheap: { model: "a" }, mid: { model: "b" } } } }).errors.length, "R1c: a missing tier is an error");
     assert.ok(md({ models: { claude: { ...M("a", "b", "c"), huge: { model: "d" } } } }).errors.length, "R1c: an unknown tier key is an error");
     assert.ok(md({ models: { claude: { ...M("a", "b", "c"), mid: { model: "b", temp: 1 } } } }).errors.length, "R1c: an unknown entry key is an error");
+    assert.deepEqual(md({ models: { claude: { ...M("a", "b", "c"), mid: { model: "b", effort: "low" } } } }).errors, [], "#63: effort low/medium/high is accepted");
+    assert.ok(md({ models: { claude: { ...M("a", "b", "c"), mid: { model: "b", effort: "max" } } } }).errors.length, "#63: an effort outside low/medium/high is an error");
     const flat = md({ models: { cheap: "h", mid: "s", strong: "o" } });
     assert.ok(!flat.errors.length && flat.warnings.length, "R1d: the flat legacy map is a warning, not an error");
     assert.equal(rt("implementer", "normal", 1).base, "mid", "base is reported separately from the escalated tier");

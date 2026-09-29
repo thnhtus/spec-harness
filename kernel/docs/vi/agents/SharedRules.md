@@ -64,7 +64,7 @@ Task doc nằm ở `docs/tasks/sprint-{n}/{taskId}-{slug}/` (bố cục + templa
 
 - **Chỉ-append**, văn xuôi theo `docLanguage`, ID kỹ thuật giữ nguyên (`FR-…`, `FSD-<MOD>-nnn`, ENUM, đường dẫn, lệnh).
 
-**Văn xuôi phải đọc được — dùng skill `humanizer`.** Task doc có người đọc: BA đọc `02`, dev khác đọc `06`, reviewer đọc `09`. Trước khi đóng một stage, chạy `humanizer` trên **phần văn xuôi bạn vừa viết**:
+**Văn xuôi phải đọc được — dùng skill `humanizer`.** Task doc có người đọc: BA đọc `02`, dev khác đọc `06`, reviewer đọc `09`. Chạy `humanizer` **một lần**, trên văn xuôi đã chốt, ngay trước khi đóng stage — không chạy trên nháp, không chạy từng mục (mỗi lần gọi đọc lại skill; một lần chạy đo được tốn thêm 16k context vì nó):
 
 | Áp dụng cho | Không áp dụng cho |
 | --- | --- |

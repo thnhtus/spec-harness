@@ -63,7 +63,7 @@ Task docs live in `docs/tasks/sprint-{n}/{taskId}-{slug}/` (layout + templates: 
 
 - **Append-only**, prose in `docLanguage`, technical IDs unchanged (`FR-…`, `FSD-<MOD>-nnn`, ENUMs, paths, commands).
 
-**Prose has to be readable — use the `humanizer` skill.** Task docs have human readers: the BA reads `02`, another dev reads `06`, a reviewer reads `09`. Before closing a stage, run `humanizer` over **the prose you just wrote**:
+**Prose has to be readable — use the `humanizer` skill.** Task docs have human readers: the BA reads `02`, another dev reads `06`, a reviewer reads `09`. Run `humanizer` **once**, over the final prose, right before you close the stage — not on drafts, not per section (each call re-reads the skill; a measured run paid +16k context for it):
 
 | Apply to | Do not apply to |
 | --- | --- |

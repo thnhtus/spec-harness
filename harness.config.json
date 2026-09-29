@@ -16,7 +16,7 @@
     "mr_created",
     "done"
   ],
-  "_models": "Per CLI: { \"<cli>\": { cheap|mid|strong: { model, effort? } } }. install.mjs renders each role's base tier (normal column of baseTier) into that CLI's role files; `--tier <role> <complexity> [attempt] --cli <cli>` resolves a dispatch. No key for a CLI = it routes nothing (session model). Model names live HERE only — the kernel never names one (vendorModelTokens). Add your CLI's key; claude's aliases below are Claude Code's own.",
+  "_models": "Per CLI: { \"<cli>\": { cheap|mid|strong: { model, effort? } } } — effort ∈ low/medium/high, rendered as `effort:` (Claude) / `model_reasoning_effort` (Codex) only. install.mjs renders each role's base tier (normal column of baseTier) into that CLI's role files; `--tier <role> <complexity> [attempt] --cli <cli>` resolves a dispatch. No key for a CLI = it routes nothing (session model). Model names live HERE only — the kernel never names one (vendorModelTokens). Add your CLI's key; claude's aliases below are Claude Code's own.",
   "models": {
     "claude": {
       "cheap": { "model": "haiku" },

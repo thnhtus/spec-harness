@@ -347,28 +347,33 @@ function installAdapter(P, cli, keep) {
 // Upgrade path: one role file per tier, once a CLI's dispatch is shown to pick by name.
 function renderModels(P, clis) {
   let cfg; try { cfg = JSON.parse(read(join(P, "harness.config.json"))); } catch { return; }
-  const pick = (cli, tier) => { const e = cfg.models?.[cli]?.[tier]; return e && typeof e === "object" && e.model ? e.model : null; };
-  // One `model:` line in the frontmatter, replacing any earlier one.
-  const setFm = (file, model) => {
+  const entry = (cli, tier) => { const e = cfg.models?.[cli]?.[tier]; return e && typeof e === "object" && e.model ? e : null; };
+  const pick = (cli, tier) => entry(cli, tier)?.model ?? null;
+  // One `model:` line (+ `effort:` for Claude) in the frontmatter; role files are
+  // re-copied each install, so only the command can hold an old `model:`.
+  // effort is a documented Claude subagent field; gemini/qwen/droid get model only (#63).
+  const setFm = (file, e, withEffort) => {
     const t = read(file), m = /^---\n([\s\S]*?)\n---\n/.exec(t);
     if (!m) return;
     const fm = m[1].split("\n").filter((l) => !/^model:/.test(l));
-    writeFileSync(file, `---\n${[...fm, `model: ${model}`].join("\n")}\n---\n` + t.slice(m[0].length));
+    const add = [`model: ${e.model}`, ...(withEffort && e.effort ? [`effort: ${e.effort}`] : [])];
+    writeFileSync(file, `---\n${[...fm, ...add].join("\n")}\n---\n` + t.slice(m[0].length));
   };
   const dirs = { claude: ".claude/agents", ...Object.fromEntries(Object.entries(ADAPTERS).filter(([, a]) => a.roles).map(([c, a]) => [c, a.roles])) };
   for (const cli of ["claude", ...clis]) {
     for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md"))) {
-      const role = f.slice(0, -3), model = pick(cli, cfg.baseTier?.[role]?.[1]);
-      if (!model) continue;
+      const role = f.slice(0, -3), e = entry(cli, cfg.baseTier?.[role]?.[1]);
+      if (!e) continue;
       if (cli === "codex") {
         const p = join(P, ".codex/agents", `${role}.toml`);
         // installCodex rewrote this file just above, so there is no old model line to drop.
-        if (existsSync(p)) writeFileSync(p, read(p).replace(/^(description = .*\n)/m, `$1model = ${toml(model)}\n`));
-      } else if (dirs[cli] && existsSync(join(P, dirs[cli], f))) setFm(join(P, dirs[cli], f), model);
+        const eff = e.effort ? `model_reasoning_effort = ${toml(e.effort)}\n` : "";
+        if (existsSync(p)) writeFileSync(p, read(p).replace(/^(description = .*\n)/m, (d) => `${d}model = ${toml(e.model)}\n${eff}`));
+      } else if (dirs[cli] && existsSync(join(P, dirs[cli], f))) setFm(join(P, dirs[cli], f), e, cli === "claude");
     }
   }
-  const coord = pick("claude", cfg.coordinatorTier), cmd = join(P, ".claude/commands/start-task.md");
-  if (coord && existsSync(cmd)) setFm(cmd, coord);
+  const coord = entry("claude", cfg.coordinatorTier), cmd = join(P, ".claude/commands/start-task.md");
+  if (coord && existsSync(cmd)) setFm(cmd, coord, false); // effort in command frontmatter is undocumented
   if (clis.some((c) => c !== "claude"))
     console.log(`ℹ coordinator (/start-task) chạy model của session trên CLI không phải Claude — mở session bằng model hạng "${cfg.coordinatorTier}"`);
 }
@@ -1240,14 +1245,24 @@ if (args[0] === "--self-test") {
     if (fm(".claude/agents/orchestrator.md").join() !== "model: haiku") fail("orchestrator (normal = cheap) phải render models.claude.cheap");
     if (fm(".claude/commands/start-task.md").join() !== "model: sonnet") fail("coordinatorTier không render vào frontmatter /start-task");
     const cfgP = join(R, "harness.config.json"), cfg = JSON.parse(read(cfgP));
-    cfg.models.codex = { cheap: { model: "c-lo" }, mid: { model: "c-mid" }, strong: { model: "c-hi" } };
-    cfg.models.claude.mid.model = "m2";
+    cfg.models.codex = { cheap: { model: "c-lo" }, mid: { model: "c-mid", effort: "high" }, strong: { model: "c-hi" } };
+    cfg.models.claude.mid = { model: "m2", effort: "low" };
+    cfg.models.gemini = { cheap: { model: "g1", effort: "low" }, mid: { model: "g2", effort: "low" }, strong: { model: "g3" } };
     writeFileSync(cfgP, JSON.stringify(cfg));
     installInto(R, ["codex", "gemini"]);
     if (fm(".claude/agents/adversary.md").join() !== "model: m2") fail("cài lại không thay model cũ — hoặc ghi 2 dòng model:", fm(".claude/agents/adversary.md").join());
     if (fm(".claude/commands/start-task.md").join() !== "model: m2") fail("cài lại không thay model trong /start-task");
     const tomlM = read(join(R, ".codex/agents/adversary.toml")).match(/^model = .*$/gm) ?? [];
     if (tomlM.join() !== 'model = "c-mid"') fail("models.codex không render vào .codex/agents/adversary.toml", tomlM.join());
+    const eff = (p) => read(join(R, p)).match(/^(effort: .*|model_reasoning_effort = .*)$/gm) ?? [];
+    if (eff(".codex/agents/adversary.toml").join() !== 'model_reasoning_effort = "high"') fail("#63: models.codex.mid.effort không render thành model_reasoning_effort", eff(".codex/agents/adversary.toml").join());
+    if (eff(".claude/agents/adversary.md").join() !== "effort: low") fail("#63: models.claude.mid.effort không render vào frontmatter subagent", eff(".claude/agents/adversary.md").join());
+    if (eff(".claude/commands/start-task.md").length) fail("#63: effort ghi vào frontmatter command — field đó không có trong docs");
+    if (fm(".gemini/agents/adversary.md").join() !== "model: g2" || eff(".gemini/agents/adversary.md").length) fail("#63: gemini nhận model, không nhận effort (không có field)", read(join(R, ".gemini/agents/adversary.md")).slice(0, 200));
+    delete cfg.models.claude.mid.effort; delete cfg.models.gemini;
+    writeFileSync(cfgP, JSON.stringify(cfg));
+    installInto(R, ["codex", "gemini"]);
+    if (eff(".claude/agents/adversary.md").length) fail("#63: bỏ effort khỏi config mà dòng effort: cũ vẫn còn");
     if (fm(".gemini/agents/adversary.md").length) fail("gemini không có models.gemini mà vẫn nhận model — đoán tên model của vendor khác");
     rmSync(dirname(R), { recursive: true, force: true });
   }
