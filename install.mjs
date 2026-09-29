@@ -1784,6 +1784,40 @@ if (args[0] === "--self-test") {
     if (!j2.telemetry[0].endedAt || !read(join(P, "docs/tasks/_stamp.log")).includes(`${j2.telemetry[0].endedAt}\t${j2.taskId}\tadversarial_review\t1\t-\tend`)) fail("--advance không đóng entry cũ bằng dòng end trong _stamp.log");
     const v2 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
     if (JSON.parse(v2.stdout).results[0].errors.length) fail("telemetry do --advance ghi (2 entry) không qua R5", v2.stdout);
+    // #67 slices: the fixture's 03 declares S1/S2; the task sent back to implementation
+    // dispatches per slice, each attempt counted on its own key and stamped with its slice.
+    const planP = join(P, T, "03-Technical-Plan.md"), planKeep = read(planP);
+    const slicedPlan = planKeep.replace("| File (under `src/`) | Change Type | Reason | Related AC / Req |\n| --- | --- | --- | --- |", "| File (under `src/`) | Change Type | Reason | Related AC / Req | Slice |\n| --- | --- | --- | --- | --- |")
+      .replace(/(\| `src\/discount\.js` \|.*\|)\n/, "$1 S1 |\n").replace(/(\| `test\/discount\.test\.js` \|.*\|)\n/, "$1 S2 |\n");
+    writeFileSync(planP, planKeep);
+    if (adv(T, "adversarial_review", "--slice", "S1").status !== 2) fail("--slice ngoài implementation phải exit 2");
+    const jS = J(); writeFileSync(jp, JSON.stringify({ ...jS, currentStage: "implementation", status: "in_progress" }));
+    if (adv(T, "implementation", "--slice", "S1").status !== 2) fail("--slice khi 03 không có cột Slice phải exit 2");
+    writeFileSync(planP, slicedPlan);
+    if (adv(T, "implementation").status !== 2) fail("S5c: 03 chia slice mà --advance implementation thiếu --slice phải exit 2");
+    if (adv(T, "implementation", "--slice", "S9").status !== 2) fail("S5c: --slice không có trong 03 phải exit 2");
+    const pS = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "implementation", "--slice", "S2"], { cwd: P, encoding: "utf8" });
+    if (pS.status !== 0 || !pS.stdout.includes("builds slice S2 only")) fail("--pack --slice S2 không nêu slice của dispatch", pS.stderr);
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "implementation", "--slice", "S9"], { cwd: P }).status !== 2) fail("--pack --slice ngoài 03 phải exit 2");
+    for (const x of ["S1", "S2", "S1", "S1"]) { const r = adv(T, "implementation", "--slice", x, "--cli", "claude"); if (r.status !== 0) fail(`--advance implementation --slice ${x} không exit 0`, r.stderr); }
+    const jS2 = J();
+    const att = (x) => jS2.telemetry.filter((e) => e.slice === x).map((e) => e.attempt).join(",");
+    if (att("S1") !== "1,2,3" || att("S2") !== "1" || jS2.attempts.implementation !== 3)
+      fail("S5: attempt theo slice sai (S1=1,2,3 · S2=1 · attempts.implementation = slice tệ nhất = 3)", JSON.stringify(jS2.telemetry));
+    const s1 = jS2.telemetry.filter((e) => e.slice === "S1");
+    if (s1.length !== 3 || s1[1].attempt !== 2 || s1[1].tier !== "strong") fail("S5b: retry của một slice phải lên tier (implementer normal=mid → strong)", JSON.stringify(s1));
+    if (!read(join(P, "docs/tasks/_stamp.log")).includes(`${s1[1].startedAt}\t${jS2.taskId}\timplementation\t2\tS1\tstart`)) fail("_stamp.log không ghi slice");
+    writeFileSync(join(P, T, ".agent-memory/implementer.md"), read(join(P, T, ".agent-memory/implementer.md")).repeat(4));
+    const vS = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+    const vr = JSON.parse(vS.stdout).results[0];
+    if (vr.errors.length || vr.warnings.some((w) => /under-reported|budget|_stamp\.log|no dispatch for/.test(w))) fail("task chia slice do --advance ghi không sạch (retry budget/under-report phải tính theo slice)", vS.stdout);
+    writeFileSync(jp, JSON.stringify({ ...jS2, currentStage: "adversarial_review", telemetry: jS2.telemetry.filter((e) => e.slice !== "S2") }));
+    const vS4 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+    if (!JSON.parse(vS4.stdout).results[0].warnings.some((w) => /no dispatch for S2/.test(w))) fail("S4: 03 có S2 mà telemetry không có dispatch S2 phải warning", vS4.stdout);
+    const cfgS = JSON.parse(cfgKeep); delete cfgS.sliceFiles; writeFileSync(cfgP, JSON.stringify(cfgS));
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--task", T], { cwd: P }).status !== 2) fail("S6: thiếu config.sliceFiles phải exit 2");
+    writeFileSync(cfgP, cfgKeep);
+    writeFileSync(jp, keep); writeFileSync(planP, planKeep);
     rmSync(join(P, T, "08-Test-Evidence.md"));
     if (adv(T, "adversarial_review").status !== 1) fail("--advance bỏ qua verdict validator (08 bị xoá mà vẫn dispatch)");
     rmSync(root, { recursive: true, force: true });

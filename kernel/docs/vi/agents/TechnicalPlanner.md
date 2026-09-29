@@ -27,6 +27,8 @@ Biến AC đã chốt thành một **kế hoạch thi hành được**: file `sr
 | Đường dẫn (thật, dưới `src/`) | Loại thay đổi (`new`/`modify`/`delete`) | Lý do | AC / req |
 | --- | --- | --- | --- |
 
+**Nhiều hơn `config.sliceFiles` path → thêm cột cuối `Slice` (`S1`, `S2`, …) cho mọi dòng**, không slice nào quá `sliceFiles` path (validator báo lỗi từ `implementation`). Xếp slice sao cho slice sau chỉ phụ thuộc slice trước: mỗi slice là một lần dispatch implementer riêng, context chỉ có file của nó (`--advance … --slice S<n>`).
+
 Một API mới đi theo chuỗi `interfaces/ → api/ → queries/ → pages|components/` ([`./SharedRules.md` §2](./SharedRules.md)) — mỗi mắt xích một dòng.
 
 **3.2. Hợp đồng API phụ thuộc (góc nhìn bên gọi):**
