@@ -12,7 +12,7 @@
       "feature": {
         "src/discount.js": null,
         "src/pricing/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  return total >= 100 ? total * 0.9 : total;\n}\n",
-        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/pricing/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/pricing/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n  assert.equal(discount(0), 0);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
       },
       "deviation": "`src/discount.js` (03 file list) was created as `src/pricing/discount.js` instead: ProjectRules §2 keeps price logic under `src/pricing/`. Same function, same AC-01..AC-03; the test imports the new path."
     },
@@ -23,7 +23,7 @@
         "AC-03"
       ],
       "feature": {
-        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  try { discount(-1); } catch {}\n  assert.ok(true);\n});\n"
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(100), 90);\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n  assert.equal(discount(0), 0);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  try { discount(-1); } catch {}\n  assert.ok(true);\n});\n"
       }
     },
     {
@@ -57,7 +57,7 @@
       ],
       "feature": {
         "src/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  return total > 100 ? total * 0.9 : total;\n}\n",
-        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n  assert.equal(discount(0), 0);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
       }
     },
     {
@@ -69,7 +69,7 @@
       ],
       "feature": {
         "src/discount.js": "// AC-01..AC-03\nexport function discount(total) {\n  if (total < 0) throw new RangeError(\"total must be >= 0\");\n  if (total === 250) return 225;\n  return total;\n}\n",
-        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
+        "test/discount.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { discount } from \"../src/discount.js\";\n\ntest(\"AC-01 10% off at 100 and above\", () => {\n  assert.equal(discount(250), 225);\n});\ntest(\"AC-02 no discount below 100\", () => {\n  assert.equal(discount(99.99), 99.99);\n  assert.equal(discount(0), 0);\n});\ntest(\"AC-03 negative total is rejected\", () => {\n  assert.throws(() => discount(-1), RangeError);\n});\n"
       }
     },
     {

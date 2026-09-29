@@ -8,6 +8,7 @@ test("AC-01 10% off at 100 and above", () => {
 });
 test("AC-02 no discount below 100", () => {
   assert.equal(discount(99.99), 99.99);
+  assert.equal(discount(0), 0);
 });
 test("AC-03 negative total is rejected", () => {
   assert.throws(() => discount(-1), RangeError);
