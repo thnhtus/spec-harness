@@ -91,6 +91,8 @@ hai repo**.
 
 Preamble nêu **section**, không nêu cả file: sàn luật mọi subagent phải đọc nhân với mọi stage của mọi task, nên thừa một section là trả sáu lần. Đây là chỗ cắt rẻ nhất — đổi một dòng, kernel không đụng, "một nhà chuẩn" giữ nguyên. Con số thật khiêm tốn: chỉ `orchestrator` bỏ được §9 (~580 tok), sáu role kia đều dùng. Đừng cắt sâu hơn theo cảm tính — §8 dài nhất nhưng role nào cũng cần.
 
+`--pack` (#66) biến lát cắt đó thành thứ role nhận được: đúng các file và section ấy, một tool call thay vì mỗi file một lần Read — mỗi Read là một turn, và mỗi turn tính lại tiền cả context. Đo trên fixture eval: 26 KB (fsd_write) đến 43 KB (adversarial_review) phần luật + prose. `packCap.<stage>` làm pack fail (exit 1) khi phần đó phình, nên kernel phình hiện thành một lệnh đỏ chứ không phải trên hoá đơn. Phần git chỉ warning (`packWarn`): đó là diff, và cắt nó chính là điều Gate 5 không bao giờ được làm — mọi dòng `git status --porcelain` được giữ, file ngoài danh sách Gate 3 được đánh dấu, không bị bỏ.
+
 ## F. Tên tier không phụ thuộc CLI
 
 Tier → tên model thật tra ở `harness.config.json → models.<cli>`

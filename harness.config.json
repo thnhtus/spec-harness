@@ -112,6 +112,9 @@
     "notes": "06-Implementation-Notes.md",
     "adversarial": "09-Adversarial-Review.md"
   },
+  "_packCap": "--pack <task> <stage>: byte cap on the rules+prose part of a dispatch bundle (exit 1 over it). packWarn: warning cap on the git-output part. No default — a missing key exits 2.",
+  "packCap": { "fsd_write": 60000, "fsd_review": 60000, "technical_plan": 60000, "implementation": 60000, "adversarial_review": 60000 },
+  "packWarn": 20000,
   "_stampSince": "Tasks created on/after this date must have every telemetry window witnessed by a line in {tasksDir}/_stamp.log (written only by validate-tasks.mjs --advance). Older tasks: warning.",
   "stampSince": "2026-09-29",
   "acTrace": {

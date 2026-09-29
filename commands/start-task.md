@@ -214,15 +214,13 @@ same-named agent from `.gemini/agents/`, `.qwen/agents/`, `.factory/droids/`).
 Other CLIs: read the matching role file and run it in a clean context. Every
 subagent prompt **must** begin with this preamble:
 
-> Read, in order: `docs/Instructions.md`, then `docs/agents/SharedRules.md`
-> **§4 §5 §6 §8** (add **§9** unless you are `orchestrator` — it owns no AC),
-> then your role file named below. Run `node scripts/validate-tasks.mjs --contract <stage>`:
-> it prints every check your output must pass (files, caps, row formats, handoff).
-> Do not read `scripts/validate-tasks.mjs` — the contract is generated from it. Obey the MCP payload
-> discipline in SharedRules §8. Work only inside the task folder and the
-> files your role owns. **If this is a re-run (`attempts[<stage>] > 1`), read
-> only the newest `## Update` / `## Cập Nhật` block of `06`/`08`/`09` plus the last handoff —
-> not the whole history; earlier rounds are already distilled there.** When done,
+> First run `node scripts/validate-tasks.mjs --pack $TASK <stage>` (adversary: add
+> `--base <target-branch>`) and read its output once: it bundles `docs/Instructions.md`,
+> SharedRules §4 §5 §6 §8 §9, your role file, the `--contract` of every check your output
+> must pass, your input artifacts (a re-run gets only the newest `## Update` block) and the
+> last handoff. Do not open those files again, and do not read `scripts/validate-tasks.mjs`.
+> Obey the MCP payload discipline in SharedRules §8. Work only inside the task folder
+> and the files your role owns. When done,
 > append your `## Next Handoff` block (≤ 30 lines) to `$TASK/.agent-memory/{role}.md`
 > and update `$TASK/task.agent.json`. End your final message with: gate verdict
 > (PASS/FAIL), status set, and the one-line reason.

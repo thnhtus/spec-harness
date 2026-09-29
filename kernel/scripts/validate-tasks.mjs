@@ -2394,6 +2394,23 @@ if (args.has("--self-check")) {
     assert.ok(stageContract("adversarial_review").includes(GATE4_ARTIFACTS.adversarial), "09 reaches the adversary contract");
   }
 
+  // packParts / scopeFiles (#66): R3b — the adversary's view is unfiltered.
+  {
+    const plan = "## Files to change\n\n| File | T |\n| --- | --- |\n| `src/a.js` | new |\n\n## Test plan\n| `npm t` | x |\n";
+    assert.deepEqual(scopeFiles(plan), ["src/a.js"], "scopeFiles reads only the Files to change table");
+    const docs = { instructions: "I", shared: "## 4. H\nh4\n## 7. X\nx7\n## 9. AC\nac9\n", roleFile: "r.md", role: "R", project: "" };
+    const git = { base: "abc", stat: " src/a.js | 1 +\n", status: " M src/a.js\n?? src/evil.js\n?? docs/tasks/T/09.md\n" };
+    const p = packParts({ stage: "adversarial_review", role: "adversary", docs, git, scope: ["src/a.js"] });
+    for (const l of git.status.split("\n").filter(Boolean)) assert.ok(p.machine.includes(l), `R3b: status line "${l}" missing from the adversary pack`);
+    assert.ok(/\?\? src\/evil\.js\s+← not in 03/.test(p.machine) && !/ M src\/a\.js\s+←/.test(p.machine), "R3b: out-of-scope files are marked, in-scope ones are not");
+    assert.ok(p.rules.includes("h4") && p.rules.includes("ac9") && !p.rules.includes("x7"), "pack carries SharedRules §4/§9, not §7");
+    const hist = "first round\n## Update — r2\nsecond\n## Update — r3\nthird";
+    const re = packParts({ stage: "implementation", role: "implementer", attempt: 2, docs, artifacts: { "06.md": hist } }).prose;
+    assert.ok(re.includes("third") && !re.includes("second") && !re.includes("first round"), "a re-run pack keeps only the newest ## Update block");
+    assert.ok(packParts({ stage: "implementation", role: "implementer", attempt: 1, docs, artifacts: { "06.md": hist } }).prose.includes("first round"), "a first run keeps the whole artifact");
+    assert.ok(Number.isInteger(CFG.packWarn) && STAGE_ORDER.slice(1, -1).every((st) => Number.isInteger((CFG.packCap ?? {})[st])), "S6: config.packCap.<every dispatched stage> and packWarn are required");
+  }
+
   // stampDefects (#65): R5 witness, R5b clock order, R5c whole-minute smell.
   {
     const e1 = { stage: "fsd_write", attempt: 1, startedAt: "2026-09-29T01:02:03Z", endedAt: "2026-09-29T01:09:07Z" };
@@ -3367,6 +3384,99 @@ if (args.has("--contract")) {
   const c = stageContract(st);
   if (!c) { console.error(`✖ --contract: "${st}" is not a stage that produces output (${STAGE_ORDER.slice(0, -1).join(", ")})`); process.exit(2); }
   console.log(c);
+  process.exit(0);
+}
+
+// --pack (#66): one input bundle per dispatch. A role used to spend its first
+// turns Reading Instructions + SharedRules + its role file + each input artifact,
+// every Read a turn and every turn re-billed the whole context. The bundle is the
+// same reading in one call, sliced to what the preamble names (SharedRules §4 §5
+// §6 §8 [+§9]), with re-runs cut to the newest `## Update` block.
+//   parts: rules (fixed per kernel) · prose (task artifacts) · machine (git output).
+// Pure over its inputs so --self-check can assert the adversary's unfiltered view.
+export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, handoff = "", git = null, scope = [], contract = "" }) {
+  const sections = (t, want) => t.split(/^(?=## )/m).filter((s) => want.some((n) => s.startsWith(`## ${n}.`))).join("");
+  const rules = [
+    `# Pack: ${stage} · role ${role} · attempt ${attempt}`,
+    "Everything the preamble told you to read is below — do not open these files again.",
+    "", "## ⟪docs/Instructions.md⟫", docs.instructions,
+    "", "## ⟪docs/agents/SharedRules.md §4 §5 §6 §8 §9⟫", sections(docs.shared, [4, 5, 6, 8, 9]),
+    "", `## ⟪${docs.roleFile}⟫`, docs.role,
+    ...(docs.project ? ["", "## ⟪docs/agents/ProjectRules.md⟫", docs.project] : []),
+    "", contract,
+  ].join("\n");
+  const newest = (t) => { const u = t.split(UPDATE_HEADING); return u.length > 1 ? "## Update — " + u.at(-1) : t; };
+  const prose = [
+    ...Object.entries(artifacts).map(([f, t]) => `\n## ⟪${f}⟫${attempt > 1 && t.split(UPDATE_HEADING).length > 1 ? " (newest update block only — earlier rounds are distilled in the handoff)" : ""}\n${attempt > 1 ? newest(t) : t}`),
+    ...(handoff ? ["\n## ⟪last handoff⟫", handoff] : []),
+  ].join("\n");
+  let machine = "";
+  if (git) {
+    // Gate 5 reads the diff, not a description of it: NOTHING is filtered here.
+    // A file outside the Gate 3 list is marked, never dropped — dropping it is
+    // exactly the finding the adversary exists to make.
+    const mark = (p) => (scope.some((s) => p === s || p.endsWith("/" + s)) ? "" : "   ← not in 03 Files to change");
+    const lines = (t) => t.split("\n").filter(Boolean);
+    machine = [
+      `\n## ⟪git diff --stat ${git.base}⟫ (committed + uncommitted)`, "```", git.stat.trimEnd(), "```",
+      "\n## ⟪git status --porcelain --untracked-files=all⟫ (?? = untracked, never in the diff above)", "```",
+      ...lines(git.status).map((l) => l + mark(l.slice(3).split(" -> ").at(-1))), "```",
+      "Still re-run the ProjectRules §7 commands yourself and read the hunks you doubt — this is the file list, not the review.",
+    ].join("\n");
+  }
+  return { rules, prose, machine };
+}
+
+// The paths in 03's "Files to change" table: first cell of each row, backticks stripped.
+export function scopeFiles(plan = "") {
+  const sec = plan.split(/^## /m).find((s) => /^Files to change/i.test(s)) ?? "";
+  return sec.split("\n").map((l) => /^\|\s*`([^`]+)`\s*\|/.exec(l)?.[1]).filter(Boolean);
+}
+
+if (args.has("--pack")) {
+  const at = argv.indexOf("--pack");
+  const [taskArg, stage] = argv.slice(at + 1, at + 3);
+  const flag = (n) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : null);
+  const usage = (m) => { console.error(`✖ --pack: ${m}\n  usage: validate-tasks.mjs --pack <task-folder> <stage> [--base <ref>]`); process.exit(2); };
+  if (!taskArg || !stage || stage.startsWith("--")) usage("task folder and stage are required");
+  const cap = (CFG.packCap ?? {})[stage], warn = CFG.packWarn;
+  if (!Number.isInteger(cap) || !Number.isInteger(warn)) usage(`config.packCap.${stage} and config.packWarn (bytes) are required — no default`);
+  const dir = resolve(taskArg), jp = join(dir, "task.agent.json");
+  if (!existsSync(jp)) usage(`${jp} does not exist`);
+  const data = JSON.parse(readFileSync(jp, "utf8"));
+  const i = STAGE_ORDER.indexOf(stage);
+  // implementation has two roles; routing picks one by branchType (feature → implementer, bugfix → fixer).
+  const roleOf = (st) => (st === "implementation" ? CFG.routing?.map?.[data[CFG.routing.field]] : Object.keys(ROLE_STAGE).find((r) => ROLE_STAGE[r] === st));
+  const role = roleOf(stage);
+  // No pack for bootstrap: before it there is no task.agent.json to pack from.
+  if (!role) usage(`"${stage}" is not a dispatched stage`);
+  const D = join(REPO_ROOT, "docs"), rd = (p) => readFileSync(p, "utf8");
+  const roleFile = readdirSync(join(D, "agents")).find((f) => f.endsWith(".md") && new RegExp("— role `" + role + "`").test(rd(join(D, "agents", f))));
+  if (!roleFile) usage(`no docs/agents/*.md declares role \`${role}\``);
+  const heavy = ["implementation", "adversarial_review"].includes(stage);
+  const docs = { instructions: rd(join(D, "Instructions.md")), shared: rd(join(D, "agents/SharedRules.md")), roleFile: `docs/agents/${roleFile}`, role: rd(join(D, "agents", roleFile)),
+    project: heavy && existsSync(join(D, "agents/ProjectRules.md")) ? rd(join(D, "agents/ProjectRules.md")) : "" };
+  // Inputs = every file required up to this stage, minus the state file (the role edits it, not reads it whole).
+  const artifacts = {};
+  for (const r of REQUIRED_AT_STAGE) if (STAGE_ORDER.indexOf(r.stage) <= i) for (const f of r.files)
+    if (f !== "task.agent.json" && existsSync(join(dir, f))) artifacts[f] = rd(join(dir, f));
+  const prev = roleOf(STAGE_ORDER[i - 1]);
+  let handoff = "";
+  try { handoff = "### " + rd(join(dir, ".agent-memory", `${prev}.md`)).split(/^### /m).slice(1).pop(); } catch {}
+  let git = null;
+  if (stage === "adversarial_review") {
+    const base = flag("--base");
+    if (!base) usage("adversarial_review needs --base <target-branch> (the merge-base is taken against it)");
+    const g = (...a) => { const r = spawnSync("git", a, { cwd: REPO_ROOT, encoding: "utf8" }); if (r.status !== 0) usage(`git ${a.join(" ")}: ${r.stderr.trim()}`); return r.stdout; };
+    const mb = g("merge-base", base, "HEAD").trim();
+    git = { base: mb.slice(0, 12), stat: g("diff", "--stat", mb), status: g("status", "--porcelain", "--untracked-files=all") };
+  }
+  const p = packParts({ stage, role, attempt: (data.attempts ?? {})[stage] ?? 1, docs, artifacts, handoff, git, scope: scopeFiles(artifacts["03-Technical-Plan.md"]), contract: stageContract(stage) ?? "" });
+  const B = (s) => Buffer.byteLength(s);
+  process.stdout.write(p.rules + "\n" + p.prose + "\n" + p.machine + "\n");
+  console.error(`ℹ pack ${stage}: rules+prose ${B(p.rules) + B(p.prose)} B (cap ${cap}) · machine ${B(p.machine)} B (warn ${warn})`);
+  if (B(p.machine) > warn) console.error(`⚠ --pack: machine part ${B(p.machine)} B > packWarn ${warn} — a diff this wide usually means the task should be split`);
+  if (B(p.rules) + B(p.prose) > cap) { console.error(`✖ --pack: rules+prose ${B(p.rules) + B(p.prose)} B > packCap.${stage} ${cap} — the kernel or the artifacts grew; that is what this cap exists to catch`); process.exit(1); }
   process.exit(0);
 }
 

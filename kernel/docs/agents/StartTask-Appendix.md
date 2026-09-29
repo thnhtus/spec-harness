@@ -99,6 +99,8 @@ docs in the harness repo (layout C) = **two commits, two repos**.
 
 The preamble names **sections**, not whole files: the floor of rules every subagent reads is multiplied by every stage of every task, so one surplus section is a cost paid six times. This is the cheapest place to cut — one line changed, the kernel untouched, "one normative home" preserved. The real number is modest: only `orchestrator` can drop §9 (~580 tok), the other six roles all use it. Do not cut deeper on instinct — §8 is the longest section but every role needs it.
 
+`--pack` (#66) makes that slice the one the role receives: the same files and sections, one tool call instead of one Read per file — each Read is a turn, and every turn re-bills the whole context. Measured on the eval fixture: 26 KB (fsd_write) to 43 KB (adversarial_review) of rules + prose. `packCap.<stage>` fails the pack (exit 1) when that part grows, so a bloated kernel shows up as a red command instead of on the bill. The git part is only warned (`packWarn`): it is the diff, and cutting it is exactly what Gate 5 must never do — every `git status --porcelain` line is kept, a file outside the Gate 3 list is marked, never dropped.
+
 ## F. Tier names are CLI-agnostic
 
 Tier → real model name is looked up in `harness.config.json → models.<cli>`

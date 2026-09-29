@@ -576,7 +576,7 @@ const args = process.argv.slice(2);
 const EVAL = join(SRC, "kernel/eval/adversary");
 const EVAL_PROMPT = (task) =>
   `You are the \`adversary\` subagent (stage adversarial_review, Gate 5) for the task in \`${task}\`.\n` +
-  "Read, in order: `docs/Instructions.md`, then `docs/agents/SharedRules.md` §4 §5 §6 §8 §9, then `docs/agents/Adversary.md`. " +
+  `First run \`node scripts/validate-tasks.mjs --pack ${task} adversarial_review --base main\` and read its output once: it bundles \`docs/Instructions.md\`, SharedRules §4 §5 §6 §8 §9, \`docs/agents/Adversary.md\`, ProjectRules, the output contract, the task artifacts, the last handoff and the unfiltered git file list. Do not open those files again. ` +
   "Obey the artifact size caps in SharedRules §8. Work only inside the task folder. Write `09-Adversarial-Review.md` in the task folder, " +
   `append your \`## Next Handoff\` block to \`${task}/.agent-memory/adversary.md\`, update \`${task}/task.agent.json\`. ` +
   "Remind: default FAIL, re-run the ProjectRules §7 commands yourself instead of trusting `08`, do not touch `src/`. " +
@@ -1711,6 +1711,37 @@ if (args[0] === "--self-test") {
     rmSync(join(R, "docs/tasks/sprint-2"), { recursive: true, force: true });
     { const r = boot(full); if (r.status !== 1 || existsSync(join(T, "task.agent.json"))) fail("--bootstrap trên nhánh protected phải exit 1 trước khi ghi gì", r.status + r.stdout + r.stderr + g("rev-parse", "--abbrev-ref", "HEAD").stdout); }
     rmSync(dirname(R), { recursive: true, force: true });
+  }
+
+  // --pack (#66) e2e trên fixture adversary thật: file mới ngoài scope phải có mặt và
+  // bị đánh dấu; cap là exit code thật; thiếu key/base là lỗi dùng (2).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-pack-"));
+    const { P, T } = buildEvalCase(evalCases().find((c) => c.id === "clean"), root);
+    writeFileSync(join(P, "src/extra.js"), "x\n");
+    const pk = (...a) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, ...a], { cwd: P, encoding: "utf8" });
+    const r = pk("adversarial_review", "--base", "main");
+    if (r.status !== 0) fail("--pack adversarial_review trên fixture sạch không exit 0", r.stderr);
+    if (!/\?\? src\/extra\.js\s+← not in 03/.test(r.stdout)) fail("R3b: --pack làm mất hoặc không đánh dấu file untracked ngoài Gate 3", r.stdout.slice(-800));
+    if (!r.stdout.includes("⟪docs/agents/Adversary.md⟫") || !r.stdout.includes("⟪08-Test-Evidence.md⟫") || !/⟪last handoff⟫\n### .* — implementer/.test(r.stdout) || !r.stdout.includes("# Contract: adversarial_review")) fail("--pack thiếu role file / artifact / contract", r.stdout.slice(0, 400));
+    const jp = join(P, T, "task.agent.json"), jKeep = read(jp);
+    writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeep), branchType: "bugfix" }));
+    writeFileSync(join(P, T, ".agent-memory/fixer.md"), "### 2026-09-29 — fixer\n\n## Next Handoff\n- x\n");
+    const fx = pk("implementation"), ad = pk("adversarial_review", "--base", "main");
+    if (!fx.stdout.includes("⟪docs/agents/Fixer.md⟫") || !/⟪last handoff⟫\n### .* — fixer/.test(ad.stdout)) fail("--pack không đi theo routing: bugfix phải là Fixer.md và handoff của fixer", fx.stderr + ad.stderr);
+    writeFileSync(jp, jKeep);
+    if (pk("adversarial_review").status !== 2) fail("--pack adversarial_review thiếu --base phải exit 2");
+    if (pk("bootstrap").status !== 2) fail("--pack bootstrap (không dispatch) phải exit 2");
+    const cfgP = join(P, "harness.config.json"), keep = read(cfgP), cfg = JSON.parse(keep);
+    writeFileSync(cfgP, JSON.stringify({ ...cfg, packCap: { ...cfg.packCap, fsd_write: 1000 } }));
+    if (pk("fsd_write").status !== 1) fail("R3: rules+prose vượt packCap phải exit 1");
+    writeFileSync(cfgP, JSON.stringify({ ...cfg, packWarn: 10 }));
+    const w = pk("adversarial_review", "--base", "main");
+    if (w.status !== 0 || !/⚠ --pack: machine part/.test(w.stderr)) fail("R3a: phần git vượt packWarn phải là warning, exit 0", w.stderr);
+    delete cfg.packWarn; writeFileSync(cfgP, JSON.stringify(cfg));
+    if (pk("fsd_write").status !== 2) fail("S6: thiếu packWarn phải exit 2");
+    writeFileSync(cfgP, keep);
+    rmSync(root, { recursive: true, force: true });
   }
 
   // --advance (#61) e2e trên fixture adversary thật: đỏ và xanh, và nó ghi đúng thứ
