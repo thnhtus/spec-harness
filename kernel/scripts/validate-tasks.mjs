@@ -3415,7 +3415,7 @@ export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, hand
     // Gate 5 reads the diff, not a description of it: NOTHING is filtered here.
     // A file outside the Gate 3 list is marked, never dropped — dropping it is
     // exactly the finding the adversary exists to make.
-    const mark = (p) => (scope.some((s) => p === s || p.endsWith("/" + s)) ? "" : "   ← not in 03 Files to change");
+    const mark = (p) => (scope.some((s) => p === s || p.endsWith("/" + s)) ? "" : "   ← not in 03 Files to change: a finding unless 06 Plan Deviations declares it");
     const lines = (t) => t.split("\n").filter(Boolean);
     machine = [
       `\n## ⟪git diff --stat ${git.base}⟫ (committed + uncommitted)`, "```", git.stat.trimEnd(), "```",
