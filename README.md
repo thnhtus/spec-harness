@@ -348,6 +348,19 @@ node install.mjs --eval --agent 'claude -p --model sonnet --agent adversary --pe
 
 Một case đúng khi thoả cả ba: verdict khớp (`status` role đã set, không có thì đọc dòng `Result`), 09 nêu đúng chỗ lỗi (`mustMention`), và role không sửa file nào ngoài task folder. Sai ở bất kỳ case nào thì exit 1. Eval tốn tiền model nên chỉ chạy trước release, không chạy trong CI. Phần CI kiểm là `--self-test`: fixture sạch ở điểm bàn giao, tên case không lộ vào sandbox, scorer đỏ/xanh đúng, và một agent luôn-PASS thì bị `--eval` đánh trượt.
 
+### Đo thời gian/token — `--bench`
+
+Trước khi đổi thứ gì "cho nhanh hơn", đo. `--bench` dựng cùng sandbox với `--eval` rồi đọc số từ stream-json của agent: `duration_api_ms` (không phải wall clock — 503 retry làm wall clock vô nghĩa), cost, turns, tool calls, token theo model, và mỗi subagent đã dispatch.
+
+```bash
+# <!-- example -->  một stage (adversary, case clean), 3 lần, lấy median
+node install.mjs --bench --stage adversary --runs 3 --agent 'claude -p --agent adversary --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
+# cả pipeline: repo base + /start-task trên task mẫu (benchTask trong cases.json)
+node install.mjs --bench --stage full --agent 'claude -p --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
+```
+
+Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` → exit 2. Không có event `result` (CLI khác, hoặc quên `--output-format stream-json`) → exit 1, không đoán số.
+
 ## Vì sao có cái này
 
 Gate bằng văn bản ("agent phải chạy test trước khi báo xong") là gate mà model **chọn** tuân thủ. Gate bằng exit code thì không có chỗ để chọn. Harness gốc mất một thời gian mới học được điều đó; phần đắt nhất ở đây là `validate-tasks.mjs` + chuỗi truy vết AC, không phải mấy file markdown.

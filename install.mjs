@@ -535,7 +535,8 @@ function evalCases() {
 // Case → sandbox repo ở đúng điểm bàn giao cho adversary. Tên case KHÔNG đi vào
 // sandbox (tên thư mục, branch, commit message đều trung tính) — "out-of-scope"
 // nằm trong path là đưa đáp án cho model.
-function buildEvalCase(c, root) {
+// Repo đã cài harness + điền ProjectRules/config, commit "base" — trước task đầu.
+function buildBase(root) {
   const P = join(root, "shop");
   mkdirSync(P, { recursive: true });
   const git = (...a) => {
@@ -543,7 +544,6 @@ function buildEvalCase(c, root) {
     if (r.status !== 0) die(`✖ eval: git ${a.join(" ")}: ${r.stderr}`);
     return r.stdout.trim();
   };
-  const put = (files) => { for (const [f, s] of Object.entries(files ?? {})) { if (s === null) { rmSync(join(P, f)); continue; } mkdirSync(dirname(join(P, f)), { recursive: true }); writeFileSync(join(P, f), s); } };
   git("init", "-q", "-b", "main");
   cpSync(join(EVAL, "main"), P, { recursive: true });
   const quiet = console.log; console.log = () => {};
@@ -561,6 +561,12 @@ function buildEvalCase(c, root) {
     .replace("`<browser | api | cli | none>`", "`cli` (call the exported function)")
     .replace("`<path, e.g. e2e/ or test/integration/>`", "none"));
   git("add", "-A"); git("commit", "--no-verify", "-qm", "base");
+  return { P, git };
+}
+
+function buildEvalCase(c, root) {
+  const { P, git } = buildBase(root);
+  const put = (files) => { for (const [f, s] of Object.entries(files ?? {})) { if (s === null) { rmSync(join(P, f)); continue; } mkdirSync(dirname(join(P, f)), { recursive: true }); writeFileSync(join(P, f), s); } };
   const base = git("rev-parse", "--short", "HEAD");
 
   // step 0 thật: _triage.log là thứ validator đối chiếu vector bootstrap
@@ -642,8 +648,88 @@ if (args[0] === "--eval") {
   process.exit(bad ? 1 : 0);
 }
 
+// --bench (#59): thời gian/token của MỘT lần chạy thật, đọc từ stream-json của
+// agent CLI — không phải wall clock (một lần chạy thật: 8.6h wall, 37' API, phần
+// chênh là 503 retry). Thuần, để self-test chạy được trên fixture đóng hộp.
+// ponytail: chỉ hiểu stream-json của Claude Code (event "result" + <usage> trong
+// tool_result của subagent). CLI khác → "no result event", exit 1, không đoán số.
+function benchStats(text) {
+  const agents = new Map();
+  let result = null, tools = 0;
+  for (const l of text.split("\n")) {
+    let e; try { e = JSON.parse(l.slice(l.indexOf("{"))); } catch { continue; }
+    if (e.type === "result") result = e;
+    for (const c of e.message?.content ?? []) {
+      if (c.type === "tool_use") {
+        tools++;
+        if (c.name === "Agent" || c.name === "Task")
+          agents.set(c.id, { type: c.input?.subagent_type ?? "?", model: c.input?.model ?? "" });
+      }
+      if (c.type === "tool_result" && agents.has(c.tool_use_id)) {
+        const u = /<usage>([\s\S]*?)<\/usage>/.exec(JSON.stringify(c.content ?? "").replace(/\\n/g, "\n"));
+        const n = (k) => Number(new RegExp(k + ":\\s*(\\d+)").exec(u?.[1] ?? "")?.[1] ?? NaN);
+        Object.assign(agents.get(c.tool_use_id), { tokens: n("subagent_tokens"), tools: n("tool_uses"), ms: n("duration_ms") });
+      }
+    }
+  }
+  if (!result) return null;
+  const models = Object.fromEntries(Object.entries(result.modelUsage ?? {}).map(([m, u]) => [m, {
+    in: u.inputTokens, out: u.outputTokens, cacheRead: u.cacheReadInputTokens, cacheWrite: u.cacheCreationInputTokens,
+    thinking: u.thinkingTokens ?? 0, cost: u.costUSD }]));
+  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, models, agents: [...agents.values()] };
+}
+
+if (args[0] === "--bench") {
+  const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
+  const cmd = opt("--agent", null), stage = opt("--stage", "adversary"), runs = Number(opt("--runs", 1));
+  const perRun = Number(opt("--timeout", 3600)) * 1000;
+  const bench = JSON.parse(read(join(EVAL, "cases.json"))).benchTask;
+  if (!cmd || !["adversary", "full"].includes(stage) || !(runs >= 1))
+    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
+  const rows = [];
+  for (let i = 0; i < runs; i++) {
+    const root = mkdtempSync(join(tmpdir(), "sh-bench-"));
+    let P, prompt;
+    if (stage === "adversary") { const b = buildEvalCase(evalCases().find((c) => c.id === "clean"), root); P = b.P; prompt = EVAL_PROMPT(b.T); }
+    else { P = buildBase(root).P; prompt = bench; }
+    const r = spawnSync(cmd, { cwd: P, shell: true, input: prompt, encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
+    writeFileSync(join(root, "agent.log"), `${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
+    const st = benchStats(r.stdout ?? "");
+    rows.push(st);
+    if (!st) console.log(`✖ run ${i + 1}: no result event — --bench reads Claude stream-json (--output-format stream-json --verbose)${r.error ? "; " + (r.error.code ?? r.error.message) : ""}`);
+    else {
+      console.log(`✔ run ${i + 1}: api ${(st.apiMs / 60000).toFixed(1)}' · ${st.costUsd.toFixed(2)} · ${st.turns} turns · ${st.tools} tool calls`);
+      for (const [m, u] of Object.entries(st.models)) console.log(`    ${m.padEnd(34)} out ${u.out} (think ${u.thinking}) · cacheW ${u.cacheWrite} · ${u.cost.toFixed(2)}`);
+      for (const a of st.agents) console.log(`    ▸ ${a.type.padEnd(18)} ${(a.model || "-").padEnd(7)} ${a.tokens} tok · ${a.tools} tools · ${(a.ms / 1000).toFixed(0)}s`);
+    }
+    if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
+  }
+  const ok = rows.filter(Boolean);
+  const med = (k) => { const v = ok.map((r) => r[k]).sort((a, b) => a - b); return v[(v.length - 1) >> 1]; };
+  if (ok.length) console.log(`\nmedian of ${ok.length}: ` + JSON.stringify({ stage, apiMs: med("apiMs"), costUsd: med("costUsd"), turns: med("turns"), tools: med("tools") }));
+  process.exit(ok.length === rows.length ? 0 : 1);
+}
+
 if (args[0] === "--self-test") {
   const fail = (m, extra) => { console.error(`✖ self-test: ${m}`); if (extra) console.error(extra); process.exit(1); };
+  // --bench (#59): parser đọc đúng stream-json đóng hộp — số sai thì mọi so sánh trước/sau đều sai.
+  {
+    const ev = (o) => JSON.stringify(o);
+    const canned = [
+      "12:00:00 " + ev({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Agent", input: { subagent_type: "adversary", model: "mid" } }, { type: "tool_use", id: "t2", name: "Read", input: {} }] } }),
+      ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "done\n<usage>subagent_tokens: 1200\ntool_uses: 7\nduration_ms: 9000</usage>" }] }] } }),
+      "not json",
+      ev({ type: "result", duration_api_ms: 60000, total_cost_usd: 0.5, num_turns: 3, modelUsage: { m: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, thinkingTokens: 5, costUSD: 0.5 } } }),
+    ].join("\n");
+    const b = benchStats(canned);
+    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
+      agents: [{ type: "adversary", model: "mid", tokens: 1200, tools: 7, ms: 9000 }] };
+    if (JSON.stringify(b) !== JSON.stringify(want)) fail("benchStats đọc sai stream-json đóng hộp", JSON.stringify(b));
+    if (benchStats(canned.split("\n").slice(0, 3).join("\n")) !== null) fail("benchStats: không có event result mà vẫn ra số");
+    const u = spawnSync(process.execPath, [join(SRC, "install.mjs"), "--bench"], { encoding: "utf8" });
+    if (u.status !== 2) fail(`--bench không --agent phải exit 2, được ${u.status}`);
+    if (!JSON.parse(read(join(EVAL, "cases.json"))).benchTask?.startsWith("/start-task ")) fail("cases.json thiếu benchTask cho --bench --stage full");
+  }
   const git = (cwd, ...a) => spawnSync("git", a, { cwd, stdio: "ignore" });
   const mkrepo = (name) => {
     const d = join(mkdtempSync(join(tmpdir(), "sh-")), name);

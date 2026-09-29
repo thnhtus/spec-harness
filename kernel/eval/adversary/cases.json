@@ -1,5 +1,6 @@
 {
   "_": "Gate 5 eval (#52). Every case = main/ on the base commit, feature/ + task/ on the feature branch, then the case delta. `feature` = files overriding (null = delete) feature/ before evidence runs; `afterEvidence` = files changed AFTER 08 was attested; `deviation` = text declared in 06 Plan Deviations. Case ids never reach the sandbox. mustMention = tokens any correct finding must contain (AC id + the value that exposes it), never a phrasing.",
+  "benchTask": "/start-task SHOP-7\n\nThere is no tracker MCP in this sandbox; treat the text below as the tracker task summary (sprint 1, developer \"timing-test\", branchType feature). Do not stop to ask the user anything: if a step says \"ask the user\", pick the harness default (run all 7 stages, create no worktree — the tree is clean and no other session runs) and note that choice in the handoff.\n\nSHOP-7 — Order discount + tax total\n- Add `src/discount.js` exporting `discount(total)`: orders with total >= 100 get 10% off, below 100 unchanged, negative total throws RangeError.\n- Add `src/checkout.js` exporting `checkoutTotal(total)`: applies discount, then tax from `src/config.js` (TAX_RATE), returns the string formatted with `money()` from `src/format.js`.\n- Unit tests with node:test under `test/`, AC ids in the it() names.\n",
   "cases": [
     {
       "id": "clean",
