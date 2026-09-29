@@ -29,7 +29,7 @@
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
 
-import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, renameSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2386,6 +2386,27 @@ if (args.has("--self-check")) {
     assert.ok(stageContract("adversarial_review").includes(GATE4_ARTIFACTS.adversarial), "09 reaches the adversary contract");
   }
 
+  // bootstrapInputErrors (#64): R2 — every required field refused on its own.
+  {
+    const v = { scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 };
+    const ok = { taskId: "A-1", taskName: "x", slug: "a-b", trackerUrl: "https://t/1", branchType: "feature", branch: "feature/A-1-a-b", sprintNumber: 1, complexity: { vector: v } };
+    const be = (o, x = {}) => bootstrapInputErrors(o, { repos: [{ name: "r" }], branchTypes: ["feature", "bugfix"], urlPattern: "^https://t/", ...x });
+    assert.deepEqual(be(ok), [], "a complete input is accepted");
+    for (const k of ["taskId", "taskName", "slug", "trackerUrl", "branchType", "branch", "sprintNumber", "complexity"]) {
+      const o = { ...ok }; delete o[k];
+      assert.ok(be(o).length, `R2: missing ${k} is refused`);
+    }
+    assert.ok(be({ ...ok, slug: "Giảm-giá" }).length, "a slug with diacritics is refused");
+    assert.ok(be({ ...ok, branchType: "chore" }).length, "a branchType outside routing is refused");
+    assert.ok(be({ ...ok, trackerUrl: "https://evil/1" }).length, "a trackerUrl outside tracker.urlPattern is refused");
+    assert.ok(be({ ...ok, sprintNumber: 0 }).length, "sprintNumber 0 is refused");
+    assert.ok(be({ ...ok, complexity: { vector: { ...v, scope: 3 } } }).length, "an out-of-range vector is refused");
+    assert.ok(be(ok, { repos: [{ name: "r" }, { name: "s" }] }).length, "two repos and no repoName: ask, do not guess");
+    assert.deepEqual(be({ ...ok, repoName: "s" }, { repos: [{ name: "r" }, { name: "s" }] }), [], "a named repo from config.repos is accepted");
+    assert.ok(be({ ...ok, repoName: "zz" }).length, "a repoName outside config.repos is refused");
+    assert.ok(be(null).length && be([]).length, "a non-object is refused");
+  }
+
   // advanceDecision (#61): every exit of --advance, without a filesystem.
   {
     const o = { stages: ["bootstrap", "fsd_write", "implementation", "adversarial_review", "reviewing"],
@@ -3320,6 +3341,94 @@ if (args.has("--contract")) {
   const c = stageContract(st);
   if (!c) { console.error(`✖ --contract: "${st}" is not a stage that produces output (${STAGE_ORDER.slice(0, -1).join(", ")})`); process.exit(2); }
   console.log(c);
+  process.exit(0);
+}
+
+// --bootstrap (#64): stage 1 as a command. In the measured run the orchestrator
+// subagent spent 2:34 and 110k tokens copying templates and filling fields the
+// coordinator already held, then failed a gate on one of them. Every field here
+// is either given (the coordinator read the tracker in step 0) or derived by
+// config — nothing to judge, so nothing for a model to do.
+//   exit 0 = folder written and it validates · 1 = refused (exists, protected
+//   branch, no git user) or the written folder fails the validator · 2 = bad input.
+export function bootstrapInputErrors(o, { repos = CFG.repos ?? [], branchTypes = Object.keys(CFG.routing?.map ?? {}), urlPattern = CFG.tracker?.urlPattern } = {}) {
+  if (o === null || typeof o !== "object" || Array.isArray(o)) return ["input must be a JSON object"];
+  const out = [];
+  for (const k of ["taskId", "taskName", "slug", "trackerUrl", "branchType", "branch"])
+    if (typeof o[k] !== "string" || !o[k].trim()) out.push(`${k} is required (a non-empty string)`);
+  if (!Number.isInteger(o.sprintNumber) || o.sprintNumber < 1) out.push("sprintNumber is required (an integer ≥ 1)");
+  if (o.trackerUrl && urlPattern && !new RegExp(urlPattern).test(o.trackerUrl)) out.push(`trackerUrl does not match config.tracker.urlPattern /${urlPattern}/`);
+  if (o.slug && !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(o.slug)) out.push(`slug "${o.slug}" must be kebab-case a-z0-9 (no diacritics)`);
+  if (o.branchType && !branchTypes.includes(o.branchType)) out.push(`branchType "${o.branchType}" is not one of ${branchTypes.join("/")}`);
+  if (o.repoName === undefined && repos.length !== 1) out.push(`repoName is required when config.repos has ${repos.length} entries — ask, do not guess`);
+  else if (o.repoName !== undefined && !repos.some((r) => r.name === o.repoName)) out.push(`repoName "${o.repoName}" is not in config.repos`);
+  const c = o.complexity;
+  if (!c || typeof c !== "object") out.push("complexity { vector, counts, questions } is required — the step 0 measurements");
+  else out.push(...vectorInputErrors(c.vector).map((e) => `complexity.vector: ${e}`));
+  return out;
+}
+
+if (args.has("--bootstrap")) {
+  const raw = argv[argv.indexOf("--bootstrap") + 1];
+  let o;
+  try { o = JSON.parse(raw ?? ""); } catch { o = undefined; }
+  const bad = o === undefined ? ["--bootstrap needs one JSON object argument"] : bootstrapInputErrors(o);
+  if (bad.length) { console.error(`✖ --bootstrap rejected:\n  ${bad.join("\n  ")}`); process.exit(2); }
+  const repo = (CFG.repos ?? []).find((r) => r.name === (o.repoName ?? CFG.repos[0].name));
+  const git = (...a) => spawnSync("git", a, { cwd: resolve(REPO_ROOT, repo.path ?? "."), encoding: "utf8" }).stdout?.trim() ?? "";
+  const developer = git("config", "user.name");
+  // An empty user.name needs no check here: the schema refuses developer="" and the write rolls back.
+  const head = git("symbolic-ref", "--short", "HEAD"); // not rev-parse: that prints "HEAD" before the first commit
+  if (/^(main|master|develop|staging|release\/.*)$/.test(head)) { console.error(`✖ --bootstrap: the task repo is on protected branch "${head}" — branch off first (Orchestrator §2 #3)`); process.exit(1); }
+  const rel = `${CFG.tasksDir ?? "docs/tasks"}/${GROUP_PREFIX}${o.sprintNumber}/${o.taskId}-${o.slug}/`;
+  const dir = join(REPO_ROOT, rel), jp = join(dir, "task.agent.json");
+  // Never clobber: the lease (step 0b) may already have created the folder, not the state file.
+  if (existsSync(jp)) { console.error(`✖ --bootstrap: ${rel}task.agent.json already exists — resume the task, do not re-bootstrap it`); process.exit(1); }
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(dir, ".agent-memory"), { recursive: true });
+  const complexity = deriveComplexity(o.complexity.vector).label;
+  const now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  const fill = { taskId: o.taskId, taskName: o.taskName, trackerUrl: o.trackerUrl, sprintNumber: o.sprintNumber, developer, branchType: o.branchType, layer: repo.layer, taskComplexity: complexity };
+  const tpl = join(TASKS_DIR, "_templates"), made = [];
+  for (const f of readdirSync(tpl).filter((n) => /^\d\d-.*\.md$/.test(n)))
+    if (!existsSync(join(dir, f)) && made.push(join(dir, f)))
+      writeFileSync(join(dir, f), readFileSync(join(tpl, f), "utf8").replace(/\{(\w+)\}/g, (m, k) => (k in fill ? String(fill[k]) : m)).replaceAll("<repo>", repo.name));
+  const routed = CFG.routing?.map?.[o.branchType];
+  const impl = new Set(Object.values(CFG.routing?.map ?? {}));
+  const data = {
+    ...JSON.parse(readFileSync(join(tpl, "task.agent.json"), "utf8")),
+    ...fill, repoName: repo.name, currentStage: STAGE_ORDER[1], status: "in_progress",
+    branch: o.branch, branchActual: o.branchActual ?? (head && head !== o.branch ? head : ""), parentTaskId: o.parentTaskId ?? "",
+    docsPath: rel,
+    agents: Object.fromEntries((CFG.roles ?? []).map((r) => [r, { status: ROLE_STAGE[r] === STAGE_ORDER[0] ? "skipped" : impl.has(r) && r !== routed ? "not_applicable" : "pending" }])),
+    attempts: { [STAGE_ORDER[0]]: 1 },
+    complexity: { ...o.complexity, assessedAt: STAGE_ORDER[0] },
+    createdAt: now.slice(0, 10), updatedAt: now,
+  };
+  writeFileSync(jp + ".tmp", JSON.stringify(data, null, 2) + "\n");
+  renameSync(jp + ".tmp", jp);
+  made.push(jp);
+  const next = Object.keys(ROLE_STAGE).find((r) => ROLE_STAGE[r] === STAGE_ORDER[1]);
+  const role = Object.keys(ROLE_STAGE).find((r) => ROLE_STAGE[r] === STAGE_ORDER[0]);
+  const v = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--quiet", "--task", dir, "--config", CONFIG_PATH], { encoding: "utf8" });
+  process.stdout.write(v.stdout);
+  if (v.status !== 0) {
+    // Roll back what THIS run wrote, so a re-run is not refused as "already exists".
+    // .agent-memory stays: it may hold the lease.
+    for (const p of made) rmSync(p, { force: true });
+    process.stderr.write(v.stderr);
+    console.error(`✖ --bootstrap: the folder it wrote does not validate — rolled back ${made.length} file(s); fix the input and re-run`);
+    process.exit(1);
+  }
+  // After the verdict: a rolled-back run must not leave a handoff behind.
+  writeFileSync(join(dir, ".agent-memory", `${role}.md`),
+    `### ${now} — bootstrap (validate-tasks.mjs --bootstrap, no subagent)\n\n` +
+    `- Inputs: tracker ${o.trackerUrl} · repo ${repo.name} on \`${head}\` · developer ${developer}\n` +
+    `- Decisions: taskComplexity=${complexity} (derived from the vector) · branchType=${o.branchType} → ${routed}\n` +
+    `- Files touched: ${rel} (templates, task.agent.json)\n` +
+    `- Next agent: ${next}\n- Continue automation: yes\n`, { flag: "a" });
+
+  console.log(`✔ bootstrapped ${rel} · taskComplexity=${complexity} · next: ${next}`);
   process.exit(0);
 }
 

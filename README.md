@@ -363,10 +363,11 @@ Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` → exit 2. Không c
 
 ### Sổ sách do script làm — `--advance`, `--contract`
 
-Một lần chạy thật: coordinator tốn 16/39 lượt cho validate/attempts/lease/telemetry gõ tay (giờ bịa), các role grep `validate-tasks.mjs` 25 lần để đoán format. Giờ hai lệnh thay:
+Một lần chạy thật: coordinator tốn 16/39 lượt cho validate/attempts/lease/telemetry gõ tay (giờ bịa), các role grep `validate-tasks.mjs` 25 lần để đoán format. Giờ các lệnh này thay:
 
 ```bash
 node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli claude   # trước mỗi dispatch: validate + renew lease + attempts + telemetry giờ máy + handoff cuối; exit 1 = dừng
+node scripts/validate-tasks.mjs --bootstrap '<json>'                     # stage 1 không cần subagent: tạo folder từ _templates, validate, rollback nếu hỏng
 node scripts/validate-tasks.mjs --contract <stage>                       # mọi check output của stage phải qua, sinh từ chính hằng của validator
 ```
 

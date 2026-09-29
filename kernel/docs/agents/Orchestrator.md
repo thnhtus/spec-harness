@@ -3,6 +3,8 @@
 > **File:** `docs/agents/Orchestrator.md` — role `orchestrator`, stage `bootstrap` (the start of the chain).
 > **Read first:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md). Lifecycle/gates: [`../Agents.md`](../Agents.md).
 
+> **Usually not dispatched.** `node scripts/validate-tasks.mjs --bootstrap '<json>'` does §3–§5 in one command (templates, `task.agent.json`, `agents.orchestrator = skipped`, a machine-written handoff) and validates the result, rolling back on failure. This role runs only on a CLI that cannot execute it.
+
 The orchestrator is the harness's entry point. **It writes no code, reviews no FSD, plans nothing.** Its job: a safety pre-flight, scaffolding the task docs, and handing off to [`fsd-writer`](./FSDWriter.md).
 
 ---

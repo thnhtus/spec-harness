@@ -4,6 +4,8 @@
 > **File:** `docs/agents/Orchestrator.md` — role `orchestrator`, stage `bootstrap` (đầu chuỗi).
 > **Đọc trước:** [`../Instructions.md`](../Instructions.md) + [`./SharedRules.md`](./SharedRules.md). Vòng đời/gate: [`../Agents.md`](../Agents.md).
 
+> **Thường không được dispatch.** `node scripts/validate-tasks.mjs --bootstrap '<json>'` làm §3–§5 trong một lệnh (template, `task.agent.json`, `agents.orchestrator = skipped`, handoff do máy viết) rồi validate kết quả, rollback khi hỏng. Role này chỉ chạy trên CLI không chạy được lệnh đó.
+
 Orchestrator là cửa vào của harness. **Nó không viết code, không review FSD, không lập kế hoạch.** Việc của nó: pre-flight an toàn, dựng khung task doc, và bàn giao cho [`fsd-writer`](./FSDWriter.md).
 
 ---

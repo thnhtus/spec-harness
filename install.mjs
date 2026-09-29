@@ -1678,6 +1678,41 @@ if (args[0] === "--self-test") {
     rmSync(dirname(A), { recursive: true, force: true });
   }
 
+  // --bootstrap (#64) e2e, R2b: folder script tạo ra phải qua validator 0 lỗi, và
+  // một lần bị validator từ chối phải rollback để chạy lại được.
+  {
+    const R = mkrepo("boot");
+    installInto(R);
+    const g = (...a) => spawnSync("git", a, { cwd: R, encoding: "utf8" });
+    g("config", "user.name", "dev"); g("config", "user.email", "d@x"); g("checkout", "-q", "-b", "feature/x");
+    const cfgP = join(R, "harness.config.json"), cfg = JSON.parse(read(cfgP));
+    cfg.tracker.urlPattern = "^https://t\\.x/"; writeFileSync(cfgP, JSON.stringify(cfg));
+    const vec = { scope: 1, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 1, blastRadius: 0, reversibility: 1 };
+    const inp = { taskId: "B-1", taskName: "x", slug: "b", trackerUrl: "https://t.x/1", branchType: "bugfix", branch: "bugfix/B-1-b", sprintNumber: 2, complexity: { vector: vec } };
+    const boot = (o) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--bootstrap", JSON.stringify(o)], { cwd: R, encoding: "utf8" });
+    spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "B-1"], { cwd: R });
+    const T = join(R, "docs/tasks/sprint-2/B-1-b");
+    if (boot({ ...inp, slug: undefined }).status !== 2) fail("--bootstrap thiếu slug phải exit 2");
+    // no counts → the validator rejects the vector's evidence: must roll back, not leave a half task.
+    const bad = boot(inp);
+    if (bad.status !== 1 || existsSync(join(T, "task.agent.json")) || existsSync(join(T, "00-Metadata.md")) || existsSync(join(T, ".agent-memory/orchestrator.md")))
+      fail("--bootstrap bị validator từ chối phải exit 1 và rollback (task.agent.json/00/handoff)", bad.stdout + bad.stderr);
+    const full = { ...inp, complexity: { vector: vec, counts: { symbol: "discount", filesTouched: 2, existingTests: 0 }, questions: [] } };
+    const good = boot(full);
+    if (good.status !== 0) fail("R2b: --bootstrap với input đủ không exit 0", good.stdout + good.stderr);
+    const j = JSON.parse(read(join(T, "task.agent.json")));
+    if (j.agents.orchestrator.status !== "skipped" || j.agents.implementer.status !== "not_applicable" || j.agents.fixer.status !== "pending" || j.attempts.bootstrap !== 1 || j.currentStage !== "fsd_write")
+      fail("--bootstrap ghi sai agents/attempts/currentStage", JSON.stringify(j));
+    if (!/Next agent: fsd-writer/.test(read(join(T, ".agent-memory/orchestrator.md")))) fail("--bootstrap không để lại handoff máy viết");
+    if (read(join(T, "00-Metadata.md")).includes("{taskId}")) fail("--bootstrap không điền placeholder vào 00-Metadata.md");
+    const before = read(join(T, "task.agent.json"));
+    if (boot(full).status !== 1 || read(join(T, "task.agent.json")) !== before) fail("--bootstrap chạy lại trên task đã có phải exit 1 và không đụng task.agent.json");
+    g("checkout", "-q", "-b", "develop");
+    rmSync(join(R, "docs/tasks/sprint-2"), { recursive: true, force: true });
+    { const r = boot(full); if (r.status !== 1 || existsSync(join(T, "task.agent.json"))) fail("--bootstrap trên nhánh protected phải exit 1 trước khi ghi gì", r.status + r.stdout + r.stderr + g("rev-parse", "--abbrev-ref", "HEAD").stdout); }
+    rmSync(dirname(R), { recursive: true, force: true });
+  }
+
   // --advance (#61) e2e trên fixture adversary thật: đỏ và xanh, và nó ghi đúng thứ
   // coordinator từng ghi tay (attempts, telemetry có giờ máy, lease còn sống).
   {

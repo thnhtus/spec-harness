@@ -175,7 +175,7 @@ it is the only place that can answer "what was checked" after the session ends.
 
 The folder lives at `{tasksDir}/{groupPrefix}{n}/{taskId}-{slug}/` **in the
 harness repo** (the repo holding `harness.config.json`) — even when the code
-lives in another repo. `orchestrator` creates it at the bootstrap stage; you
+lives in another repo. `--bootstrap` creates it (stage 1); you
 only have to make sure it exists before any stage writes a file.
 
 There is no "small task, no folder needed" exception. With no evidence written,
@@ -232,8 +232,7 @@ Why sections, not files: [appendix §E](../../docs/agents/StartTask-Appendix.md#
 **The model comes from `--advance`** (below): it resolves `taskComplexity` × role ×
 attempt through `harness.config.json → baseTier` and `models.<cli>`, lifting one tier per
 retry (§5.3.1). Pass the model it prints when dispatching; it prints none → dispatch
-without one. Stage 1 (bootstrap) runs before the task exists: its model is
-`--tier orchestrator "$COMPLEXITY" --cli "$CLI"`, then set `attempts.bootstrap = 1`. `$CLI` = your CLI (`claude`, `codex`…). The table is for humans; `--preflight`
+without one. Stage 1 (bootstrap) is `--bootstrap`, not a subagent. `$CLI` = your CLI (`claude`, `codex`…). The table is for humans; `--preflight`
 checks it against the config ([appendix §F](../../docs/agents/StartTask-Appendix.md#f-tier-names-are-cli-agnostic), [§F2](../../docs/agents/StartTask-Appendix.md#f2-retry-tier-rationale)):
 
 | Role | trivial | normal | high |
@@ -247,7 +246,7 @@ checks it against the config ([appendix §F](../../docs/agents/StartTask-Appendi
 
 | # | Stage | subagent_type | Role file | Prompt adds |
 | --- | --- | --- | --- | --- |
-| 1 | bootstrap | `orchestrator` | `docs/agents/Orchestrator.md` | task URL/id; `repoName` + current branch; **vector + `taskComplexity` from step 0** (it writes them into `task.agent.json` + `00-Metadata.md`, it does not re-score from scratch) |
+| 1 | bootstrap | **none — a command** | — | `node scripts/validate-tasks.mjs --bootstrap '<json>'` with `taskId taskName slug trackerUrl branchType branch sprintNumber [repoName]` + `complexity {vector, counts, questions}` from step 0. Exit `1` = refused/rolled back, `2` = bad input. Only a CLI that cannot run it dispatches `orchestrator` |
 | 2 | fsd_write → Gate 1 | `fsd-writer` | `docs/agents/FSDWriter.md` | `docsPath` from step 1 |
 | 3 | fsd_review → Gate 2 | `fsd-reviewer` | `docs/agents/FSDReviewer.md` | `docsPath` |
 | 4 | technical_plan → Gate 3 | `technical-planner` | `docs/agents/TechnicalPlanner.md` | `docsPath` |
