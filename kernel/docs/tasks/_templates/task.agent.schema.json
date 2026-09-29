@@ -312,7 +312,7 @@
     },
     "telemetry": {
       "type": "array",
-      "description": "One entry per stage dispatch: which tier ran, how long, and how many input tokens it cost. No vendor usage object — just an integer the CLI already reports. Without it the harness cannot see its own cost: the per-stage rule floor is multiplied by every stage of every task, and a bloated kernel shows up only on the monthly bill, never attributable to a cause.",
+      "description": "One entry per stage dispatch: which tier ran, how long, and how many input tokens it cost. No vendor usage object — just an integer the CLI already reports. Without it the harness cannot see its own cost: the per-stage rule floor is multiplied by every stage of every task, and a bloated kernel shows up only on the monthly bill, never attributable to a cause. Written only by `validate-tasks.mjs --advance`: every startedAt/endedAt must have its line in {tasksDir}/_stamp.log (error for createdAt ≥ config.stampSince).",
       "items": {
         "type": "object",
         "required": [

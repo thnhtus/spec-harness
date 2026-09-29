@@ -1734,6 +1734,25 @@ if (args[0] === "--self-test") {
       fail("--advance ghi telemetry sai (stage/attempt/model adversary trivial=mid/giờ máy)", JSON.stringify(e));
     const v = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
     if (JSON.parse(v.stdout).results[0].errors.length) fail("task.agent.json --advance ghi ra không qua validator", v.stdout);
+    // #65 R5: the window --advance wrote is witnessed; the same entry typed by hand is not.
+    const stampLog = read(join(P, "docs/tasks/_stamp.log"));
+    if (!stampLog.includes(`${e.startedAt}\t${j.taskId}\tadversarial_review\t1\t-\tstart`)) fail("--advance không ghi dòng start vào _stamp.log", stampLog);
+    const jp = join(P, T, "task.agent.json"), keep = read(jp);
+    const cfgP = join(P, "harness.config.json");
+    writeFileSync(jp, JSON.stringify({ ...j, createdAt: JSON.parse(read(cfgP)).stampSince, telemetry: [...j.telemetry, { stage: "implementation", tier: "mid", attempt: 1, startedAt: "2026-09-29T01:00:00Z", endedAt: "2026-09-29T01:20:00Z" }] }));
+    const hand = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+    const herr = JSON.parse(hand.stdout).results[0].errors;
+    if (herr.filter((x) => /_stamp\.log/.test(x)).length !== 2) fail("R5: telemetry gõ tay (không có dòng _stamp.log) phải là 2 lỗi (start+end)", herr.join("\n"));
+    writeFileSync(jp, keep);
+    const cfgKeep = read(cfgP), cfgNo = JSON.parse(cfgKeep); delete cfgNo.stampSince; writeFileSync(cfgP, JSON.stringify(cfgNo));
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--task", T], { cwd: P }).status !== 2) fail("S6: thiếu config.stampSince phải exit 2");
+    writeFileSync(cfgP, cfgKeep);
+    // Closing a window is witnessed too: a re-dispatch ends the open entry, and the task still validates.
+    if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("--advance lần 2 cùng stage không exit 0");
+    const j2 = J();
+    if (!j2.telemetry[0].endedAt || !read(join(P, "docs/tasks/_stamp.log")).includes(`${j2.telemetry[0].endedAt}\t${j2.taskId}\tadversarial_review\t1\t-\tend`)) fail("--advance không đóng entry cũ bằng dòng end trong _stamp.log");
+    const v2 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+    if (JSON.parse(v2.stdout).results[0].errors.length) fail("telemetry do --advance ghi (2 entry) không qua R5", v2.stdout);
     rmSync(join(P, T, "08-Test-Evidence.md"));
     if (adv(T, "adversarial_review").status !== 1) fail("--advance bỏ qua verdict validator (08 bị xoá mà vẫn dispatch)");
     rmSync(root, { recursive: true, force: true });

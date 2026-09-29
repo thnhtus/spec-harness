@@ -200,6 +200,7 @@ Rồi tự chạy `--self-check` để xác nhận config không tự mâu thu�
 | --- | --- |
 | `.mcp.json` | URL server và OAuth là thứ chỉ bạn có. Sửa URL rồi gõ `/mcp` để login. Project-scoped, commit được cho cả team |
 | `acTrace.since` trong `harness.config.json` | Đặt = ngày bạn bật harness. Task cũ hơn mốc này chỉ warning, không chặn — nếu không thì mọi task có sẵn đều đỏ |
+| `stampSince` trong `harness.config.json` | Cùng ý với `acTrace.since`: task tạo từ ngày này phải có mọi khung telemetry khớp một dòng `_stamp.log` (chỉ `--advance` ghi). Thiếu key → exit 2 |
 
 Bản cài ra để `"evidenceMode": "attested"` — Gate 4/5 đòi evidence sinh bởi `scripts/run-evidence.mjs`, không nhận output dán tay. Hạ xuống `"legacy"` chỉ hợp lý khi di trú một repo đã có evidence viết tay; trường này **bắt buộc khai tường minh**, không có mặc định ngầm.
 

@@ -141,7 +141,9 @@ nâng tier với hạ tier.
 
 **`--advance` ghi `startedAt`/`endedAt`; bỏ `inputTokens`.** Một lần chạy thật cho thấy
 khung giờ gõ tay là bịa (phút tròn, không khớp đồng hồ nào), và validator không phân biệt
-được — nên script dispatch giờ đóng dấu bằng đồng hồ máy. Số token bạn không biết, và số đoán còn tệ hơn không có vì
+được — nên script dispatch giờ đóng dấu bằng đồng hồ máy, và ghi thêm từng mốc vào
+`{tasksDir}/_stamp.log`. Khung giờ không có dòng ở đó là lỗi (task tạo từ `config.stampSince`
+trở đi): nó được gõ, không được đo. Số token bạn không biết, và số đoán còn tệ hơn không có vì
 `--cost` sẽ in nó như sự thật. `scripts/collect-telemetry.mjs` điền nó ở step 7 bằng
 cách đọc session log của chính CLI, khớp theo cwd + nhánh + khung giờ đó. Đó là thứ
 duy nhất cho thấy **sức nặng của chính harness**: sàn luật mọi subagent phải đọc nhân

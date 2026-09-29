@@ -113,6 +113,8 @@
     "adversarial": "09-Adversarial-Review.md"
   },
   "_acTrace": "reachedIn[].cell = \"first\": AC phải đứng ở ô đầu một dòng bảng (dòng coverage riêng của nó), không chỉ xuất hiện ở ô nào đó. Bỏ key = ô nào cũng tính (03 để AC ở cột Related AC).",
+  "_stampSince": "Tasks created on/after this date must have every telemetry window witnessed by a line in {tasksDir}/_stamp.log (written only by validate-tasks.mjs --advance). Older tasks: warning.",
+  "stampSince": "2026-09-29",
   "acTrace": {
     "declaredIn": "02-FSD-Review.md",
     "reachedIn": [

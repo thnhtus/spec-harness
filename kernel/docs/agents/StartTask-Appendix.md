@@ -155,7 +155,9 @@ it cannot tell an escalation from a downgrade.
 
 **`--advance` writes `startedAt`/`endedAt`; leave `inputTokens` out.** A real run showed
 hand-typed windows invented (round minutes that matched no clock), and the validator
-could not tell — so the script that dispatches now stamps them with the machine's clock. You do not know the token
+could not tell — so the script that dispatches now stamps them with the machine's clock,
+and appends each one to `{tasksDir}/_stamp.log`. A window with no line there is an error
+(tasks created from `config.stampSince` on): it was typed, not measured. You do not know the token
 count, and a guessed one is worse than none because `--cost` will print it as
 fact. `scripts/collect-telemetry.mjs` fills it in at step 7 by reading the CLI's
 own session log, matched on cwd + branch + that window. That is the only thing

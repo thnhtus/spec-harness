@@ -417,6 +417,14 @@ const AC_REACHED = (AC_TRACE.reachedIn ?? []).map((e) =>
   typeof e === "string" ? { doc: e, fromStage: null } : e,
 );
 const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
+// S6: no default. A missing cutoff would silently turn every R5 error into a warning.
+const STAMP_SINCE = CFG.stampSince;
+const STAMP_LOG = join(TASKS_DIR, "_stamp.log");
+const needStampSince = (who) => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(STAMP_SINCE ?? "")) return;
+  console.error(`✖ ${who}: config.stampSince (YYYY-MM-DD) is required — tasks created from that date must have every telemetry window witnessed in _stamp.log`);
+  process.exit(2);
+};
 // Which stage each role owns, for cross-checking self-reported attempts against
 // handoff blocks. Implementers share one stage (routing picks which runs).
 const ROLE_STAGE = CFG.roleStage ?? {};
@@ -2386,6 +2394,24 @@ if (args.has("--self-check")) {
     assert.ok(stageContract("adversarial_review").includes(GATE4_ARTIFACTS.adversarial), "09 reaches the adversary contract");
   }
 
+  // stampDefects (#65): R5 witness, R5b clock order, R5c whole-minute smell.
+  {
+    const e1 = { stage: "fsd_write", attempt: 1, startedAt: "2026-09-29T01:02:03Z", endedAt: "2026-09-29T01:09:07Z" };
+    const log = "2026-09-29T01:02:03Z\tA-1\tfsd_write\t1\t-\tstart\n2026-09-29T01:09:07Z\tA-1\tfsd_write\t1\t-\tend\n";
+    const now = Date.parse("2026-09-29T02:00:00Z");
+    assert.deepEqual(stampDefects([e1], log, "A-1", now), { errors: [], warnings: [] }, "a witnessed window is clean");
+    assert.equal(stampDefects([e1], log.split("\n")[0], "A-1", now).errors.length, 1, "R5: an endedAt with no end line is an error");
+    assert.equal(stampDefects([e1], log, "B-2", now).errors.length, 2, "R5: another task's lines witness nothing");
+    assert.equal(stampDefects([{ ...e1, attempt: 2 }], log, "A-1", now).errors.length, 2, "R5: the attempt is part of the witness");
+    assert.equal(stampDefects([{ ...e1, stage: "fsd_review" }], log, "A-1", now).errors.length, 2, "R5: the stage is part of the witness");
+    assert.ok(stampDefects([e1], log, "A-1", Date.parse("2026-09-29T00:00:00Z")).errors.some((x) => /future/.test(x)), "R5b: startedAt in the future");
+    assert.ok(stampDefects([{ ...e1, endedAt: "2026-09-29T01:00:00Z" }], log, "A-1", now).errors.some((x) => /before startedAt/.test(x)), "R5b: endedAt before startedAt");
+    const round = [{ stage: "a", attempt: 1, startedAt: "2026-09-29T01:02:00Z" }, { stage: "b", attempt: 1, startedAt: "2026-09-29T01:05:00Z" }];
+    assert.equal(stampDefects(round, "", "A-1", now).warnings.length, 1, "R5c: all whole minutes is a warning");
+    assert.equal(stampDefects([round[0], e1], "", "A-1", now).warnings.length, 0, "R5c: one real second clears it");
+    assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(CFG.stampSince ?? ""), "S6: config.stampSince is required (YYYY-MM-DD)");
+  }
+
   // bootstrapInputErrors (#64): R2 — every required field refused on its own.
   {
     const v = { scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 };
@@ -3351,6 +3377,33 @@ if (args.has("--contract")) {
 // config — nothing to judge, so nothing for a model to do.
 //   exit 0 = folder written and it validates · 1 = refused (exists, protected
 //   branch, no git user) or the written folder fails the validator · 2 = bad input.
+// R5 (#65): telemetry windows must have a witness. In the SHOP-7 run the
+// coordinator typed round-minute windows no clock produced, and the validator
+// was green. --advance is now the only writer of telemetry, and it appends one
+// line per start/end to {tasksDir}/_stamp.log (tab-separated: ts, taskId, stage,
+// attempt, slice, start|end) — so an entry with no matching line was typed by hand.
+// ponytail: the log is a plain file inside tasksDir, so an agent that means it can
+// append a matching line too. This moves a typo-grade fake to a deliberate one,
+// the same ceiling as _triage.log. Upgrade path: sign lines with a per-install key.
+export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now()) {
+  const errors = [], warnings = [];
+  const seen = new Set(stampText.split("\n").map((l) => l.split("\t")).filter((c) => c.length >= 6 && c[1] === taskId)
+    .map(([ts, , stage, attempt, , kind]) => `${ts}|${stage}|${attempt}|${kind}`));
+  for (const e of telemetry) {
+    if (!e?.startedAt) continue;
+    const s = Date.parse(e.startedAt), en = Date.parse(e.endedAt ?? "");
+    if (s > now + 60000) errors.push(`telemetry ${e.stage}#${e.attempt}: startedAt ${e.startedAt} is in the future`);
+    if (Number.isFinite(en) && en < s) errors.push(`telemetry ${e.stage}#${e.attempt}: endedAt ${e.endedAt} is before startedAt ${e.startedAt}`);
+    for (const [kind, ts] of [["start", e.startedAt], ["end", e.endedAt]])
+      if (ts && !seen.has(`${ts}|${e.stage}|${e.attempt}|${kind}`))
+        errors.push(`telemetry ${e.stage}#${e.attempt}: ${kind === "start" ? "startedAt" : "endedAt"} ${ts} has no _stamp.log line — only \`--advance\` writes telemetry; a hand-typed window is a guess`);
+  }
+  const timed = telemetry.filter((e) => e?.startedAt);
+  if (timed.length >= 2 && timed.every((e) => /:00(\.0+)?Z$/.test(e.startedAt)))
+    warnings.push(`every telemetry startedAt is on a whole minute (${timed.length} entries) — a machine clock almost never does that`);
+  return { errors, warnings };
+}
+
 export function bootstrapInputErrors(o, { repos = CFG.repos ?? [], branchTypes = Object.keys(CFG.routing?.map ?? {}), urlPattern = CFG.tracker?.urlPattern } = {}) {
   if (o === null || typeof o !== "object" || Array.isArray(o)) return ["input must be a JSON object"];
   const out = [];
@@ -3455,14 +3508,18 @@ if (args.has("--advance")) {
     if (lease.status !== 0) { console.error(`✖ --advance: lease renew failed — ${lease.stderr.trim()} (step 0b acquires it)`); process.exit(1); }
   }
   const now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  needStampSince("--advance");
+  const { appendFileSync } = await import("node:fs");
+  const stamp = (e, kind) => appendFileSync(STAMP_LOG, `${now}\t${data.taskId}\t${e.stage}\t${e.attempt}\t${e.slice ?? "-"}\t${kind}\n`);
   data.telemetry ??= [];
-  for (const e of data.telemetry) if (e.startedAt && !e.endedAt) e.endedAt = now;
+  for (const e of data.telemetry) if (e.startedAt && !e.endedAt) { e.endedAt = now; stamp(e, "end"); }
   let r = {};
   if (d.attempt) {
     (data.attempts ??= {})[stage] = d.attempt;
     r = resolveTier(d.role, data.taskComplexity, d.attempt, CFG, cli);
     if (r.error) { console.error(`✖ --advance: ${r.error}`); process.exit(2); }
     data.telemetry.push({ stage, tier: r.model ? r.tier : "session-default", ...(r.model ? { model: r.model } : {}), attempt: d.attempt, startedAt: now });
+    stamp(data.telemetry.at(-1), "start");
   }
   data.updatedAt = now;
   // SharedRules §6: temp file in the same dir, then rename — a crash never leaves half a JSON.
@@ -4010,6 +4067,7 @@ if (TASK_ARG && !folders.length) {
   for (const n of [...near, ...stray]) console.error(`  did you mean: ${n}`);
   process.exit(2);
 }
+needStampSince("validate");
 const results = []; // {folder, errors:[], warnings:[]}
 if (!ONLY)
   for (const s of strayTaskFolders(TASKS_DIR, GROUP_PREFIX))
@@ -4197,6 +4255,14 @@ for (const { sprint, task, path } of folders) {
           `(${blind.map((e) => e.stage ?? "?").join(", ")}) — scripts/collect-telemetry.mjs matches on that window, ` +
           "so their cost can never be recovered",
       );
+  }
+
+  // R5/R5b/R5c (#65): a telemetry window with no _stamp.log witness was typed by hand.
+  {
+    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : "", data.taskId);
+    const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
+    for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
+    warnings.push(...st.warnings);
   }
 
   // Model cascade: a retry that re-ran on a cheaper tier than the attempt it is
