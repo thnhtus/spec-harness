@@ -698,8 +698,8 @@ if (args[0] === "--bench") {
     rows.push(st);
     if (!st) console.log(`✖ run ${i + 1}: no result event — --bench reads Claude stream-json (--output-format stream-json --verbose)${r.error ? "; " + (r.error.code ?? r.error.message) : ""}`);
     else {
-      console.log(`✔ run ${i + 1}: api ${(st.apiMs / 60000).toFixed(1)}' · ${st.costUsd.toFixed(2)} · ${st.turns} turns · ${st.tools} tool calls`);
-      for (const [m, u] of Object.entries(st.models)) console.log(`    ${m.padEnd(34)} out ${u.out} (think ${u.thinking}) · cacheW ${u.cacheWrite} · ${u.cost.toFixed(2)}`);
+      console.log(`✔ run ${i + 1}: api ${(st.apiMs / 60000).toFixed(1)}' · $${st.costUsd.toFixed(2)} · ${st.turns} turns · ${st.tools} tool calls`);
+      for (const [m, u] of Object.entries(st.models)) console.log(`    ${m.padEnd(34)} out ${u.out} (think ${u.thinking}) · cacheW ${u.cacheWrite} · $${u.cost.toFixed(2)}`);
       for (const a of st.agents) console.log(`    ▸ ${a.type.padEnd(18)} ${(a.model || "-").padEnd(7)} ${a.tokens} tok · ${a.tools} tools · ${(a.ms / 1000).toFixed(0)}s`);
     }
     if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
