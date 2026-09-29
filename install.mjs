@@ -338,6 +338,55 @@ function installAdapter(P, cli, keep) {
   }
 }
 
+// #60: a subagent's model is a file field on every CLI that has subagents, so its
+// base tier (the normal column of baseTier) is rendered into each CLI's own role
+// files from models.<cli>. The coordinator's model only on Claude: the one CLI with
+// a per-command `model` field — and it lasts for the current turn only.
+// ponytail: the retry cascade reaches only CLIs whose dispatch takes a model
+// parameter (Claude's Agent tool); elsewhere a retry reruns the rendered base tier.
+// Upgrade path: one role file per tier, once a CLI's dispatch is shown to pick by name.
+function renderModels(P, clis) {
+  let cfg; try { cfg = JSON.parse(read(join(P, "harness.config.json"))); } catch { return; }
+  const pick = (cli, tier) => { const e = cfg.models?.[cli]?.[tier]; return e && typeof e === "object" && e.model ? e.model : null; };
+  // One `model:` line in the frontmatter, replacing any earlier one.
+  const setFm = (file, model) => {
+    const t = read(file), m = /^---\n([\s\S]*?)\n---\n/.exec(t);
+    if (!m) return;
+    const fm = m[1].split("\n").filter((l) => !/^model:/.test(l));
+    writeFileSync(file, `---\n${[...fm, `model: ${model}`].join("\n")}\n---\n` + t.slice(m[0].length));
+  };
+  const dirs = { claude: ".claude/agents", ...Object.fromEntries(Object.entries(ADAPTERS).filter(([, a]) => a.roles).map(([c, a]) => [c, a.roles])) };
+  for (const cli of ["claude", ...clis]) {
+    for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md"))) {
+      const role = f.slice(0, -3), model = pick(cli, cfg.baseTier?.[role]?.[1]);
+      if (!model) continue;
+      if (cli === "codex") {
+        const p = join(P, ".codex/agents", `${role}.toml`);
+        // installCodex rewrote this file just above, so there is no old model line to drop.
+        if (existsSync(p)) writeFileSync(p, read(p).replace(/^(description = .*\n)/m, `$1model = ${toml(model)}\n`));
+      } else if (dirs[cli] && existsSync(join(P, dirs[cli], f))) setFm(join(P, dirs[cli], f), model);
+    }
+  }
+  const coord = pick("claude", cfg.coordinatorTier), cmd = join(P, ".claude/commands/start-task.md");
+  if (coord && existsSync(cmd)) setFm(cmd, coord);
+  if (clis.some((c) => c !== "claude"))
+    console.log(`ℹ coordinator (/start-task) chạy model của session trên CLI không phải Claude — mở session bằng model hạng "${cfg.coordinatorTier}"`);
+}
+
+// R1b (#60): lines of `text` naming a vendor model. A fenced block right after an
+// `<!-- example -->` line is exempt — docs may SHOW a config, not ship one.
+function vendorLeaks(text, tokens) {
+  const re = new RegExp(`(?<![\\w-])(?:${tokens.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "i");
+  const out = [];
+  let armed = false, exempt = false;
+  text.split("\n").forEach((l, i) => {
+    if (/^\s*```/.test(l)) { if (exempt) { exempt = false; return; } if (armed) { exempt = true; armed = false; return; } }
+    armed = /<!--\s*example\s*-->/.test(l) || (armed && !l.trim());
+    if (!exempt && re.test(l)) out.push(i + 1);
+  });
+  return out;
+}
+
 function installAgentsLayer(P, keep) {
   // Codex reads skills only from .agents/skills. Cursor also reads it, so the
   // two command-skills live here for both.
@@ -443,6 +492,7 @@ function installInto(P, clis = []) {
   if (layers.length) writeFileSync(join(P, GUARDS),
     JSON.stringify(Object.fromEntries(layers.map((c) => [c, ADAPTERS[c]?.file ?? null])), null, 2) + "\n");
 
+  renderModels(P, want);
   const hookSkipped = installHook(P);
   const signpost = installSignpost(P, wasEmpty);
 
@@ -1178,6 +1228,48 @@ if (args[0] === "--self-test") {
           (hits.length > 12 ? `\n  … và ${hits.length - 12} dòng nữa` : "") +
           `\n  Ngoại lệ có lý do thì thêm vào allowlist ngay trên, kèm lý do`,
       );
+  }
+
+  // #60: models.<cli> → the base tier lands in each CLI's role file, the
+  // coordinator tier only in Claude's command; a CLI with no key gets no model.
+  {
+    const R = mkrepo("models");
+    installInto(R);
+    const fm = (p) => (read(join(R, p)).match(/^model: (.*)$/gm) ?? []);
+    if (fm(".claude/agents/adversary.md").join() !== "model: sonnet") fail("models.claude.mid không render vào .claude/agents/adversary.md", fm(".claude/agents/adversary.md").join());
+    if (fm(".claude/agents/orchestrator.md").join() !== "model: haiku") fail("orchestrator (normal = cheap) phải render models.claude.cheap");
+    if (fm(".claude/commands/start-task.md").join() !== "model: sonnet") fail("coordinatorTier không render vào frontmatter /start-task");
+    const cfgP = join(R, "harness.config.json"), cfg = JSON.parse(read(cfgP));
+    cfg.models.codex = { cheap: { model: "c-lo" }, mid: { model: "c-mid" }, strong: { model: "c-hi" } };
+    cfg.models.claude.mid.model = "m2";
+    writeFileSync(cfgP, JSON.stringify(cfg));
+    installInto(R, ["codex", "gemini"]);
+    if (fm(".claude/agents/adversary.md").join() !== "model: m2") fail("cài lại không thay model cũ — hoặc ghi 2 dòng model:", fm(".claude/agents/adversary.md").join());
+    if (fm(".claude/commands/start-task.md").join() !== "model: m2") fail("cài lại không thay model trong /start-task");
+    const tomlM = read(join(R, ".codex/agents/adversary.toml")).match(/^model = .*$/gm) ?? [];
+    if (tomlM.join() !== 'model = "c-mid"') fail("models.codex không render vào .codex/agents/adversary.toml", tomlM.join());
+    if (fm(".gemini/agents/adversary.md").length) fail("gemini không có models.gemini mà vẫn nhận model — đoán tên model của vendor khác");
+    rmSync(dirname(R), { recursive: true, force: true });
+  }
+
+  // #60 R1b: the kernel names tiers, never a vendor model — "what if I don't use
+  // Claude?" must be answered by config, not by editing prose in five files.
+  {
+    const tokens = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))).vendorModelTokens;
+    if (!Array.isArray(tokens) || !tokens.length) fail("adapters/example/harness.config.json thiếu vendorModelTokens — R1b không có gì để quét");
+    const hits = [];
+    for (const r of ["commands", "agents", "kernel"]) for (const f of walk(join(SRC, r)))
+      for (const n of vendorLeaks(read(f), tokens)) hits.push(`${f.slice(SRC.length + 1)}:${n}`);
+    if (hits.length) fail(`tên model vendor trong kernel — chỉ harness.config.json → models.<cli> được gọi tên model (R1b):\n  ${hits.join("\n  ")}`);
+    const t = ["opus", "gpt-"];
+    if (vendorLeaks("a\nuse opus here", t).join() !== "2") fail("vendorLeaks bỏ sót dòng có tên model");
+    if (vendorLeaks("corpus\nmy-opus", t).length) fail("vendorLeaks bắt nhầm giữa từ");
+    if (vendorLeaks("<!-- example -->\n```json\ngpt-5\n```\ngpt-5", t).join() !== "5") fail("vendorLeaks: fence <!-- example --> phải miễn, dòng sau fence thì không");
+    if (vendorLeaks("```json\ngpt-5\n```", t).join() !== "2") fail("vendorLeaks: fence không có marker không được miễn");
+    // The validator ships alone and cannot import CLIS; the two lists must not drift.
+    const vs = read(join(SRC, "kernel/scripts/validate-tasks.mjs"));
+    const vc = JSON.parse(/export const CLI_NAMES = (\[[\s\S]*?\]);/.exec(vs)[1].replace(/\s+/g, " "));
+    if (vc.join() !== CLIS.join()) fail(`validate-tasks CLI_NAMES lệch install.mjs CLIS: [${vc}] vs [${CLIS}]`);
   }
 
   // #49: Node is the only runtime the installer checks for. A python step in a

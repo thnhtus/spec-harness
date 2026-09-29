@@ -245,13 +245,12 @@ read-and-copy work, strong for judgement:
 `harness.config.json → baseTier`, and the script applies the §5.3.1 cascade too:
 
 ```bash
-MODEL=$(node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" "${ATTEMPT:-1}")
+MODEL=$(node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" "${ATTEMPT:-1}" --cli "$CLI")
 ```
 
-It prints the bare model name (empty when `config.models` is `{}` — then dispatch
-without a model), and exits `2` on an unknown role or complexity rather than
-falling back to a default. The table above is printed for humans; `--preflight`
-checks it against the config, so the two cannot drift. Tiers map to model names in `harness.config.json → models` ([appendix §F](../../docs/agents/StartTask-Appendix.md#f-tier-names-are-cli-agnostic)).
+`$CLI` = your CLI (`claude`, `codex`…). Prints the bare model (empty when `models.<cli>` is
+absent — dispatch without one); exits `2` on an unknown role, complexity or CLI. The table
+above is for humans; `--preflight` checks it against the config. Tiers map to model names in `harness.config.json → models.<cli>` ([appendix §F](../../docs/agents/StartTask-Appendix.md#f-tier-names-are-cli-agnostic)).
 
 **On a retry, lift the tier one notch** ([`docs/Agents.md` §5.3.1](../../docs/Agents.md)).
 The table above is the tier for **attempt 1**. A stage that bounced and gets
@@ -259,10 +258,10 @@ re-dispatched runs one notch higher, capped at `strong`:
 
 ```bash
 # same command, with the attempt number -- it applies the cascade itself
-node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" 2
+node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" 2 --cli "$CLI"
 ```
 
-Never retry on the same or a lower tier; `models: {}` or no per-subagent model → skip, but never drop `fsd-reviewer`/`adversary` ([appendix §F2](../../docs/agents/StartTask-Appendix.md#f2-retry-tier-rationale)).
+Never retry on the same or a lower tier; no `models.<cli>` or no per-subagent model → skip, but never drop `fsd-reviewer`/`adversary` ([appendix §F2](../../docs/agents/StartTask-Appendix.md#f2-retry-tier-rationale)).
 
 | # | Stage | subagent_type | Role file | Prompt adds |
 | --- | --- | --- | --- | --- |
@@ -302,7 +301,7 @@ Without it a live lease expires mid-task ([appendix §H](../../docs/agents/Start
 tier the stage just ran on:
 
 ```json
-{ "stage": "implementation", "tier": "strong", "model": "opus", "attempt": 2,
+{ "stage": "implementation", "tier": "strong", "model": "<what --tier printed>", "attempt": 2,
   "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z" }
 ```
 

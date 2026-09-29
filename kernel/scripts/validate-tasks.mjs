@@ -675,7 +675,38 @@ const TIER_ORDER = ["cheap", "mid", "strong"];
 // the coordinator. Prose in three files that no check ever read is the same
 // drift shape `docEnums` exists to end -- and here the drift silently routes
 // money. Returns { tier, model, base } or { error }.
-export function resolveTier(role, complexity, attempt = 1, cfg = CFG) {
+// Every CLI install.mjs --cli knows, plus claude. install --self-test asserts this
+// equals install.mjs CLIS: the validator ships alone, it cannot import the installer.
+export const CLI_NAMES = ["claude", "codex", "cursor", "gemini", "qwen", "copilot", "droid", "windsurf", "devin", "kiro",
+  "antigravity", "cline", "goose", "codewhale", "opencode", "pi", "hermes", "amp"];
+
+// config.models is per CLI: { "<cli>": { cheap|mid|strong: { model, effort? } } }.
+// The kernel never names a vendor model; each CLI's names live under its own key,
+// so switching CLI is adding a key, not rewriting one shared map.
+export function modelsDefects(cfg = CFG) {
+  const errors = [], warnings = [];
+  const m = cfg.models ?? {};
+  if (!TIER_ORDER.includes(cfg.coordinatorTier))
+    errors.push(`config.coordinatorTier must be one of ${TIER_ORDER.join("/")}, got ${JSON.stringify(cfg.coordinatorTier)} — add "coordinatorTier": "mid" to harness.config.json`);
+  if ((cfg.baseTier ?? {}).coordinator)
+    errors.push("config.baseTier.coordinator: the coordinator's model is fixed when the session opens, before complexity exists — use config.coordinatorTier");
+  if (Object.values(m).some((v) => typeof v === "string")) {
+    warnings.push('config.models is the old flat { cheap: "…" } map — re-declare it per CLI: { "<cli>": { "cheap": { "model": "…" }, … } }. Until then nothing is routed.');
+    return { errors, warnings };
+  }
+  for (const [cli, tiers] of Object.entries(m)) {
+    if (!CLI_NAMES.includes(cli)) { errors.push(`config.models.${cli}: not a known CLI (${CLI_NAMES.join(", ")})`); continue; }
+    for (const k of Object.keys(tiers ?? {})) if (!TIER_ORDER.includes(k)) errors.push(`config.models.${cli}.${k}: not a tier`);
+    for (const t of TIER_ORDER) {
+      const e = tiers?.[t];
+      if (!e || typeof e.model !== "string" || !e.model) { errors.push(`config.models.${cli}.${t}.model is required once models.${cli} is set`); continue; }
+      for (const k of Object.keys(e)) if (!["model", "effort"].includes(k)) errors.push(`config.models.${cli}.${t}.${k}: unknown key (model, effort)`);
+    }
+  }
+  return { errors, warnings };
+}
+
+export function resolveTier(role, complexity, attempt = 1, cfg = CFG, cli = null) {
   const RANKS = ["trivial", "normal", "high"];
   const row = (cfg.baseTier ?? {})[role];
   if (!row) return { error: `config.baseTier has no row for role "${role}" (§5.3)` };
@@ -686,8 +717,9 @@ export function resolveTier(role, complexity, attempt = 1, cfg = CFG) {
   if (!Number.isInteger(attempt) || attempt < 1) return { error: `attempt must be an integer >= 1, got ${attempt}` };
   // §5.3.1: each extra attempt lifts one notch, capped at strong.
   const tier = TIER_ORDER[Math.min(TIER_ORDER.length - 1, TIER_ORDER.indexOf(base) + attempt - 1)];
-  // models empty = the CLI routes nothing; say so rather than inventing a name.
-  const model = Object.keys(cfg.models ?? {}).length ? cfg.models[tier] : null;
+  // No entry for this CLI = it routes nothing; say so rather than inventing a name.
+  const e = (cfg.models ?? {})[cli]?.[tier];
+  const model = typeof e === "object" && e?.model ? e.model : null;
   return { tier, model, base };
 }
 
@@ -1760,9 +1792,11 @@ if (args.has("--self-check")) {
   // models: tier -> whatever the host CLI calls it. The kernel never names a
   // vendor model; a Codex/Gemini user maps the same three tiers to their own.
   // Empty object is legal: it means "let the harness use its default".
-  for (const tier of ["cheap", "mid", "strong"])
-    if (CFG.models && Object.keys(CFG.models).length)
-      assert.ok(CFG.models[tier], `config.models.${tier} is required once config.models is set`);
+  {
+    const md = modelsDefects();
+    assert.ok(!md.errors.length, md.errors.join("\n"));
+    for (const w of md.warnings) console.warn(`⚠ ${w}`);
+  }
 
   assert.ok(CFG.repos?.length, 'config.repos is required (at least one { name, path, layer })');
   for (const r of CFG.repos) {
@@ -2284,17 +2318,33 @@ if (args.has("--self-check")) {
   // is that nobody transcribes a markdown table into a dispatch call any more,
   // so the cases that matter are the ceiling and the refusal to guess.
   {
-    const cfg = { baseTier: { implementer: ["mid", "mid", "strong"], "fsd-writer": ["cheap", "mid", "mid"] }, models: { cheap: "h", mid: "s", strong: "o" } };
-    const rt = (r, c, a) => resolveTier(r, c, a, cfg);
+    const M = (a, b, c) => ({ cheap: { model: a }, mid: { model: b }, strong: { model: c } });
+    const cfg = { coordinatorTier: "mid", baseTier: { implementer: ["mid", "mid", "strong"], "fsd-writer": ["cheap", "mid", "mid"] }, models: { claude: M("h", "s", "o"), codex: M("x", "y", "z") } };
+    const rt = (r, c, a) => resolveTier(r, c, a, cfg, "claude");
     assert.equal(rt("implementer", "normal", 1).tier, "mid", "attempt 1 is the base tier");
     assert.equal(rt("implementer", "normal", 2).tier, "strong", "attempt 2 lifts one notch");
     assert.equal(rt("implementer", "normal", 9).tier, "strong", "the cascade is capped at strong, it does not run off the end");
     assert.equal(rt("fsd-writer", "trivial", 2).tier, "mid", "cheap -> mid on retry");
     assert.equal(rt("fsd-writer", "trivial", 3).tier, "strong", "two bounces reach the ceiling");
-    assert.equal(rt("implementer", "high", 1).model, "o", "the tier is mapped through config.models");
+    assert.equal(rt("implementer", "high", 1).model, "o", "the tier is mapped through config.models.<cli>");
+    assert.equal(resolveTier("implementer", "high", 1, cfg, "codex").model, "z", "another CLI resolves through its own key");
+    assert.equal(resolveTier("implementer", "high", 1, cfg, "gemini").model, null, "a CLI with no models key routes nothing");
+    assert.equal(resolveTier("implementer", "high", 1, { ...cfg, models: { cheap: "h", mid: "s", strong: "o" } }, "claude").model, null, "the flat legacy map is never mapped to a vendor");
+    // modelsDefects: R1a/R1a'/R1c are errors, R1d a warning.
+    const md = (c) => modelsDefects({ ...cfg, ...c });
+    assert.deepEqual(md({}), { errors: [], warnings: [] }, "a well-formed per-CLI config is clean");
+    assert.ok(md({ coordinatorTier: undefined }).errors.length, "R1a: missing coordinatorTier is an error");
+    assert.ok(md({ coordinatorTier: "huge" }).errors.length, "R1a: a coordinatorTier outside the tiers is an error");
+    assert.ok(md({ baseTier: { ...cfg.baseTier, coordinator: ["mid", "mid", "mid"] } }).errors.length, "R1a': baseTier.coordinator is an error");
+    assert.ok(md({ models: { vscode: M("a", "b", "c") } }).errors.length, "R1c: an unknown CLI key is an error");
+    assert.ok(md({ models: { claude: { cheap: { model: "a" }, mid: { model: "b" } } } }).errors.length, "R1c: a missing tier is an error");
+    assert.ok(md({ models: { claude: { ...M("a", "b", "c"), huge: { model: "d" } } } }).errors.length, "R1c: an unknown tier key is an error");
+    assert.ok(md({ models: { claude: { ...M("a", "b", "c"), mid: { model: "b", temp: 1 } } } }).errors.length, "R1c: an unknown entry key is an error");
+    const flat = md({ models: { cheap: "h", mid: "s", strong: "o" } });
+    assert.ok(!flat.errors.length && flat.warnings.length, "R1d: the flat legacy map is a warning, not an error");
     assert.equal(rt("implementer", "normal", 1).base, "mid", "base is reported separately from the escalated tier");
     // A CLI that routes nothing must not be handed an invented model name.
-    assert.equal(resolveTier("implementer", "normal", 1, { ...cfg, models: {} }).model, null, "empty config.models resolves to no model");
+    assert.equal(resolveTier("implementer", "normal", 1, { ...cfg, models: {} }, "claude").model, null, "empty config.models resolves to no model");
     // Refusals: every one of these used to be a silent wrong dispatch.
     assert.ok(rt("nobody", "normal", 1).error, "an unknown role is an error, not a default tier");
     assert.ok(rt("implementer", "medium", 1).error, "a taskComplexity outside the three ranks is rejected");
@@ -3128,12 +3178,16 @@ if (args.has("--tier")) {
   const at = argv.indexOf("--tier");
   const [role, complexity, attemptArg] = argv.slice(at + 1, at + 4);
   const attempt = attemptArg === undefined || attemptArg.startsWith("--") ? 1 : Number(attemptArg);
-  const r = resolveTier(role, complexity, attempt);
+  // R1e: the same tier is a different model on each CLI, so the CLI is part of the question.
+  const cli = argv.includes("--cli") ? argv[argv.indexOf("--cli") + 1] : null;
+  const r = CLI_NAMES.includes(cli) ? resolveTier(role, complexity, attempt, CFG, cli)
+    : { error: cli ? `--cli "${cli}" is not one of ${CLI_NAMES.join(", ")}` : "--cli <name> is required (models are declared per CLI)" };
   if (r.error) {
     console.error(`✖ --tier: ${r.error}`);
-    console.error("  usage: validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt]");
+    console.error("  usage: validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt] --cli <name>");
     process.exit(2);
   }
+  if (!r.model) console.error(`⚠ --tier: config.models.${cli} has no ${r.tier} entry — dispatch with no model (session default)`);
   if (AS_JSON) console.log(JSON.stringify({ role, complexity, attempt, ...r }));
   // Bare model name on stdout: the coordinator interpolates it straight into the
   // dispatch. `null` when config.models is empty -- print nothing, so a shell

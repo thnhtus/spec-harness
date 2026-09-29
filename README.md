@@ -100,7 +100,7 @@ adapters/                            ← phần mỗi project tự viết
 
 Kernel không biết project dùng stack nào, tracker nào, đặt tên nhánh ra sao. Bốn mục đó — và chỉ bốn mục đó — nằm ở `ProjectRules.md`. Số mục giữ nguyên **1/2/3/7** để mọi tham chiếu chéo `SharedRules §n` trong kernel vẫn trỏ đúng.
 
-Kernel cũng không gắn với một CLI: file role không khai `model:`, không hardcode tên tool MCP. Đổi Claude Code ↔ Codex ↔ Cursor thì cài thêm lớp bằng `--cli` và sửa `models` trong config, không đụng kernel.
+Kernel cũng không gắn với một CLI: source chỉ nói tên hạng (`cheap`/`mid`/`strong`), không hardcode tên model hay tên tool MCP. Tên model thật khai theo từng CLI trong `models.<cli>` của config; installer ghi `model:` vào file role của đúng CLI đó. Thêm Codex hay Gemini thì cài thêm lớp bằng `--cli` và thêm key `models.codex`, không đụng kernel.
 
 ## Đặt harness ở đâu
 
@@ -190,7 +190,7 @@ Installer chỉ chép file. Nó **không** biết project bạn dùng stack gì,
 | Điền vào | Gì |
 | --- | --- |
 | `docs/agents/ProjectRules.md` | §1 nguồn truth MCP · §2 guardrail source · §3 quy tắc nhánh · §7 lệnh kiểm tra |
-| `harness.config.json` | `repos`, `layers`, `models`, `docLanguage`, `evidenceCommandPattern` + `evidenceSampleCommand` |
+| `harness.config.json` | `repos`, `layers`, `models.<cli>`, `coordinatorTier`, `docLanguage`, `evidenceCommandPattern` + `evidenceSampleCommand` |
 
 Rồi tự chạy `--self-check` để xác nhận config không tự mâu thuẫn.
 

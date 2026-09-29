@@ -255,13 +255,16 @@ Gate 1 và 2 vẫn phải PASS ở cả ba mức.
 
 ### 5.3. Chọn model theo **hạng**, không theo tên nhà cung cấp
 
-Kernel không biết bạn chạy Claude Code, Codex hay CLI khác — nên nó chỉ gọi tên **ba hạng**. Ánh xạ hạng → model thật nằm ở `harness.config.json → models`:
+Kernel không biết bạn chạy Claude Code, Codex hay CLI khác — nên nó chỉ gọi tên **ba hạng**. Ánh xạ hạng → model thật nằm ở `harness.config.json → models`, **mỗi CLI một key**:
 
+<!-- example -->
 ```json
-"models": { "cheap": "haiku", "mid": "sonnet", "strong": "opus" }
+"models": { "<cli>": { "cheap": { "model": "<tên>" }, "mid": { "model": "<tên>" }, "strong": { "model": "<tên>" } } }
 ```
 
-Đổi CLI nghĩa là sửa đúng ba dòng đó (`gpt-5-mini` / `gpt-5` / `gpt-5-pro`, `gemini-flash` / `gemini-pro` / …). Bảng dưới không đổi. Để `models` là `{}` nghĩa là dùng mặc định của CLI và không route gì cả.
+Dùng CLI khác nghĩa là thêm key của nó — bảng dưới không đổi, và tên của CLI này không đè tên của CLI kia. CLI không có key thì không route gì: mọi stage chạy model của session. Kernel không bao giờ gọi tên model; `install --self-test` fail khi một token trong `vendorModelTokens` nằm ngoài fence `<!-- example -->`.
+
+Coordinator không phải một dòng của bảng này: model của nó chốt lúc mở session, trước khi có complexity. `coordinatorTier` (một giá trị, `mid`) được render vào frontmatter `/start-task` của Claude — CLI duy nhất có `model` theo command, và chỉ hiệu lực trong turn hiện tại. CLI khác: mở session bằng model hạng đó.
 
 Nguyên tắc: **hạng rẻ cho việc đọc-và-chép, hạng mạnh cho việc phán đoán.** Stage nào sai thì mọi thứ phía sau sai theo — đó là chỗ đáng trả tiền.
 
@@ -279,12 +282,12 @@ Nguyên tắc: **hạng rẻ cho việc đọc-và-chép, hạng mạnh cho vi�
 **Bảng này là dữ liệu, không phải văn xuôi.** Nó nằm ở `harness.config.json → baseTier` (`role: [trivial, normal, high]`), và coordinator hỏi nó thay vì đọc:
 
 ```bash
-node scripts/validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt]   # in ra tên model
+node scripts/validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt] --cli <cli>   # in ra tên model
 ```
 
 Bảng in ở trên là cho người đọc; `--preflight` so nó với config, nên một doc ghi `cheap` trong khi config ghi `mid` là error, thay vì một lần dispatch sai mà không ai phân biệt được với lựa chọn có chủ đích. Role hay complexity lạ thì exit `2` — không bao giờ rơi về một tier mặc định.
 
-**Áp dụng thế nào:** các file `.claude/agents/{role}.md` **không** ghi `model:` — mặc định là model của phiên. `/start-task` tra bảng trên cộng `config.models` rồi truyền `model` lúc dispatch. Nếu CLI không hỗ trợ chọn model theo subagent → bỏ qua; mọi stage chạy model của phiên, harness vẫn chạy, chỉ là không tiết kiệm được gì.
+**Áp dụng thế nào:** installer ghi hạng **cột normal** của từng role, ánh xạ qua `models.<cli>`, thành `model:` trong file role của CLI đó (`.claude/agents`, `.codex/agents/*.toml`, `.gemini/agents`, `.qwen/agents`, `.factory/droids`). `/start-task` vẫn hỏi `--tier` mỗi lần dispatch và truyền `model` khi dispatch nhận tham số đó (Claude) — đó là đường để trivial/high và cascade retry tới được subagent. Nếu CLI không hỗ trợ chọn model theo subagent → bỏ qua; mọi stage chạy model của phiên, harness vẫn chạy, chỉ là không tiết kiệm được gì.
 
 **Đừng tối ưu ngược:** hạ hạng của `fsd-reviewer`/`adversary` để tiết kiệm là mua rủi ro — một AC bị rơi hay một bug lọt lưới đắt hơn toàn bộ tiền model của task.
 

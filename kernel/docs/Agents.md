@@ -254,13 +254,16 @@ Gates 1 and 2 still have to PASS at all three levels.
 
 ### 5.3. Choose the model by **tier**, not by vendor name
 
-The kernel does not know whether you run Claude Code, Codex or another CLI — so it only names **three tiers**. The tier → real model mapping lives in `harness.config.json → models`:
+The kernel does not know whether you run Claude Code, Codex or another CLI — so it only names **three tiers**. The tier → real model mapping lives in `harness.config.json → models`, **one key per CLI**:
 
+<!-- example -->
 ```json
-"models": { "cheap": "haiku", "mid": "sonnet", "strong": "opus" }
+"models": { "<cli>": { "cheap": { "model": "<name>" }, "mid": { "model": "<name>" }, "strong": { "model": "<name>" } } }
 ```
 
-Switching CLI means changing exactly those three lines (`gpt-5-mini` / `gpt-5` / `gpt-5-pro`, `gemini-flash` / `gemini-pro` / …). The table below does not change. Leaving `models` as `{}` means using the CLI's default and routing nothing.
+Using another CLI means adding its key — the table below does not change, and no CLI's names overwrite another's. A CLI with no key routes nothing: every stage runs the session model. The kernel never names a model; `install --self-test` fails on any `vendorModelTokens` entry outside an `<!-- example -->` fence.
+
+The coordinator is not a row of this table: its model is fixed when the session opens, before complexity exists. `coordinatorTier` (one value, `mid`) is rendered into Claude's `/start-task` frontmatter — the only CLI with a per-command `model`, and it lasts for the current turn. On other CLIs, open the session on a model of that tier.
 
 The principle: **the cheap tier for reading-and-transcribing, the strong tier for judgement.** A stage that gets it wrong makes everything downstream wrong — that is where paying is worth it.
 
@@ -278,12 +281,12 @@ The principle: **the cheap tier for reading-and-transcribing, the strong tier fo
 **The table is data, not prose.** It lives in `harness.config.json → baseTier` (`role: [trivial, normal, high]`), and the coordinator resolves it instead of reading it:
 
 ```bash
-node scripts/validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt]   # prints the model name
+node scripts/validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt] --cli <cli>   # prints the model name
 ```
 
 The printed table above is for humans; `--preflight` compares it against the config, so a doc that says `cheap` where the config says `mid` is an error rather than a wrong dispatch nobody can distinguish from a deliberate one. Unknown role or complexity exits `2` — it never falls back to a default tier.
 
-**How it is applied:** the `.claude/agents/{role}.md` files carry **no `model:`** — the default is the session's model. `/start-task` looks up the table above plus `config.models` and passes `model` at dispatch. If the CLI does not support per-subagent model selection → skip it; every stage runs the session model, the harness still works, it just saves nothing.
+**How it is applied:** the installer writes each role's **normal-column** tier, mapped through `models.<cli>`, as `model:` into that CLI's role files (`.claude/agents`, `.codex/agents/*.toml`, `.gemini/agents`, `.qwen/agents`, `.factory/droids`). `/start-task` still asks `--tier` per dispatch and passes `model` where the dispatch takes one (Claude) — that is how trivial/high and the retry cascade reach the subagent. If the CLI does not support per-subagent model selection → skip it; every stage runs the session model, the harness still works, it just saves nothing.
 
 **Do not optimise backwards:** dropping the tier of `fsd-reviewer`/`adversary` to save money is buying risk — one dropped AC or one escaped bug costs more than the entire model spend of the task.
 

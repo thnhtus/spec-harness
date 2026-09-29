@@ -93,9 +93,9 @@ Preamble nêu **section**, không nêu cả file: sàn luật mọi subagent ph�
 
 ## F. Tên tier không phụ thuộc CLI
 
-Tier → tên model thật tra ở `harness.config.json → models`
-(`{ "cheap": …, "mid": …, "strong": … }`). Kernel không biết bạn chạy CLI nào nên
-chỉ nói bằng tier — đổi Claude ↔ Codex ↔ Gemini là sửa ba dòng đó, bảng không đổi.
+Tier → tên model thật tra ở `harness.config.json → models.<cli>`
+(`{ "<cli>": { "cheap": { "model": … }, … } }`). Kernel không biết bạn chạy CLI nào nên
+chỉ nói bằng tier — thêm Codex hay Gemini là thêm key của nó, bảng không đổi.
 
 ## F2. Lý do nâng tier khi retry
 
@@ -103,7 +103,7 @@ Dispatch lại trên đúng tier vừa fail là cùng lỗi §5.3 cấm với `a
 cùng điểm mù. *Hạ* tier khi retry là **error** validator chặn — không tiết kiệm,
 chỉ mua thêm một lần bounce. `retryBudget` vẫn chặn trần: 4 lần block là hết budget.
 
-`models` rỗng `{}`, hoặc CLI không chọn được model theo subagent → **bỏ bước này**,
+Không có `models.<cli>`, hoặc CLI không chọn được model theo subagent → **bỏ bước này**,
 mọi stage chạy model của session. Harness vẫn đúng, chỉ không rẻ hơn. **Không** hạ
 model của `fsd-reviewer` hay `adversary` xuống dưới bảng: một AC rơi hay một bug lọt
 tốn hơn cả hoá đơn model của task.

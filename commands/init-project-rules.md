@@ -56,7 +56,7 @@ Run these in parallel, read the results, and only then write:
 | Watch/server commands the agent must not run (§7) | same sources — any command that does not terminate on its own (`dev`, `watch`, `serve`, `--watch`) |
 | Sibling BE repo (§1, tier 2) | `ls ..` — is any sibling repo the backend of this project (name hints: `*-service`, `*-api`, `*-backend`) |
 | Swagger/OpenAPI (§1, tier 3) | `.claude/skills/api-docs-sync/services.json`, or a swagger URL in README / `.env.example` / docker-compose |
-| `models` for `harness.config.json` | which CLI is in use (Claude Code / Codex / other) → map `cheap`/`mid`/`strong` to its model names; unclear → leave `{}` |
+| `models` for `harness.config.json` | which CLI is in use → add `models.<cli>` mapping `cheap`/`mid`/`strong` to `{ "model": … }` in that CLI's names; unclear → no key (session model) |
 | `repos` for `harness.config.json` | is `harness.config.json` inside the code repo or its own repo? (`git rev-parse --show-toplevel` versus cwd) · `ls ..` to find sibling repos · fill in `[{name,path,layer}]`, `path: "."` if same repo |
 | `layers` for `harness.config.json` | is the repo FE, BE, or a monorepo? (`ls`, where `go.mod`/`package.json`/`pyproject.toml` live) — write into `layers`, e.g. `["frontend"]` or `["frontend","backend"]` |
 | The layer actually exercised when verifying (§7) | is there a UI? is there an existing e2e/integration harness (`e2e/`, `test/integration/`, `*_test.go`, `conftest.py`) |

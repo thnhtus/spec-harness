@@ -101,10 +101,10 @@ The preamble names **sections**, not whole files: the floor of rules every subag
 
 ## F. Tier names are CLI-agnostic
 
-Tier → real model name is looked up in `harness.config.json → models`
-(`{ "cheap": …, "mid": …, "strong": … }`). The kernel does not know which CLI
-you run, so it only speaks in tiers — switching Claude ↔ Codex ↔ Gemini means
-editing those three lines, this table does not change.
+Tier → real model name is looked up in `harness.config.json → models.<cli>`
+(`{ "<cli>": { "cheap": { "model": … }, … } }`). The kernel does not know which CLI
+you run, so it only speaks in tiers — adding Codex or Gemini means adding its key,
+this table does not change.
 
 ## F2. Retry tier rationale
 
@@ -113,7 +113,7 @@ Re-dispatching on the tier that just failed is the same mistake §5.3 forbids fo
 an **error** the validator blocks — it does not save money, it buys another
 bounce. `retryBudget` still caps the climb: at 4 blocks the task is out of budget.
 
-`models` empty `{}`, or the CLI cannot pick a model per subagent → **skip this
+No `models.<cli>`, or the CLI cannot pick a model per subagent → **skip this
 step**, every stage runs the session's model. The harness is still correct, just
 not cheaper. Do **not** drop the model for `fsd-reviewer` or
 `adversary` below this table: one dropped AC or one escaped bug costs more than

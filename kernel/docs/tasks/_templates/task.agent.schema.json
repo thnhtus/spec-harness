@@ -335,7 +335,7 @@
           },
           "model": {
             "type": "string",
-            "description": "What the CLI actually called it, e.g. \"sonnet\". Empty when the CLI cannot route per-subagent."
+            "description": "What the CLI actually called it — the name --tier printed from config.models.<cli>. Empty when the CLI cannot route per-subagent."
           },
           "attempt": {
             "type": "integer",
