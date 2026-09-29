@@ -412,7 +412,7 @@ Nó ghi thêm một dòng vào `_triage.log` (chính file đã giữ verdict) v�
 
 `--calibrate` in **độ phủ** ở dòng đầu (`outcome coverage: 12/20`). Dưới 80%, các finding bên dưới dựa trên mẫu thủng — đừng chỉnh ngưỡng từ đó.
 
-`telemetry` (coordinator ghi ở mỗi lần dispatch: stage · hạng · model · mốc thời gian) là **nửa còn lại** của câu hỏi ROI. `outcome` nói task có trụ được không; `telemetry` nói nó tốn bao nhiêu. Thiếu nó thì §5.3 ("hạng strong đáng tiền") là niềm tin không ai kiểm được. Không ghi token/usage — đó là dữ liệu của nhà cung cấp; tên model + đồng hồ treo tường là đủ.
+`telemetry` (`--advance` ghi ở mỗi lần dispatch: stage · hạng · model · mốc thời gian) là **nửa còn lại** của câu hỏi ROI. `outcome` nói task có trụ được không; `telemetry` nói nó tốn bao nhiêu. Thiếu nó thì §5.3 ("hạng strong đáng tiền") là niềm tin không ai kiểm được. Không ghi token/usage — đó là dữ liệu của nhà cung cấp; tên model + đồng hồ treo tường là đủ.
 
 **Đọc lại định kỳ** (cuối sprint, hoặc mỗi ~20 task):
 

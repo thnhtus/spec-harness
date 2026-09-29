@@ -145,6 +145,7 @@ second session acquires it, two sessions write `.agent-memory/` — exactly the
 race the lease exists to prevent.
 
 Each dispatch is a natural heartbeat — no timer and no background process needed.
+`--advance` renews it, and exits `1` when the lease is not held: a renew that creates one would be an acquire that skipped the check.
 
 ## I. Telemetry fields — what to record and why
 
@@ -152,8 +153,9 @@ Each dispatch is a natural heartbeat — no timer and no background process need
 rule (§5.3.1) checkable at all, and without it the validator can only warn that
 it cannot tell an escalation from a downgrade.
 
-**Record `startedAt`/`endedAt` always; leave `inputTokens` out.** You know the
-timestamps for certain — you dispatched the stage. You do not know the token
+**`--advance` writes `startedAt`/`endedAt`; leave `inputTokens` out.** A real run showed
+hand-typed windows invented (round minutes that matched no clock), and the validator
+could not tell — so the script that dispatches now stamps them with the machine's clock. You do not know the token
 count, and a guessed one is worse than none because `--cost` will print it as
 fact. `scripts/collect-telemetry.mjs` fills it in at step 7 by reading the CLI's
 own session log, matched on cwd + branch + that window. That is the only thing

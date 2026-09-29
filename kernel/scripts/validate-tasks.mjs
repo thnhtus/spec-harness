@@ -29,7 +29,7 @@
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, renameSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -2356,6 +2356,28 @@ if (args.has("--self-check")) {
         assert.ok(!resolveTier(role, c, 1).error, `config.baseTier cannot resolve ${role}/${c}: ${resolveTier(role, c, 1).error}`);
   }
 
+  // advanceDecision (#61): every exit of --advance, without a filesystem.
+  {
+    const o = { stages: ["bootstrap", "fsd_write", "implementation", "adversarial_review", "reviewing"],
+      roleStage: { orchestrator: "bootstrap", "fsd-writer": "fsd_write", implementer: "implementation", fixer: "implementation", adversary: "adversarial_review" },
+      routing: { field: "branchType", map: { feature: "implementer", bugfix: "fixer" } } };
+    const ad = (data, st, x = {}) => advanceDecision({ branchType: "feature", ...data }, st, { ...o, ...x });
+    const fwd = ad({ currentStage: "implementation", attempts: { fsd_write: 1 } }, "implementation");
+    assert.deepEqual(fwd, { exit: 0, role: "implementer", prev: "fsd-writer", attempt: 1 }, "forward: dispatch the stage's role, first attempt");
+    assert.equal(ad({ currentStage: "implementation", branchType: "bugfix" }, "implementation").role, "fixer", "routing picks fixer for bugfix");
+    assert.equal(ad({ currentStage: "implementation", attempts: { implementation: 2 } }, "implementation").attempt, 3, "attempt = attempts[stage] + 1");
+    // Gate 5 FAIL keeps currentStage at adversarial_review; the re-route is back to implementation.
+    const back = ad({ currentStage: "adversarial_review", attempts: { implementation: 1 } }, "implementation", { halted: (r) => r === "adversary" });
+    assert.deepEqual([back.exit, back.attempt, back.prev], [0, 2, "adversary"], "back: a FAIL re-route is allowed and shows the adversary's findings");
+    assert.equal(ad({ currentStage: "fsd_write" }, "implementation").exit, 1, "skipping a stage is refused");
+    assert.equal(ad({ currentStage: "implementation" }, "implementation", { halted: (r) => r === "fsd-writer" }).exit, 1, "a halted handoff stops the next dispatch");
+    assert.equal(ad({ currentStage: "implementation" }, "bootstrap").exit, 2, "bootstrap is not dispatched through --advance");
+    assert.equal(ad({ currentStage: "implementation" }, "nope").exit, 2, "an unknown stage is a usage error");
+    assert.equal(ad({ currentStage: "weird" }, "implementation").exit, 1, "a task at an unknown stage is not dispatched");
+    const end = ad({ currentStage: "reviewing" }, "reviewing");
+    assert.deepEqual([end.exit, end.role, end.attempt, end.prev], [0, null, null, "adversary"], "the last stage dispatches nothing");
+  }
+
   // escapeHatchStats: the feedback loop for tasks that skipped every gate. The
   // cases that matter are the two dodges -- re-triaging to erase an escape, and
   // overwriting an "escaped" with a later "clean".
@@ -3193,6 +3215,75 @@ if (args.has("--tier")) {
   // dispatch. `null` when config.models is empty -- print nothing, so a shell
   // substitution yields an empty flag rather than the string "null".
   else console.log(r.model ?? "");
+  process.exit(0);
+}
+
+// --advance (#61): the coordinator's whole per-stage bookkeeping as ONE command,
+// run right before dispatching <stage>. A real run spent 16 of the coordinator's
+// 39 calls on validate / attempts / lease / telemetry by hand, and the hand-typed
+// telemetry windows were invented. Here the script owns every write, so the
+// clock is the machine's and the coordinator only routes.
+//   exit 0 = dispatch <stage> · 1 = stop (gate FAIL, halted handoff, skipped stage,
+//   lease not held) · 2 = bad arguments.
+// Pure decision, so --self-check can assert every branch without a filesystem.
+export function advanceDecision(data, stage, { stages = STAGE_ORDER, roleStage = ROLE_STAGE, routing = CFG.routing, halted = () => false } = {}) {
+  const at = stages.indexOf(stage), cur = stages.indexOf(data.currentStage);
+  if (at < 1) return { exit: 2, why: `stage "${stage}" is not a dispatchable stage (${stages.slice(1).join(", ")})` };
+  if (cur < 0) return { exit: 1, why: `task currentStage "${data.currentStage}" is not in config.stages` };
+  if (at > cur) return { exit: 1, why: `task is at "${data.currentStage}" — dispatching "${stage}" would skip a gate` };
+  const roleOf = (st) => st === "implementation" && routing?.map?.[data[routing.field]]
+    ? routing.map[data[routing.field]] : Object.keys(roleStage).find((r) => roleStage[r] === st);
+  // Forward: the previous stage's role just handed over. Back (a Gate 5 FAIL
+  // re-route): the role of the stage the task sits at is the one that sent it back.
+  const prev = roleOf(at === cur ? stages[at - 1] : data.currentStage);
+  if (at === cur && halted(prev)) return { exit: 1, why: `.agent-memory/${prev}.md last handoff says "Continue automation: no" — stop and report`, prev };
+  const last = stage === stages[stages.length - 1];
+  return { exit: 0, role: last ? null : roleOf(stage), prev, attempt: last ? null : ((data.attempts ?? {})[stage] ?? 0) + 1 };
+}
+
+if (args.has("--advance")) {
+  const at = argv.indexOf("--advance");
+  const [taskArg, stage] = argv.slice(at + 1, at + 3);
+  const cli = argv.includes("--cli") ? argv[argv.indexOf("--cli") + 1] : null;
+  const usage = () => { console.error("  usage: validate-tasks.mjs --advance <task-folder> <stage> [--cli <name>]"); process.exit(2); };
+  if (!taskArg || !stage || taskArg.startsWith("--") || stage.startsWith("--")) { console.error("✖ --advance: task folder and stage are required"); usage(); }
+  if (cli && !CLI_NAMES.includes(cli)) { console.error(`✖ --advance: --cli "${cli}" is not one of ${CLI_NAMES.join(", ")}`); usage(); }
+  const dir = resolve(taskArg), jp = join(dir, "task.agent.json");
+  // A path matching no task folder: the validator itself exits 2 (usage, below).
+  // The gate: the same validator run the coordinator used to type by hand.
+  const v = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--quiet", "--no-warn", "--task", dir, "--config", CONFIG_PATH], { encoding: "utf8" });
+  if (v.status === 2) { process.stderr.write(v.stderr); usage(); }
+  const data = JSON.parse(readFileSync(jp, "utf8"));
+  const mem = join(dir, ".agent-memory");
+  const d = v.status === 1 ? { exit: 1, why: "validator: gate FAIL" }
+    : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
+  if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
+  if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
+  if (d.attempt) {
+    const lease = spawnSync(process.execPath, [join(__dirname, "lease.mjs"), "renew", dir], { encoding: "utf8" });
+    if (lease.status !== 0) { console.error(`✖ --advance: lease renew failed — ${lease.stderr.trim()} (step 0b acquires it)`); process.exit(1); }
+  }
+  const now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  data.telemetry ??= [];
+  for (const e of data.telemetry) if (e.startedAt && !e.endedAt) e.endedAt = now;
+  let r = {};
+  if (d.attempt) {
+    (data.attempts ??= {})[stage] = d.attempt;
+    r = resolveTier(d.role, data.taskComplexity, d.attempt, CFG, cli);
+    if (r.error) { console.error(`✖ --advance: ${r.error}`); process.exit(2); }
+    data.telemetry.push({ stage, tier: r.model ? r.tier : "session-default", ...(r.model ? { model: r.model } : {}), attempt: d.attempt, startedAt: now });
+  }
+  data.updatedAt = now;
+  // SharedRules §6: temp file in the same dir, then rename — a crash never leaves half a JSON.
+  writeFileSync(jp + ".tmp", JSON.stringify(data, null, 2) + "\n");
+  renameSync(jp + ".tmp", jp);
+  let handoff = "";
+  try { handoff = "### " + readFileSync(join(mem, `${d.prev}.md`), "utf8").split(/^### /m).slice(1).pop(); } catch {}
+  if (AS_JSON) console.log(JSON.stringify({ stage, role: d.role, attempt: d.attempt, tier: r.tier ?? null, model: r.model ?? null, handoff }));
+  else {
+    console.log(d.attempt ? `✔ dispatch ${stage} → ${d.role} · attempt ${d.attempt} · ${r.tier}${r.model ? ` · model ${r.model}` : " · session model"}` : `✔ ${stage}: all gates passed`);
+    if (handoff) console.log(`--- last handoff: .agent-memory/${d.prev}.md ---\n${handoff.trim()}`);
+  }
   process.exit(0);
 }
 

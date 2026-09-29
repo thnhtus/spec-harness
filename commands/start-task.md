@@ -30,7 +30,7 @@ interface between stages — not the conversation history.
 
 Your responsibilities only:
 
-1. Read `docs/Agents.md` **§2 (lifecycle) + §3 (gates) + §4 (routing)** — you do not need the role files, and §5 (complexity) only if step 0 has not already produced the vector.
+1. Do **not** read `docs/Agents.md` or any role file: routing, gates and tiers are answered by `--advance` (below). Every file you read is paid again on every later turn.
 2. Dispatch one subagent per stage, in order, passing a **small** prompt
    (paths + IDs, never pasted file contents).
 3. After each subagent returns, read ONLY:
@@ -227,10 +227,12 @@ subagent prompt **must** begin with this preamble:
 
 Why sections, not files: [appendix §E](../../docs/agents/StartTask-Appendix.md#e-why-the-preamble-names-sections).
 
-**Pick the model from `taskComplexity`.** After orchestrator finishes, read
-`taskComplexity` from `task.agent.json` and pass `model` when dispatching each
-stage, per the table in [`docs/Agents.md` §5.3](../../docs/Agents.md). Cheap for
-read-and-copy work, strong for judgement:
+**The model comes from `--advance`** (below): it resolves `taskComplexity` × role ×
+attempt through `harness.config.json → baseTier` and `models.<cli>`, lifting one tier per
+retry (§5.3.1). Pass the model it prints when dispatching; it prints none → dispatch
+without one. Stage 1 (bootstrap) runs before the task exists: its model is
+`--tier orchestrator "$COMPLEXITY" --cli "$CLI"`, then set `attempts.bootstrap = 1`. `$CLI` = your CLI (`claude`, `codex`…). The table is for humans; `--preflight`
+checks it against the config ([appendix §F](../../docs/agents/StartTask-Appendix.md#f-tier-names-are-cli-agnostic), [§F2](../../docs/agents/StartTask-Appendix.md#f2-retry-tier-rationale)):
 
 | Role | trivial | normal | high |
 | --- | --- | --- | --- |
@@ -240,28 +242,6 @@ read-and-copy work, strong for judgement:
 | `technical-planner` | mid | mid | strong |
 | implementer | mid | mid | strong |
 | `adversary` | mid | mid | strong |
-
-**Do not transcribe that table — ask for the answer.** It is data in
-`harness.config.json → baseTier`, and the script applies the §5.3.1 cascade too:
-
-```bash
-MODEL=$(node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" "${ATTEMPT:-1}" --cli "$CLI")
-```
-
-`$CLI` = your CLI (`claude`, `codex`…). Prints the bare model (empty when `models.<cli>` is
-absent — dispatch without one); exits `2` on an unknown role, complexity or CLI. The table
-above is for humans; `--preflight` checks it against the config. Tiers map to model names in `harness.config.json → models.<cli>` ([appendix §F](../../docs/agents/StartTask-Appendix.md#f-tier-names-are-cli-agnostic)).
-
-**On a retry, lift the tier one notch** ([`docs/Agents.md` §5.3.1](../../docs/Agents.md)).
-The table above is the tier for **attempt 1**. A stage that bounced and gets
-re-dispatched runs one notch higher, capped at `strong`:
-
-```bash
-# same command, with the attempt number -- it applies the cascade itself
-node scripts/validate-tasks.mjs --tier implementer "$COMPLEXITY" 2 --cli "$CLI"
-```
-
-Never retry on the same or a lower tier; no `models.<cli>` or no per-subagent model → skip, but never drop `fsd-reviewer`/`adversary` ([appendix §F2](../../docs/agents/StartTask-Appendix.md#f2-retry-tier-rationale)).
 
 | # | Stage | subagent_type | Role file | Prompt adds |
 | --- | --- | --- | --- | --- |
@@ -277,35 +257,19 @@ Gate 5 FAIL → re-dispatch implementer (step 5) **once** with the findings from
 `09`; still FAIL the second time → stop, report to the user (Gate-fail handling).
 No infinite loop.
 
-**After EVERY stage, run the validator on this exact task — before dispatching the next stage:**
+**Before EVERY dispatch, one command — it is all the bookkeeping:**
 
 ```bash
-node scripts/validate-tasks.mjs --quiet --task "$TASK"    # exit 1 = gate FAIL
+node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli "$CLI"   # exit 1 = STOP
 ```
 
-Exit `0` pass · `1` gate FAIL · `2` bad `--task` path (fix the command). Why: [appendix §G](../../docs/agents/StartTask-Appendix.md#g-why-validate-after-every-stage).
-
-**Every time you dispatch a stage, increment `task.agent.json → attempts[<stage>]`**
-(set `1` if absent). That is the only measurement of rework the harness has — at
-`attempts` ≥ 3 the validator warns ([`docs/Agents.md` §5.5](../../docs/Agents.md)).
-
-**And renew the lease — same place, same moment:**
-
-```bash
-node scripts/lease.mjs renew "$TASK"
-```
-
-Without it a live lease expires mid-task ([appendix §H](../../docs/agents/StartTask-Appendix.md#h-why-renew-the-lease-per-dispatch)).
-
-**And append one `telemetry` line** — you are the only actor that knows which
-tier the stage just ran on:
-
-```json
-{ "stage": "implementation", "tier": "strong", "model": "<what --tier printed>", "attempt": 2,
-  "startedAt": "2026-09-18T09:00:00Z", "endedAt": "2026-09-18T09:12:00Z" }
-```
-
-`attempt` is required once a stage runs twice. Record `startedAt`/`endedAt`, never `inputTokens` (step 7 collects it); no per-subagent model → `"tier": "session-default"`. Why: [appendix §I](../../docs/agents/StartTask-Appendix.md#i-telemetry-fields--what-to-record-and-why).
+It runs the validator on this task (Gate FAIL → exit `1`), refuses a skipped stage or a
+handoff that says `Continue automation: no` (exit `1`), renews the lease, bumps
+`attempts[<stage>]`, closes the previous telemetry entry and opens this one with the
+machine's clock and the tier/model it resolved, then prints the role to dispatch, the
+model, and the last handoff block. Exit `2` = bad arguments. Do not edit `attempts`,
+`telemetry` or the lease yourself. Before step 7: `--advance "$TASK" reviewing` — it closes
+the last telemetry entry and dispatches nothing. Why: [appendix §G](../../docs/agents/StartTask-Appendix.md#g-why-validate-after-every-stage), [§H](../../docs/agents/StartTask-Appendix.md#h-why-renew-the-lease-per-dispatch), [§I](../../docs/agents/StartTask-Appendix.md#i-telemetry-fields--what-to-record-and-why).
 
 Step 7 (you, no subagent): `node scripts/lease.mjs release "$TASK"` (step 0b), confirm `task.agent.json` has `status = reviewing`,
 run `node scripts/validate-tasks.mjs --quiet` and make sure this task folder reports no

@@ -411,7 +411,7 @@ Leave it empty and the harness learns nothing. This is the only point a human mu
 
 `--calibrate` prints **coverage** on its first line (`outcome coverage: 12/20`). Below 80%, the findings underneath rest on a holed sample — do not adjust thresholds from it.
 
-`telemetry` (written by the coordinator at each dispatch: stage · tier · model · timestamps) is the **other half** of the ROI question. `outcome` says whether the task held up; `telemetry` says what it cost. Without it, §5.3 ("the strong tier is worth the money") is an article of faith nobody can check. No token/usage is recorded — that is vendor data; the model name + wall clock is enough.
+`telemetry` (written by `--advance` at each dispatch: stage · tier · model · timestamps) is the **other half** of the ROI question. `outcome` says whether the task held up; `telemetry` says what it cost. Without it, §5.3 ("the strong tier is worth the money") is an article of faith nobody can check. No token/usage is recorded — that is vendor data; the model name + wall clock is enough.
 
 **Re-read it periodically** (end of sprint, or every ~20 tasks):
 

@@ -131,14 +131,17 @@ sinh ra để chặn.
 
 Mỗi lần dispatch là một nhịp tim tự nhiên — không cần timer hay process nền.
 
+`--advance` renew lease, và exit `1` khi không giữ lease: một lần renew tự tạo lease là acquire đã bỏ qua bước kiểm.
+
 ## I. Trường telemetry — ghi gì và vì sao
 
 `attempt` không tuỳ chọn khi một stage chạy hai lần: nó là thứ làm luật cascade
 (§5.3.1) kiểm được, thiếu nó validator chỉ cảnh báo được là không phân biệt nổi
 nâng tier với hạ tier.
 
-**Luôn ghi `startedAt`/`endedAt`; bỏ `inputTokens`.** Timestamp bạn biết chắc —
-chính bạn dispatch stage. Số token bạn không biết, và số đoán còn tệ hơn không có vì
+**`--advance` ghi `startedAt`/`endedAt`; bỏ `inputTokens`.** Một lần chạy thật cho thấy
+khung giờ gõ tay là bịa (phút tròn, không khớp đồng hồ nào), và validator không phân biệt
+được — nên script dispatch giờ đóng dấu bằng đồng hồ máy. Số token bạn không biết, và số đoán còn tệ hơn không có vì
 `--cost` sẽ in nó như sự thật. `scripts/collect-telemetry.mjs` điền nó ở step 7 bằng
 cách đọc session log của chính CLI, khớp theo cwd + nhánh + khung giờ đó. Đó là thứ
 duy nhất cho thấy **sức nặng của chính harness**: sàn luật mọi subagent phải đọc nhân

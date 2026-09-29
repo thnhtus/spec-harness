@@ -1663,6 +1663,32 @@ if (args[0] === "--self-test") {
     rmSync(dirname(A), { recursive: true, force: true });
   }
 
+  // --advance (#61) e2e trên fixture adversary thật: đỏ và xanh, và nó ghi đúng thứ
+  // coordinator từng ghi tay (attempts, telemetry có giờ máy, lease còn sống).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-adv-"));
+    const { P, T } = buildEvalCase(evalCases().find((c) => c.id === "clean"), root);
+    const adv = (...a) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", ...a], { cwd: P, encoding: "utf8" });
+    const J = () => JSON.parse(read(join(P, T, "task.agent.json")));
+    if (adv(T).status !== 2) fail("--advance thiếu stage phải exit 2");
+    if (adv("docs/tasks/nope", "implementation").status !== 2) fail("--advance task không tồn tại phải exit 2");
+    if (adv(T, "adversarial_review").status !== 1) fail("--advance khi chưa giữ lease phải exit 1 — renew không được tự tạo lease");
+    spawnSync(process.execPath, ["scripts/lease.mjs", "acquire", T], { cwd: P });
+    if (adv(T, "reviewing").status !== 1) fail("--advance nhảy qua Gate 5 (task đang ở adversarial_review) mà exit 0");
+    const ok = adv(T, "adversarial_review", "--cli", "claude");
+    if (ok.status !== 0) fail("--advance adversarial_review trên fixture sạch không exit 0", ok.stdout + ok.stderr);
+    if (!ok.stdout.includes("### ") || !ok.stdout.includes("implementer.md")) fail("--advance không in handoff cuối của implementer", ok.stdout);
+    const j = J(), e = j.telemetry.at(-1);
+    if (j.attempts.adversarial_review !== 1) fail("--advance không tăng attempts.adversarial_review");
+    if (e.stage !== "adversarial_review" || e.attempt !== 1 || e.model !== "sonnet" || Math.abs(Date.parse(e.startedAt) - Date.now()) > 60000)
+      fail("--advance ghi telemetry sai (stage/attempt/model adversary trivial=mid/giờ máy)", JSON.stringify(e));
+    const v = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
+    if (JSON.parse(v.stdout).results[0].errors.length) fail("task.agent.json --advance ghi ra không qua validator", v.stdout);
+    rmSync(join(P, T, "08-Test-Evidence.md"));
+    if (adv(T, "adversarial_review").status !== 1) fail("--advance bỏ qua verdict validator (08 bị xoá mà vẫn dispatch)");
+    rmSync(root, { recursive: true, force: true });
+  }
+
   // --eval (#52): model thật không chạy ở đây (tốn tiền, không tất định), nhưng mọi
   // thứ quanh nó thì phải xanh: (1) mỗi fixture đúng là điểm bàn giao cho adversary
   // — validator chỉ còn thiếu 09, không thiếu gì khác (fixture hỏng thì eval đo
