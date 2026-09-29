@@ -26,6 +26,8 @@ Turn settled ACs into an **executable plan**: which `src/` files change (real pa
 | Path (real, under `src/`) | Change type (`new`/`modify`/`delete`) | Reason | AC / req |
 | --- | --- | --- | --- |
 
+**More than `config.sliceFiles` paths → add a last column `Slice` (`S1`, `S2`, …) to every row**, no slice over `sliceFiles` paths (validator error from `implementation` on). Order slices so a later one only depends on earlier ones: each is a separate implementer dispatch with only its own files in context (`--advance … --slice S<n>`).
+
 A new API follows the `interfaces/ → api/ → queries/ → pages|components/` chain ([`./SharedRules.md` §2](./SharedRules.md)) — one row per link.
 
 **3.2. API contracts depended on (client's view):**

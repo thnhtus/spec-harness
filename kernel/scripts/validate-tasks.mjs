@@ -420,6 +420,12 @@ const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
 // S6: no default. A missing cutoff would silently turn every R5 error into a warning.
 const STAMP_SINCE = CFG.stampSince;
 const STAMP_LOG = join(TASKS_DIR, "_stamp.log");
+const SLICE_FILES = CFG.sliceFiles;
+const needSliceFiles = (who) => {
+  if (Number.isInteger(SLICE_FILES) && SLICE_FILES >= 1) return;
+  console.error(`✖ ${who}: config.sliceFiles (integer ≥ 1) is required — the file count above which 03 must split implementation into slices`);
+  process.exit(2);
+};
 const needStampSince = (who) => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(STAMP_SINCE ?? "")) return;
   console.error(`✖ ${who}: config.stampSince (YYYY-MM-DD) is required — tasks created from that date must have every telemetry window witnessed in _stamp.log`);
@@ -659,14 +665,17 @@ export function vectorDriftSince(triaged, stored) {
 // output is legitimately big. Monotonic AND a large total gap is the shape that
 // is hard to explain any other way.
 function contextBleed(telemetry = [], { minRuns = 4, growth = 2.5 } = {}) {
-  const t = telemetry.filter((e) => typeof e?.inputTokens === "number");
+  // S5b: sibling slices are parallel fresh contexts, not a sequence — only the first
+  // slice seen per stage stands for that stage, or 3 growing slices would read as bleed.
+  const first = {};
+  const t = telemetry.filter((e) => typeof e?.inputTokens === "number" && (!e.slice || (first[e.stage] ??= e.slice) === e.slice));
   // Two points are not a trend, and a CLI that reports no tokens must not be
   // guessed at.
   if (t.length < minRuns) return null;
   for (let i = 1; i < t.length; i++) if (t[i].inputTokens <= t[i - 1].inputTokens) return null;
-  const first = t[0].inputTokens, last = t.at(-1).inputTokens;
-  if (!first || last < first * growth) return null;
-  return { first, last, runs: t.length, from: t[0].stage, to: t.at(-1).stage };
+  const lo = t[0].inputTokens, last = t.at(-1).inputTokens;
+  if (!lo || last < lo * growth) return null;
+  return { first: lo, last, runs: t.length, from: t[0].stage, to: t.at(-1).stage };
 }
 
 // Model cascade (Agents.md §5.3.1): a retry must not run on the tier that just
@@ -853,7 +862,8 @@ export function cascadeDefects(telemetry = []) {
     // session-default means the CLI cannot route per subagent at all -- there is
     // no tier to compare, and demanding one would fail every such run.
     if (!e?.stage || !TIER_ORDER.includes(e.tier)) continue;
-    (byStage[e.stage] ??= []).push(e);
+    // S5b: slices of one stage are separate dispatches, each with its own retry ladder.
+    (byStage[e.slice ? `${e.stage}:${e.slice}` : e.stage] ??= []).push(e);
   }
   for (const [stage, runs] of Object.entries(byStage)) {
     if (runs.length < 2) continue;
@@ -2411,6 +2421,26 @@ if (args.has("--self-check")) {
     assert.ok(Number.isInteger(CFG.packWarn) && STAGE_ORDER.slice(1, -1).every((st) => Number.isInteger((CFG.packCap ?? {})[st])), "S6: config.packCap.<every dispatched stage> and packWarn are required");
   }
 
+  // planSlices (#67): S1 S2 S3, and S5b on the two telemetry readers.
+  {
+    const tbl = (rows, slice = true) => "## Files to change\n\n| File | Type" + (slice ? " | Slice" : "") + " |\n| --- | ---" + (slice ? " | ---" : "") + " |\n" +
+      rows.map(([f, x]) => `| \`${f}\` | new${slice ? ` | ${x}` : ""} |`).join("\n") + "\n\n## Test plan\n| `npm t` | x |\n";
+    assert.deepEqual(planSlices(tbl([["a", ""], ["b", ""]], false), 2), { slices: [], errors: [] }, "at the cap with no Slice column: fine");
+    assert.equal(planSlices(tbl([["a"], ["b"], ["c"]], false), 2).errors.length, 1, "S1: over sliceFiles with no Slice column is an error");
+    assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", ""]]), 2).errors.length, 1, "S1: over sliceFiles, one row without a slice");
+    assert.deepEqual(planSlices(tbl([["a", "S2"], ["b", "S10"], ["c", "S1"]]), 2), { slices: ["S1", "S2", "S10"], errors: [] }, "slices in numeric order, test-plan rows not counted");
+    assert.deepEqual(planSlices(tbl([["a"], ["b"]], false).replace("| \`b\` | new |", "| _none else_ | new |"), 1).errors, [], "S1 counts backtick paths only, not a note row");
+    assert.equal(planSlices(tbl([["a", "S1"], ["b", "S1"], ["c", "S1"]]), 2).errors.length, 1, "S2: a slice over sliceFiles");
+    assert.equal(planSlices(tbl([["a", "part 1"]]), 2).errors.length, 1, "S3: a Slice cell not shaped S<n>");
+    const sl = (x, attempt, tier = "mid", inputTokens) => ({ stage: "implementation", slice: x, attempt, tier, inputTokens });
+    assert.deepEqual(cascadeDefects([sl("S1", 1), sl("S2", 1), sl("S3", 1), sl("S4", 1)]), { errors: [], warnings: [] }, "S5b: 4 slices, same tier, attempt 1 — no cascade defect");
+    assert.equal(cascadeDefects([sl("S1", 1), sl("S2", 1), sl("S1", 2, "strong"), sl("S2", 2, "cheap")]).errors.length, 1, "S5b: a slice's own retry still may not drop tier");
+    const up = (st, n) => ({ stage: st, tier: "mid", inputTokens: n });
+    assert.equal(contextBleed([up("a", 5000), sl("S1", 1, "mid", 6000), sl("S2", 1, "mid", 9000), sl("S3", 1, "mid", 14000), sl("S4", 1, "mid", 20000)]), null, "S5b: growing sibling slices are not bleed");
+    assert.ok(contextBleed([up("a", 5000), sl("S1", 1, "mid", 9000), up("b", 14000), up("c", 20000)]), "S5b: the first slice still counts as its stage");
+    assert.ok(Number.isInteger(CFG.sliceFiles) && CFG.sliceFiles >= 1, "S6: config.sliceFiles (integer ≥ 1) is required");
+  }
+
   // stampDefects (#65): R5 witness, R5b clock order, R5c whole-minute smell.
   {
     const e1 = { stage: "fsd_write", attempt: 1, startedAt: "2026-09-29T01:02:03Z", endedAt: "2026-09-29T01:09:07Z" };
@@ -3437,7 +3467,7 @@ if (args.has("--pack")) {
   const at = argv.indexOf("--pack");
   const [taskArg, stage] = argv.slice(at + 1, at + 3);
   const flag = (n) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : null);
-  const usage = (m) => { console.error(`✖ --pack: ${m}\n  usage: validate-tasks.mjs --pack <task-folder> <stage> [--base <ref>]`); process.exit(2); };
+  const usage = (m) => { console.error(`✖ --pack: ${m}\n  usage: validate-tasks.mjs --pack <task-folder> <stage> [--base <ref>] [--slice S<n>]`); process.exit(2); };
   if (!taskArg || !stage || stage.startsWith("--")) usage("task folder and stage are required");
   const cap = (CFG.packCap ?? {})[stage], warn = CFG.packWarn;
   if (!Number.isInteger(cap) || !Number.isInteger(warn)) usage(`config.packCap.${stage} and config.packWarn (bytes) are required — no default`);
@@ -3471,6 +3501,13 @@ if (args.has("--pack")) {
     const mb = g("merge-base", base, "HEAD").trim();
     git = { base: mb.slice(0, 12), stat: g("diff", "--stat", mb), status: g("status", "--porcelain", "--untracked-files=all") };
   }
+  // #67: a sliced implementation pack names the one slice this dispatch builds.
+  const slice = flag("--slice");
+  if (slice) {
+    const { slices } = planSlices(artifacts["03-Technical-Plan.md"] ?? "", SLICE_FILES ?? Infinity);
+    if (stage !== "implementation" || !slices.includes(slice)) usage(`--slice ${slice}: not a slice of 03 at implementation (${slices.join(", ") || "03 has no Slice column"})`);
+    artifacts["03-Technical-Plan.md"] += `\n\n> **This dispatch builds slice ${slice} only** — the rows marked ${slice} above. Other slices are separate dispatches; do not touch their files.\n`;
+  }
   const p = packParts({ stage, role, attempt: (data.attempts ?? {})[stage] ?? 1, docs, artifacts, handoff, git, scope: scopeFiles(artifacts["03-Technical-Plan.md"]), contract: stageContract(stage) ?? "" });
   const B = (s) => Buffer.byteLength(s);
   process.stdout.write(p.rules + "\n" + p.prose + "\n" + p.machine + "\n");
@@ -3478,6 +3515,33 @@ if (args.has("--pack")) {
   if (B(p.machine) > warn) console.error(`⚠ --pack: machine part ${B(p.machine)} B > packWarn ${warn} — a diff this wide usually means the task should be split`);
   if (B(p.rules) + B(p.prose) > cap) { console.error(`✖ --pack: rules+prose ${B(p.rules) + B(p.prose)} B > packCap.${stage} ${cap} — the kernel or the artifacts grew; that is what this cap exists to catch`); process.exit(1); }
   process.exit(0);
+}
+
+// Slices (#67): a high task's implementation is dispatched one slice at a time,
+// so no single implementer holds the whole diff in context. The slice set lives
+// in 03's "Files to change" table — a `Slice` column (S1, S2, …) — never in
+// handoff labels, which the role writes about itself.
+//   S1: more than sliceFiles paths → every row needs a Slice. S2: a slice over
+//   sliceFiles paths. S3: a Slice cell not shaped S<n>. All errors, from the
+//   stage that reads the plan (implementation) on.
+// ponytail: slices run one after another; parallel dispatch needs disjoint file
+// sets, add when a measured implementer is > 40% of API time.
+export function planSlices(plan = "", cap) {
+  const sec = plan.split(/^## /m).find((s) => /^Files to change/i.test(s)) ?? "";
+  const rows = sec.split("\n").filter((l) => /^\|/.test(l)).map((l) => l.split("|").slice(1, -1).map((c) => c.trim()));
+  const head = rows[0] ?? [], col = head.findIndex((c) => /^slice$/i.test(c));
+  const body = rows.slice(1).filter((r) => !r.every((c) => /^:?-+:?$/.test(c)) && /`[^`]+`/.test(r[0] ?? ""));
+  const errors = [], slices = {};
+  for (const r of body) {
+    const s = col < 0 ? "" : r[col] ?? "";
+    if (s && !/^S\d+$/.test(s)) errors.push(`03 Files to change: Slice "${s}" for ${r[0]} is not S<n>`);
+    if (/^S\d+$/.test(s)) (slices[s] ??= []).push(r[0]);
+  }
+  if (body.length > cap && (col < 0 || body.some((r) => !/^S\d+$/.test(r[col] ?? ""))))
+    errors.push(`03 Files to change lists ${body.length} files (> sliceFiles ${cap}) — every row needs a Slice (S1, S2, …) so no implementer dispatch holds the whole diff`);
+  for (const [s, f] of Object.entries(slices))
+    if (f.length > cap) errors.push(`03 slice ${s} has ${f.length} files (> sliceFiles ${cap}) — split it`);
+  return { slices: Object.keys(slices).sort((a, b) => a.slice(1) - b.slice(1)), errors };
 }
 
 // R5 (#65): telemetry windows must have a witness. In the SHOP-7 run the
@@ -3491,14 +3555,14 @@ if (args.has("--pack")) {
 export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now()) {
   const errors = [], warnings = [];
   const seen = new Set(stampText.split("\n").map((l) => l.split("\t")).filter((c) => c.length >= 6 && c[1] === taskId)
-    .map(([ts, , stage, attempt, , kind]) => `${ts}|${stage}|${attempt}|${kind}`));
+      .map(([ts, , stage, attempt, slice, kind]) => `${ts}|${stage}|${attempt}|${slice}|${kind}`));
   for (const e of telemetry) {
     if (!e?.startedAt) continue;
     const s = Date.parse(e.startedAt), en = Date.parse(e.endedAt ?? "");
     if (s > now + 60000) errors.push(`telemetry ${e.stage}#${e.attempt}: startedAt ${e.startedAt} is in the future`);
     if (Number.isFinite(en) && en < s) errors.push(`telemetry ${e.stage}#${e.attempt}: endedAt ${e.endedAt} is before startedAt ${e.startedAt}`);
     for (const [kind, ts] of [["start", e.startedAt], ["end", e.endedAt]])
-      if (ts && !seen.has(`${ts}|${e.stage}|${e.attempt}|${kind}`))
+      if (ts && !seen.has(`${ts}|${e.stage}|${e.attempt}|${e.slice ?? "-"}|${kind}`))
         errors.push(`telemetry ${e.stage}#${e.attempt}: ${kind === "start" ? "startedAt" : "endedAt"} ${ts} has no _stamp.log line — only \`--advance\` writes telemetry; a hand-typed window is a guess`);
   }
   const timed = telemetry.filter((e) => e?.startedAt);
@@ -3599,7 +3663,7 @@ if (args.has("--advance")) {
   const at = argv.indexOf("--advance");
   const [taskArg, stage] = argv.slice(at + 1, at + 3);
   const cli = argv.includes("--cli") ? argv[argv.indexOf("--cli") + 1] : null;
-  const usage = () => { console.error("  usage: validate-tasks.mjs --advance <task-folder> <stage> [--cli <name>]"); process.exit(2); };
+  const usage = () => { console.error("  usage: validate-tasks.mjs --advance <task-folder> <stage> [--slice S<n>] [--cli <name>]"); process.exit(2); };
   if (!taskArg || !stage || taskArg.startsWith("--") || stage.startsWith("--")) { console.error("✖ --advance: task folder and stage are required"); usage(); }
   if (cli && !CLI_NAMES.includes(cli)) { console.error(`✖ --advance: --cli "${cli}" is not one of ${CLI_NAMES.join(", ")}`); usage(); }
   const dir = resolve(taskArg), jp = join(dir, "task.agent.json");
@@ -3624,11 +3688,24 @@ if (args.has("--advance")) {
   data.telemetry ??= [];
   for (const e of data.telemetry) if (e.startedAt && !e.endedAt) { e.endedAt = now; stamp(e, "end"); }
   let r = {};
+  // S5c: a sliced plan dispatches implementation once per slice, and the slice is named.
+  const slice = argv.includes("--slice") ? argv[argv.indexOf("--slice") + 1] : null;
+  if (d.attempt && stage === "implementation") {
+    needSliceFiles("--advance");
+    const plan = join(dir, "03-Technical-Plan.md");
+    const { slices } = planSlices(existsSync(plan) ? readFileSync(plan, "utf8") : "", SLICE_FILES);
+    if (slices.length && !slices.includes(slice)) { console.error(`✖ --advance implementation: 03 is sliced (${slices.join(", ")}) — pass --slice <one of them>`); usage(); }
+    if (!slices.length && slice) { console.error("✖ --advance: --slice given but 03 has no Slice column"); usage(); }
+    // A slice's attempt = its earlier dispatches in telemetry (machine-written, witnessed by _stamp.log).
+    if (slice) d.attempt = (data.telemetry ?? []).filter((e) => e.stage === "implementation" && e.slice === slice).length + 1;
+  } else if (slice) { console.error("✖ --advance: --slice only applies to implementation"); usage(); }
   if (d.attempt) {
-    (data.attempts ??= {})[stage] = d.attempt;
+    // Sliced: attempts.implementation = the worst slice's run count, so rework
+    // readers (2c, --calibrate) see retries, not the planned one-run-per-slice.
+    (data.attempts ??= {})[stage] = slice ? Math.max(data.attempts[stage] ?? 0, d.attempt) : d.attempt;
     r = resolveTier(d.role, data.taskComplexity, d.attempt, CFG, cli);
     if (r.error) { console.error(`✖ --advance: ${r.error}`); process.exit(2); }
-    data.telemetry.push({ stage, tier: r.model ? r.tier : "session-default", ...(r.model ? { model: r.model } : {}), attempt: d.attempt, startedAt: now });
+    data.telemetry.push({ stage, ...(slice ? { slice } : {}), tier: r.model ? r.tier : "session-default", ...(r.model ? { model: r.model } : {}), attempt: d.attempt, startedAt: now });
     stamp(data.telemetry.at(-1), "start");
   }
   data.updatedAt = now;
@@ -3639,7 +3716,7 @@ if (args.has("--advance")) {
   try { handoff = "### " + readFileSync(join(mem, `${d.prev}.md`), "utf8").split(/^### /m).slice(1).pop(); } catch {}
   if (AS_JSON) console.log(JSON.stringify({ stage, role: d.role, attempt: d.attempt, tier: r.tier ?? null, model: r.model ?? null, handoff }));
   else {
-    console.log(d.attempt ? `✔ dispatch ${stage} → ${d.role} · attempt ${d.attempt} · ${r.tier}${r.model ? ` · model ${r.model}` : " · session model"}` : `✔ ${stage}: all gates passed`);
+    console.log(d.attempt ? `✔ dispatch ${stage}${slice ? ` ${slice}` : ""} → ${d.role} · attempt ${d.attempt} · ${r.tier}${r.model ? ` · model ${r.model}` : " · session model"}` : `✔ ${stage}: all gates passed`);
     if (handoff) console.log(`--- last handoff: .agent-memory/${d.prev}.md ---\n${handoff.trim()}`);
   }
   process.exit(0);
@@ -4178,6 +4255,7 @@ if (TASK_ARG && !folders.length) {
   process.exit(2);
 }
 needStampSince("validate");
+needSliceFiles("validate");
 const results = []; // {folder, errors:[], warnings:[]}
 if (!ONLY)
   for (const s of strayTaskFolders(TASKS_DIR, GROUP_PREFIX))
@@ -4409,20 +4487,37 @@ for (const { sprint, task, path } of folders) {
       `status=split requires splitInto with >=2 task IDs — a split with no children is just a rename for giving up (Agents.md §5.5)`,
     );
   const RETRY_BUDGET = CFG.retryBudget ?? 4;
+  // S1–S5 (#67): the slice set comes from 03, the stage that owns the plan.
+  const planP = join(path, "03-Technical-Plan.md");
+  const sliced = STAGE_ORDER.indexOf(data.currentStage) >= STAGE_ORDER.indexOf("implementation") && existsSync(planP)
+    ? planSlices(readFileSync(planP, "utf8"), SLICE_FILES) : { slices: [], errors: [] };
+  errors.push(...sliced.errors);
+  if (sliced.slices.length && STAGE_ORDER.indexOf(data.currentStage) >= STAGE_ORDER.indexOf("adversarial_review")) {
+    const ran = new Set((data.telemetry ?? []).filter((e) => e?.stage === "implementation" && e.slice).map((e) => e.slice));
+    const missing = sliced.slices.filter((x) => !ran.has(x));
+    if (missing.length) warnings.push(`03 has slices ${sliced.slices.join(", ")} but implementation telemetry has no dispatch for ${missing.join(", ")} — was it done in one context after all?`);
+  }
   for (const role of CFG.roles ?? []) {
     const runs = handoffBlockCount(join(path, ".agent-memory"), role);
     const stage = (ROLE_STAGE ?? {})[role];
-    const claimed = stage ? (data.attempts ?? {})[stage] : undefined;
+    // S5: sliced, the implementer writes one block per slice run — compare with
+    // the slice dispatches in telemetry, and budget the worst single slice.
+    const sliceTel = (data.telemetry ?? []).filter((e) => e.stage === "implementation" && e.slice);
+    const sliceRuns = stage === "implementation" && sliced.slices.length ? sliceTel.length : null;
+    const claimed = stage ? sliceRuns ?? (data.attempts ?? {})[stage] : undefined;
     if (claimed !== undefined && runs > claimed)
       warnings.push(
         `attempts["${stage}"]=${claimed} but .agent-memory/${role}.md has ${runs} handoff block(s) — rework is under-reported (Agents.md §5.5)`,
       );
-    if (runs >= RETRY_BUDGET)
+    // S5: sliced, one implementer block per slice is the plan, not rework — the
+    // budget is per slice, read from attempts["implementation:S<n>"].
+    const perSlice = sliceRuns === null ? null : Math.max(0, ...sliced.slices.map((x) => sliceTel.filter((e) => e.slice === x).length));
+    if ((perSlice ?? runs) >= RETRY_BUDGET)
       // status=split is that advice taken. Keeping it an error would leave the
       // task wedged -- append-only docs mean the blocks cannot be removed, and a
       // gate whose only exit is --no-verify is a gate on its way out.
       (splitAccepted ? warnings : errors).push(
-        `${role} ran ${runs}× (budget ${RETRY_BUDGET}) — ` +
+        `${role} ran ${perSlice ?? runs}×${perSlice !== null ? " on one slice" : ""} (budget ${RETRY_BUDGET}) — ` +
           (splitAccepted
             ? `kept as history: this task was split into ${data.splitInto.join(", ")}`
             : `the gate keeps bouncing it; split the task or fix the spec instead of retrying (Agents.md §5.5)`),
