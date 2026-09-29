@@ -3370,13 +3370,6 @@ if (args.has("--contract")) {
   process.exit(0);
 }
 
-// --bootstrap (#64): stage 1 as a command. In the measured run the orchestrator
-// subagent spent 2:34 and 110k tokens copying templates and filling fields the
-// coordinator already held, then failed a gate on one of them. Every field here
-// is either given (the coordinator read the tracker in step 0) or derived by
-// config — nothing to judge, so nothing for a model to do.
-//   exit 0 = folder written and it validates · 1 = refused (exists, protected
-//   branch, no git user) or the written folder fails the validator · 2 = bad input.
 // R5 (#65): telemetry windows must have a witness. In the SHOP-7 run the
 // coordinator typed round-minute windows no clock produced, and the validator
 // was green. --advance is now the only writer of telemetry, and it appends one
@@ -3404,6 +3397,13 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
   return { errors, warnings };
 }
 
+// --bootstrap (#64): stage 1 as a command. In the measured run the orchestrator
+// subagent spent 2:34 and 110k tokens copying templates and filling fields the
+// coordinator already held, then failed a gate on one of them. Every field here
+// is either given (the coordinator read the tracker in step 0) or derived by
+// config — nothing to judge, so nothing for a model to do.
+//   exit 0 = folder written and it validates · 1 = refused (exists, protected
+//   branch, no git user) or the written folder fails the validator · 2 = bad input.
 export function bootstrapInputErrors(o, { repos = CFG.repos ?? [], branchTypes = Object.keys(CFG.routing?.map ?? {}), urlPattern = CFG.tracker?.urlPattern } = {}) {
   if (o === null || typeof o !== "object" || Array.isArray(o)) return ["input must be a JSON object"];
   const out = [];
