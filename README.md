@@ -364,6 +364,8 @@ node install.mjs --bench --stage adversary --runs 3 --agent 'claude -p --agent a
 node install.mjs --bench --stage full --agent 'claude -p --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
 # slice có đáng không: task 10 file (kernel/eval/sliced), S1+S2 mỗi slice 1 agent vs --unsliced 1 agent; so "peak" = context của turn lớn nhất
 node install.mjs --bench --stage implementation [--unsliced] --agent 'claude -p --model sonnet --agent implementer --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
+# đo sliceBytes cho model/CLI của bạn: --pad N = N byte file có sẵn mà implementer phải đọc; tăng N tới khi peak ~150k hoặc báo ⚠ auto-compact
+node install.mjs --bench --stage implementation --unsliced --pad 64000 --agent '…như trên…'
 ```
 
 Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` → exit 2. Không có event `result` (CLI khác, hoặc quên `--output-format stream-json`) → exit 1, không đoán số.

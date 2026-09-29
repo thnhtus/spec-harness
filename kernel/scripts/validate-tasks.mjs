@@ -423,7 +423,7 @@ const STAMP_LOG = join(TASKS_DIR, "_stamp.log");
 const SLICE_BYTES = CFG.sliceBytes;
 const needSliceBytes = (who) => {
   if (Number.isInteger(SLICE_BYTES) && SLICE_BYTES >= 1) return;
-  console.error(`✖ ${who}: config.sliceBytes (integer ≥ 1) is required — the bytes of existing files in 03 above which implementation must be split into slices${CFG.sliceFiles !== undefined ? " (config.sliceFiles was replaced by sliceBytes in #73 — rename it; 100000 is the shipped value)" : ""}`);
+  console.error(`✖ ${who}: config.sliceBytes (integer ≥ 1) is required — the bytes of existing files in 03 above which implementation must be split into slices${CFG.sliceFiles !== undefined ? " (config.sliceFiles was replaced by sliceBytes in #73 — rename it; 64000 is the shipped value, measured in #76)" : ""}`);
   process.exit(2);
 };
 const needStampSince = (who) => {

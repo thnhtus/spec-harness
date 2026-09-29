@@ -402,6 +402,24 @@ function installAgentsLayer(P, keep) {
   keep(join(SRC, "adapters/AGENTS.template.md"), join(P, "AGENTS.md"));
 }
 
+// #75: a reinstall keeps the user's config, so a renamed key would exit 2 until
+// hand-edited. Swap it in place (same position) for the new key with the SHIPPED
+// value: the old unit does not convert (a file count is not a byte budget).
+const RENAMED = { sliceFiles: "sliceBytes" };
+function migrateConfig(f) {
+  let cfg; try { cfg = JSON.parse(read(f)); } catch { return []; }
+  const ex = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))), done = [];
+  const out = {};
+  for (const [k, v] of Object.entries(cfg)) {
+    const base = k.replace(/^_/, ""), nk = RENAMED[base] && k.slice(0, k.length - base.length) + RENAMED[base];
+    if (!nk) { out[k] = v; continue; }
+    if (k[0] !== "_") done.push(`${k} → ${nk}${nk in cfg ? " (already set, old key dropped)" : ` = ${ex[nk]}`}`);
+    if (!(nk in cfg)) out[nk] = ex[nk];
+  }
+  if (done.length) writeFileSync(f, JSON.stringify(out, null, 2) + "\n");
+  return done;
+}
+
 function installInto(P, clis = []) {
   // Nguồn thiếu folder = bản phát hành hỏng (package.json `files:` quên khai,
   // hoặc tarball cắt sai). Không bắt sớm thì lỗi rơi ra dưới dạng stack trace
@@ -459,6 +477,7 @@ function installInto(P, clis = []) {
   // bằng văn bản; văn bản là thứ model chọn tuân thủ, deny thì không.
   keep(join(SRC, "adapters/example/settings.json"), join(P, ".claude/settings.json"));
   keep(join(SRC, "adapters/example/harness.config.json"), join(P, "harness.config.json"));
+  const migrated = migrateConfig(join(P, "harness.config.json"));
   keep(join(SRC, "adapters/ProjectRules.template.md"), join(P, "docs/agents/ProjectRules.md"));
   keep(join(SRC, "commands/start-task.md"), join(P, ".claude/commands/start-task.md"));
   cpSync(join(SRC, "commands/init-project-rules.md"), join(P, ".claude/commands/init-project-rules.md"));
@@ -502,7 +521,7 @@ function installInto(P, clis = []) {
   const signpost = installSignpost(P, wasEmpty);
 
   execFileSync(process.execPath, ["scripts/validate-tasks.mjs", "--self-check"], { cwd: P, stdio: "inherit" });
-  return { kept, hookSkipped, signpost, clobbered, clis: want };
+  return { kept, hookSkipped, signpost, clobbered, clis: want, migrated };
 }
 
 // Bố cục B (harness/ đứng cạnh fe/ be/): CLI chỉ đọc .claude/ ở cwd và các thư
@@ -650,14 +669,45 @@ function buildEvalCase(c, root) {
 // implementation chạy mỗi slice 1 lần agent (--unsliced: 1 lần cho cả plan, 03
 // bỏ cột Slice) và so peak context của turn lớn nhất.
 const SLICED = join(SRC, "kernel/eval/sliced");
-function buildSlicedCase(root, { unsliced = false } = {}) {
+// #76 --pad N: N bytes of EXISTING code on main that 03 changes (a price field
+// rename across the catalog), so the implementer must read it — the thing
+// sliceBytes budgets. Split into ~40 KB files: a CLI read tool caps one file.
+// sliceBytes is lifted in the sandbox: the bench measures, it does not gate.
+const PAD_FILE = 40000;
+function padCatalog(P, bytes) {
+  const files = [];
+  for (let f = 0, left = bytes; left > 0; f++, left -= PAD_FILE) {
+    const lines = [];
+    for (let i = 0, n = 0; n < Math.min(left, PAD_FILE); i++) {
+      const id = String(f * 1000 + i).padStart(5, "0");
+      const l = `export const P${id} = { sku: "SKU-${id}", name: "Item ${id}", price: ${(i * 37) % 9000 / 100 + 1} };\n`;
+      lines.push(l); n += l.length;
+    }
+    const rel = `src/catalog/part-${String(f).padStart(2, "0")}.js`;
+    mkdirSync(join(P, "src/catalog"), { recursive: true });
+    writeFileSync(join(P, rel), lines.join("")); files.push(rel);
+  }
+  return files;
+}
+function buildSlicedCase(root, { unsliced = false, pad = 0 } = {}) {
   const { P, git } = buildBase(root);
+  const padded = pad ? padCatalog(P, pad) : [];
+  if (pad) {
+    const cp = join(P, "harness.config.json");
+    writeFileSync(cp, JSON.stringify({ ...JSON.parse(read(cp)), sliceBytes: 1e12 }, null, 2) + "\n");
+    git("add", "-A"); git("commit", "--no-verify", "-qm", "catalog");
+  }
   const vec = JSON.parse(read(join(SLICED, "task/task.agent.json"))).complexity.vector;
   spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-8"], { cwd: P, stdio: "ignore" });
   git("switch", "-qc", "feature/SHOP-8-cart");
   const T = "docs/tasks/sprint-1/SHOP-8-cart", t = join(P, T);
   cpSync(join(SLICED, "task"), t, { recursive: true });
   cpSync(join(P, "docs/tasks/_templates/task.agent.schema.json"), join(t, "task.agent.schema.json"));
+  if (pad) {
+    const pl = join(t, "03-Technical-Plan.md");
+    const rows = padded.map((f) => `| \`${f}\` | modify | rename every \`price:\` field to \`unitPrice:\` (values unchanged) | AC-05 | S2 |\n`).join("");
+    writeFileSync(pl, read(pl).replace(/(\| `test\/cart\/checkout\.test\.js` \|[^\n]*\n)/, `$1${rows}`));
+  }
   if (unsliced) {
     // Cả plan một context: bỏ cột Slice (file mới = 0 B, #73 không đòi slice).
     const pl = join(t, "03-Technical-Plan.md");
@@ -667,6 +717,10 @@ function buildSlicedCase(root, { unsliced = false } = {}) {
   spawnSync(process.execPath, ["scripts/lease.mjs", "acquire", T], { cwd: P });
   return { P, T };
 }
+// #76: the first --pad bench showed an agent renaming 200 KB with one `sed` and
+// reading none of it (peak +17k) — bytes on disk are not bytes read. The budget
+// guards the worst case (the implementer reads what it changes), so --pad asks for it.
+const PAD_PROMPT = "Open every `src/catalog/` file with your file-read tool in full before editing it; do not rewrite them with sed/awk/perl or a script.\n";
 const IMPL_PROMPT = (task, slice) =>
   `You are the \`implementer\` subagent (stage implementation, Gate 4) for the task in \`${task}\`${slice ? `, building slice ${slice} only` : ""}.\n` +
   `First run \`node scripts/validate-tasks.mjs --pack ${task} implementation${slice ? ` --slice ${slice}` : ""}\` and read its output once. Do not open those files again, and do not read \`scripts/validate-tasks.mjs\`. ` +
@@ -737,10 +791,12 @@ if (args[0] === "--eval") {
 // tool_result của subagent). CLI khác → "no result event", exit 1, không đoán số.
 function benchStats(text) {
   const agents = new Map();
-  let result = null, tools = 0, peak = 0;
+  let result = null, tools = 0, peak = 0, compacted = 0;
   for (const l of text.split("\n")) {
     let e; try { e = JSON.parse(l.slice(l.indexOf("{"))); } catch { continue; }
     if (e.type === "result") result = e;
+    // #76: an auto-compact means the run hit the wall and dropped context — its peak is the wall, not the need.
+    if (e.type === "system" && e.subtype === "compact_boundary") compacted++;
     // #72 peak: the biggest context one main-thread turn carried (subagent turns excluded).
     const u = e.type === "assistant" && !e.parent_tool_use_id && e.message?.usage;
     if (u) peak = Math.max(peak, (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0));
@@ -761,7 +817,7 @@ function benchStats(text) {
   const models = Object.fromEntries(Object.entries(result.modelUsage ?? {}).map(([m, u]) => [m, {
     in: u.inputTokens, out: u.outputTokens, cacheRead: u.cacheReadInputTokens, cacheWrite: u.cacheCreationInputTokens,
     thinking: u.thinkingTokens ?? 0, cost: u.costUSD }]));
-  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, peak, models, agents: [...agents.values()] };
+  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, peak, compacted, models, agents: [...agents.values()] };
 }
 
 if (args[0] === "--bench") {
@@ -770,33 +826,34 @@ if (args[0] === "--bench") {
   const perRun = Number(opt("--timeout", 3600)) * 1000;
   const bench = JSON.parse(read(join(EVAL, "cases.json"))).benchTask;
   if (!cmd || !["adversary", "full", "implementation"].includes(stage) || !(runs >= 1))
-    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
+    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced] [--pad <bytes>]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
   if (stage === "implementation") {
     // #72: một lần chạy = mọi slice nối tiếp (mỗi slice 1 agent mới, qua --advance thật);
     // --unsliced = 1 agent cho cả plan. peak = context lớn nhất của 1 turn — con số
     // slice sinh ra để hạ. Đúng khi mọi slice chạy xong và Gate 4 còn lại xanh.
-    const unsliced = args.includes("--unsliced"), rowsI = [];
+    const unsliced = args.includes("--unsliced"), pad = Number(opt("--pad", 0)), rowsI = [];
+    if (!(pad >= 0)) { console.error("--pad <bytes ≥ 0>"); process.exit(2); }
     for (let i = 0; i < runs; i++) {
       const root = mkdtempSync(join(tmpdir(), "sh-bench-"));
-      const { P, T } = buildSlicedCase(root, { unsliced });
+      const { P, T } = buildSlicedCase(root, { unsliced, pad });
       const parts = [], log = [];
       for (const sl of unsliced ? [null] : ["S1", "S2"]) {
         const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(sl ? ["--slice", sl] : [])], { cwd: P, encoding: "utf8" });
         if (a.status !== 0) { log.push(`advance ${sl}: ${a.stderr}`); parts.push(null); break; }
-        const r = spawnSync(cmd, { cwd: P, shell: true, input: IMPL_PROMPT(T, sl), encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
+        const r = spawnSync(cmd, { cwd: P, shell: true, input: IMPL_PROMPT(T, sl) + (pad && sl !== "S1" ? PAD_PROMPT : ""), encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
         log.push(`--- ${sl ?? "all"} ---\n${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
         parts.push(benchStats(r.stdout ?? ""));
       }
       writeFileSync(join(root, "agent.log"), log.join("\n"));
       const ok = parts.every(Boolean) && parts.length === (unsliced ? 1 : 2);
-      const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)) };
+      const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)), compacted: parts.reduce((n, p) => n + p.compacted, 0) };
       rowsI.push(sum);
       if (!sum) console.log(`✖ run ${i + 1}: ${log.at(-1).slice(0, 300)}`);
-      else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"}: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · $${sum.costUsd.toFixed(2)} · ${sum.turns} turns · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
+      else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"} pad ${pad} B: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · $${sum.costUsd.toFixed(2)} · ${sum.turns} turns${sum.compacted ? ` · ⚠ ${sum.compacted} auto-compact (peak = the wall, context was dropped)` : ""} · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
       if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
     }
     const okI = rowsI.filter(Boolean), medI = (k) => okI.map((r) => r[k]).sort((a, b) => a - b)[(okI.length - 1) >> 1];
-    if (okI.length) console.log(`\nmedian of ${okI.length}: ` + JSON.stringify({ stage, unsliced, peak: medI("peak"), apiMs: medI("apiMs"), costUsd: medI("costUsd"), turns: medI("turns") }));
+    if (okI.length) console.log(`\nmedian of ${okI.length}: ` + JSON.stringify({ stage, unsliced, pad, peak: medI("peak"), apiMs: medI("apiMs"), costUsd: medI("costUsd"), turns: medI("turns") }));
     process.exit(okI.length === rowsI.length ? 0 : 1);
   }
   const rows = [];
@@ -834,10 +891,11 @@ if (args[0] === "--self-test") {
       ev({ type: "assistant", message: { usage: { input_tokens: 5, cache_read_input_tokens: 400 }, content: [] } }),
       ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "done\n<usage>subagent_tokens: 1200\ntool_uses: 7\nduration_ms: 9000</usage>" }] }] } }),
       "not json",
+      ev({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "auto", pre_tokens: 168000 } }),
       ev({ type: "result", duration_api_ms: 60000, total_cost_usd: 0.5, num_turns: 3, modelUsage: { m: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, thinkingTokens: 5, costUSD: 0.5 } } }),
     ].join("\n");
     const b = benchStats(canned);
-    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, peak: 1000, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
+    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, peak: 1000, compacted: 1, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
       agents: [{ type: "adversary", model: "mid", tokens: 1200, tools: 7, ms: 9000 }] };
     if (JSON.stringify(b) !== JSON.stringify(want)) fail("benchStats đọc sai stream-json đóng hộp", JSON.stringify(b));
     if (benchStats(canned.split("\n").slice(0, 5).join("\n")) !== null) fail("benchStats: không có event result mà vẫn ra số");
@@ -857,6 +915,21 @@ if (args[0] === "--self-test") {
     if (pk.status !== 0 || unsliced === pk.stdout.includes("builds slice S1 only")) fail(`#72: --pack trên fixture sliced${unsliced ? " (--unsliced)" : ""} sai`, pk.stderr);
     const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(unsliced ? [] : ["--slice", "S1"])], { cwd: P, encoding: "utf8" });
     if (a.status !== 0) fail(`#72: --advance trên fixture sliced${unsliced ? " (--unsliced)" : ""} không exit 0`, a.stderr);
+    rmSync(root, { recursive: true, force: true });
+  }
+  // #76 --pad: đúng N byte file có sẵn, nằm trong 03, validator xanh (sliceBytes nâng trong sandbox),
+  // và với sliceBytes thật thì chính các file đó phải ép chia slice — pad là thứ ngân sách đo.
+  for (const unsliced of [false, true]) {
+    const root = mkdtempSync(join(tmpdir(), "sh-pad-")), N = 90000;
+    const { P, T } = buildSlicedCase(root, { unsliced, pad: N });
+    const cat = readdirSync(join(P, "src/catalog")), bytes = cat.reduce((n, f) => n + statSync(join(P, "src/catalog", f)).size, 0);
+    const plan = read(join(P, T, "03-Technical-Plan.md"));
+    if (Math.abs(bytes - N) > 200 || cat.length !== 3 || !cat.every((f) => plan.includes(`\`src/catalog/${f}\``))) fail(`#76: --pad ${N} sai (${bytes} B, ${cat.length} file, trong 03?)`);
+    const V = () => JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+    if (V().length) fail(`#76: fixture --pad${unsliced ? " --unsliced" : ""} không qua validator`, V().join("\n"));
+    const cp = join(P, "harness.config.json");
+    writeFileSync(cp, JSON.stringify({ ...JSON.parse(read(cp)), sliceBytes: 50000 }));
+    if (!V().some((x) => unsliced ? /every row needs a Slice/.test(x) : /slice S2 holds \d+ B/.test(x))) fail(`#76: pad ${N} B với sliceBytes 50000 phải ép slice${unsliced ? "" : " (S2 quá tải)"}`, V().join("\n"));
     rmSync(root, { recursive: true, force: true });
   }
   const git = (cwd, ...a) => spawnSync("git", a, { cwd, stdio: "ignore" });
@@ -1393,6 +1466,23 @@ if (args[0] === "--self-test") {
   writeFileSync(join(T, "docs/agents/ProjectRules.md"), pr + "\nMARKER\n");
   installInto(T);
   if (!read(join(T, "docs/agents/ProjectRules.md")).includes("MARKER")) fail("cài lại đè mất adapter");
+  // #75: config của bản cũ còn sliceFiles → cài lại đổi tại chỗ, giữ thứ tự key + mọi giá trị khác; lần 2 không đụng.
+  {
+    const cp = join(T, "harness.config.json"), cur = read(cp), c = JSON.parse(cur), keys = Object.keys(c);
+    const at = keys.indexOf("sliceBytes"), old = {};
+    keys.forEach((k, i) => { if (i === at - 1 && k === "_sliceBytes") old._sliceFiles = "old comment"; else if (i === at) old.sliceFiles = 8; else old[k] = c[k]; });
+    old.docLanguage = "vi-TEST";
+    writeFileSync(cp, JSON.stringify(old, null, 2) + "\n");
+    const m = installInto(T).migrated, n = JSON.parse(read(cp));
+    if (m.join() !== "sliceFiles → sliceBytes = 64000" || n.sliceBytes !== 64000 || "sliceFiles" in n || "_sliceFiles" in n || !n._sliceBytes.includes("bytes") || n.docLanguage !== "vi-TEST" || Object.keys(n).join() !== keys.join())
+      fail("#75: cài lại không đổi sliceFiles → sliceBytes tại chỗ", JSON.stringify({ m, keys: Object.keys(n) }));
+    writeFileSync(cp, JSON.stringify(JSON.parse(read(cp)))); // định dạng riêng của user (minified) — không có gì để đổi thì không được ghi lại
+    const again = read(cp);
+    if (installInto(T).migrated.length || read(cp) !== again) fail("#75: cài lại lần 2 vẫn đụng config đã đổi");
+    writeFileSync(cp, JSON.stringify({ ...JSON.parse(again), sliceFiles: 3 }, null, 2) + "\n");
+    if (!/already set/.test(installInto(T).migrated.join()) || "sliceFiles" in JSON.parse(read(cp)) || JSON.parse(read(cp)).sliceBytes !== 64000) fail("#75: có cả hai key thì bỏ key cũ, giữ sliceBytes của user");
+    writeFileSync(cp, cur);
+  }
 
   // gate phải CHẶN commit thật — không chỉ "symlink có tồn tại"
   if (commit(T)) fail("gate KHÔNG chặn commit task hỏng");
@@ -1913,7 +2003,7 @@ if (args[0] === "--self-test") {
       writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: 100 }));
       if (!V().some((x) => /existing files hold \d+ B \(> sliceBytes 100\)/.test(x))) fail("#73: 03 trên file có sẵn vượt sliceBytes, chưa có dispatch nào, không Slice → phải error", V().join("\n"));
       writeFileSync(cfgP, cfgKeep);
-      if (V().some((x) => /sliceBytes/.test(x))) fail("#73: dưới sliceBytes 100000 không được ép slice", V().join("\n"));
+      if (V().some((x) => /sliceBytes/.test(x))) fail("#73: dưới sliceBytes 64000 không được ép slice", V().join("\n"));
       writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: 100 }));
       writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [{ stage: "implementation", tier: "mid", attempt: 1 }] }));
       if (V().some((x) => /sliceBytes/.test(x))) fail("#73: sau dispatch implementation đầu tiên byte không đo lại (file lớn dần khi đang build)", V().join("\n"));
@@ -2042,13 +2132,15 @@ if (!yes && readdirSync(target).filter((n) => n !== ".git").length) {
   if (ans !== "y" && ans !== "yes") die("đã huỷ, không ghi gì.");
 }
 
-const { kept, hookSkipped, signpost, clobbered, clis: done } = installInto(target, clis);
+const { kept, hookSkipped, signpost, clobbered, clis: done, migrated } = installInto(target, clis);
 
 console.log(`\n✅ đã cài vào ${where}`);
 if (kept.length) {
   console.log("\ngiữ nguyên (đã có sẵn, không đè):");
   for (const k of kept) console.log(`   ${k}`);
 }
+
+if (migrated.length) console.log(`\n🔁 harness.config.json: đổi key đã bị đổi tên:\n${migrated.map((m) => `   ${m}`).join("\n")}`);
 
 if (clobbered.length) console.log(`
 ⚠️  ĐÃ ĐÈ file trùng tên của project (kernel bắt buộc đè để nâng được phiên bản):
