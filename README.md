@@ -364,8 +364,10 @@ node install.mjs --bench --stage adversary --runs 3 --agent 'claude -p --agent a
 node install.mjs --bench --stage full --agent 'claude -p --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
 # slice có đáng không: task 10 file (kernel/eval/sliced), S1+S2 mỗi slice 1 agent vs --unsliced 1 agent; so "peak" = context của turn lớn nhất
 node install.mjs --bench --stage implementation [--unsliced] --agent 'claude -p --model sonnet --agent implementer --permission-mode bypassPermissions --strict-mcp-config --output-format stream-json --verbose'
-# đo sliceBytes cho model/CLI của bạn: --pad N = N byte file có sẵn mà implementer phải đọc; tăng N tới khi peak ~150k hoặc báo ⚠ auto-compact
-node install.mjs --bench --stage implementation --unsliced --pad 64000 --agent '…như trên…'
+# đo sliceBytes cho model của bạn (tự dò: nhân đôi từ 32 KB tới khi auto-compact, rồi chia đôi 2 bước) → dán vào models.<cli>.<tier>.sliceBytes
+node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --runs 2 --agent '…như trên, --model <model của bạn>…'
+# một điểm đo tay: --pad N = N byte file có sẵn implementer phải đọc
+node install.mjs --bench --stage implementation --unsliced --pad 64000 --agent '…'
 ```
 
 Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` → exit 2. Không có event `result` (CLI khác, hoặc quên `--output-format stream-json`) → exit 1, không đoán số.
@@ -378,7 +380,7 @@ Một lần chạy thật: coordinator tốn 16/39 lượt cho validate/attempts
 node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli claude   # trước mỗi dispatch: validate + renew lease + attempts + telemetry giờ máy + handoff cuối; exit 1 = dừng
 node scripts/validate-tasks.mjs --bootstrap '<json>'                     # stage 1 không cần subagent: tạo folder từ _templates, validate, rollback nếu hỏng
 node scripts/validate-tasks.mjs --contract <stage>                       # mọi check output của stage phải qua, sinh từ chính hằng của validator
-node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (file có sẵn > sliceBytes byte) → mỗi slice 1 dispatch theo thứ tự, retry budget tính theo slice; slice sửa file ngoài dòng của nó → exit 1
+node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (file có sẵn > ngân sách của model: models.<cli>.<tier>.sliceBytes, không có thì sliceBytes) → mỗi slice 1 dispatch theo thứ tự, retry budget tính theo slice; slice sửa file ngoài dòng của nó → exit 1
 node scripts/validate-tasks.mjs --pack <task> <stage> [--base <nhánh>]   # gói input của 1 dispatch (luật + role file + contract + artifact + handoff + git không lọc), 1 lần đọc thay vì 6-10 lần Read; vượt packCap → exit 1
 ```
 

@@ -718,7 +718,9 @@ export function modelsDefects(cfg = CFG) {
     for (const t of TIER_ORDER) {
       const e = tiers?.[t];
       if (!e || typeof e.model !== "string" || !e.model) { errors.push(`config.models.${cli}.${t}.model is required once models.${cli} is set`); continue; }
-      for (const k of Object.keys(e)) if (!["model", "effort"].includes(k)) errors.push(`config.models.${cli}.${t}.${k}: unknown key (model, effort)`);
+      for (const k of Object.keys(e)) if (!["model", "effort", "sliceBytes"].includes(k)) errors.push(`config.models.${cli}.${t}.${k}: unknown key (model, effort, sliceBytes)`);
+      // #77: a budget that is present but unusable would silently fall back to the top-level one.
+      if ("sliceBytes" in e && !(Number.isInteger(e.sliceBytes) && e.sliceBytes >= 1)) errors.push(`config.models.${cli}.${t}.sliceBytes must be an integer ≥ 1, got ${JSON.stringify(e.sliceBytes)}`);
       // The subset every CLI that has the knob accepts (Claude adds xhigh/max, Codex ultra) —
       // a value one CLI rejects must not pass here and fail at dispatch.
       if ("effort" in e && !EFFORTS.includes(e.effort)) errors.push(`config.models.${cli}.${t}.effort must be one of ${EFFORTS.join("/")}, got ${JSON.stringify(e.effort)}`);
@@ -2445,6 +2447,14 @@ if (args.has("--self-check")) {
     assert.equal(contextBleed([up("a", 5000), sl("S1", 1, "mid", 6000), sl("S2", 1, "mid", 9000), sl("S3", 1, "mid", 14000), sl("S4", 1, "mid", 20000)]), null, "S5b: growing sibling slices are not bleed");
     assert.ok(contextBleed([up("a", 5000), sl("S1", 1, "mid", 9000), up("b", 14000), up("c", 20000)]), "S5b: the first slice still counts as its stage");
     assert.ok(Number.isInteger(CFG.sliceBytes) && CFG.sliceBytes >= 1, "S6: config.sliceBytes (integer ≥ 1) is required");
+    const cb = { sliceBytes: 9, models: { claude: { mid: { model: "x", sliceBytes: 5 } }, codex: { mid: { model: "y" } } } };
+    assert.deepEqual(sliceBudget(cb, "claude", "mid"), { bytes: 5, from: "models.claude.mid.sliceBytes" }, "#77: the model's own budget wins");
+    assert.deepEqual(sliceBudget(cb, "codex", "mid"), { bytes: 9, from: "sliceBytes" }, "#77: unmeasured model → top-level");
+    assert.deepEqual(sliceBudget(cb, null, "mid"), { bytes: 9, from: "sliceBytes" }, "#77: no --cli → top-level");
+    assert.deepEqual(sliceBudget({ ...cb, models: { claude: { mid: { sliceBytes: 0 } } } }, "claude", "mid").from, "sliceBytes", "#77: a non-positive budget is not used");
+    const mb = (v) => modelsDefects({ coordinatorTier: "mid", models: { claude: { cheap: { model: "a" }, mid: { model: "b", sliceBytes: v }, strong: { model: "c" } } } }).errors;
+    assert.deepEqual(mb(64000), [], "#77: models.<cli>.<tier>.sliceBytes is a known key");
+    assert.equal(mb("64k").length, 1, "#77: a declared sliceBytes that is not an integer ≥ 1 is a config error, not a silent fallback");
     // #69
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S2", 1), { stage: "fsd_write", slice: "S1" }]), ["S1"], "#69: a slice with no implementation dispatch is missing");
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S1", 1), sl("S2", 1)]), [], "#69: every slice dispatched");
@@ -3585,6 +3595,14 @@ export function planSlices(plan = "", cap = Infinity, size = null) {
   return { slices: Object.keys(slices).sort((a, b) => a.slice(1) - b.slice(1)), files, errors };
 }
 
+// #77: the wall is the model's context window, so the budget sits next to the
+// model name: models.<cli>.<tier>.sliceBytes, else the top-level sliceBytes
+// (unmeasured models). `from` names the key so an exit 1 says what to re-measure.
+export function sliceBudget(cfg, cli, tier) {
+  const own = cfg.models?.[cli]?.[tier]?.sliceBytes;
+  return Number.isInteger(own) && own >= 1 ? { bytes: own, from: `models.${cli}.${tier}.sliceBytes` } : { bytes: cfg.sliceBytes, from: "sliceBytes" };
+}
+
 // #69: a slice with no implementation dispatch by Gate 5 means the diff was built
 // in one context after all — the thing slicing exists to prevent. Error, not warning.
 export function missingSlices(slices, telemetry = []) {
@@ -3792,7 +3810,16 @@ if (args.has("--advance")) {
   if (d.attempt && stage === "implementation") {
     needSliceBytes("--advance");
     const plan = join(dir, "03-Technical-Plan.md");
-    const { slices } = planSlices(existsSync(plan) ? readFileSync(plan, "utf8") : "");
+    const planText = existsSync(plan) ? readFileSync(plan, "utf8") : "";
+    const { slices } = planSlices(planText);
+    // #73/#77: bytes measured once, before the first implementation dispatch —
+    // after that the files grow as they are built. Nothing is written on exit 1.
+    if (!(data.telemetry ?? []).some((e) => e.stage === "implementation")) {
+      const b = sliceBudget(CFG, cli, resolveTier(d.role, data.taskComplexity, 1, CFG, cli).tier);
+      const code = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
+      const over = planSlices(planText, b.bytes, (p) => { try { return statSync(join(code, p)).size; } catch { return 0; } }).errors.filter((x) => /sliceBytes/.test(x));
+      if (over.length) { console.error(`✖ --advance implementation: budget ${b.bytes} B from ${b.from}${cli ? "" : " (no --cli: the per-model budget is not read)"}\n  ${over.join("\n  ")}\n  nothing was written`); process.exit(1); }
+    }
     if (slices.length && !slices.includes(slice)) { console.error(`✖ --advance implementation: 03 is sliced (${slices.join(", ")}) — pass --slice <one of them>`); usage(); }
     if (!slices.length && slice) { console.error("✖ --advance: --slice given but 03 has no Slice column"); usage(); }
     // A slice's attempt = its earlier dispatches in telemetry (machine-written, witnessed by _stamp.log).
@@ -4598,14 +4625,11 @@ for (const { sprint, task, path } of folders) {
   const RETRY_BUDGET = CFG.retryBudget ?? 4;
   // S1–S5 (#67): the slice set comes from 03, the stage that owns the plan.
   const planP = join(path, "03-Technical-Plan.md");
-  // #73: bytes are measured once — at implementation before its first dispatch
-  // (the validator run --advance makes). After that the files grow as they are built.
+  // #77: the byte budget is the dispatching model's, so --advance implementation
+  // measures it (it knows --cli and the tier); here only the shape of the Slice column.
   const implTel = (data.telemetry ?? []).filter((e) => e?.stage === "implementation");
-  const measure = data.currentStage === "implementation" && !implTel.length;
-  const codeDir = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
-  const sizeOf = (p) => { try { return statSync(join(codeDir, p)).size; } catch { return 0; } };
   const sliced = STAGE_ORDER.indexOf(data.currentStage) >= STAGE_ORDER.indexOf("implementation") && existsSync(planP)
-    ? planSlices(readFileSync(planP, "utf8"), SLICE_BYTES, measure ? sizeOf : null) : { slices: [], files: {}, errors: [] };
+    ? planSlices(readFileSync(planP, "utf8")) : { slices: [], files: {}, errors: [] };
   errors.push(...sliced.errors);
   // #73: slices dispatched, then the Slice column removed from 03 — the plan no longer says what was built where.
   if (!sliced.slices.length && implTel.some((e) => e.slice) && existsSync(planP))

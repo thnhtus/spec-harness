@@ -789,6 +789,19 @@ if (args[0] === "--eval") {
 // chênh là 503 retry). Thuần, để self-test chạy được trên fixture đóng hộp.
 // ponytail: chỉ hiểu stream-json của Claude Code (event "result" + <usage> trong
 // tool_result của subagent). CLI khác → "no result event", exit 1, không đoán số.
+// #77: bytes of src/catalog/ that came back through the file-read tool — the pad
+// only measures a model that READ it (haiku renamed 256 KB with sed, read 46 KB).
+function padRead(text) {
+  const ids = new Set(); let n = 0;
+  for (const l of text.split("\n")) {
+    let e; try { e = JSON.parse(l.slice(l.indexOf("{"))); } catch { continue; }
+    for (const c of e.message?.content ?? []) {
+      if (c.type === "tool_use" && c.name === "Read" && /src\/catalog\//.test(c.input?.file_path ?? "")) ids.add(c.id);
+      if (c.type === "tool_result" && ids.has(c.tool_use_id)) n += JSON.stringify(c.content ?? "").length;
+    }
+  }
+  return n;
+}
 function benchStats(text) {
   const agents = new Map();
   let result = null, tools = 0, peak = 0, compacted = 0;
@@ -826,32 +839,61 @@ if (args[0] === "--bench") {
   const perRun = Number(opt("--timeout", 3600)) * 1000;
   const bench = JSON.parse(read(join(EVAL, "cases.json"))).benchTask;
   if (!cmd || !["adversary", "full", "implementation"].includes(stage) || !(runs >= 1))
-    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced] [--pad <bytes>]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
+    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced] [--pad <bytes> | --find-slice-bytes]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
   if (stage === "implementation") {
     // #72: một lần chạy = mọi slice nối tiếp (mỗi slice 1 agent mới, qua --advance thật);
     // --unsliced = 1 agent cho cả plan. peak = context lớn nhất của 1 turn — con số
     // slice sinh ra để hạ. Đúng khi mọi slice chạy xong và Gate 4 còn lại xanh.
-    const unsliced = args.includes("--unsliced"), pad = Number(opt("--pad", 0)), rowsI = [];
-    if (!(pad >= 0)) { console.error("--pad <bytes ≥ 0>"); process.exit(2); }
-    for (let i = 0; i < runs; i++) {
-      const root = mkdtempSync(join(tmpdir(), "sh-bench-"));
-      const { P, T } = buildSlicedCase(root, { unsliced, pad });
-      const parts = [], log = [];
-      for (const sl of unsliced ? [null] : ["S1", "S2"]) {
-        const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(sl ? ["--slice", sl] : [])], { cwd: P, encoding: "utf8" });
-        if (a.status !== 0) { log.push(`advance ${sl}: ${a.stderr}`); parts.push(null); break; }
-        const r = spawnSync(cmd, { cwd: P, shell: true, input: IMPL_PROMPT(T, sl) + (pad && sl !== "S1" ? PAD_PROMPT : ""), encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
-        log.push(`--- ${sl ?? "all"} ---\n${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
-        parts.push(benchStats(r.stdout ?? ""));
+    const unsliced = args.includes("--unsliced");
+    const runPad = (pad) => {
+      const rowsI = [];
+      for (let i = 0; i < runs; i++) {
+        const root = mkdtempSync(join(tmpdir(), "sh-bench-"));
+        const { P, T } = buildSlicedCase(root, { unsliced, pad });
+        const parts = [], log = [];
+        for (const sl of unsliced ? [null] : ["S1", "S2"]) {
+          const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(sl ? ["--slice", sl] : [])], { cwd: P, encoding: "utf8" });
+          if (a.status !== 0) { log.push(`advance ${sl}: ${a.stderr}`); parts.push(null); break; }
+          const r = spawnSync(cmd, { cwd: P, shell: true, input: IMPL_PROMPT(T, sl) + (pad && sl !== "S1" ? PAD_PROMPT : ""), encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
+          log.push(`--- ${sl ?? "all"} ---\n${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
+          const st = benchStats(r.stdout ?? "");
+          if (st) st.padRead = padRead(r.stdout ?? "");
+          parts.push(st);
+        }
+        writeFileSync(join(root, "agent.log"), log.join("\n"));
+        const ok = parts.every(Boolean) && parts.length === (unsliced ? 1 : 2);
+        const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)), compacted: parts.reduce((n, p) => n + p.compacted, 0), padRead: parts.reduce((n, p) => n + p.padRead, 0), models: [...new Set(parts.flatMap((p) => Object.keys(p.models)))] };
+        rowsI.push(sum);
+        if (!sum) console.log(`✖ run ${i + 1}: ${log.at(-1).slice(0, 300)}`);
+        else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"} pad ${pad} B: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · $${sum.costUsd.toFixed(2)} · ${sum.turns} turns${pad ? ` · read ${sum.padRead} B of the pad${sum.padRead < 0.9 * pad ? " ⚠ UNREAD — this run measures nothing" : ""}` : ""}${sum.compacted ? ` · ⚠ ${sum.compacted} auto-compact (peak = the wall, context was dropped)` : ""} · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
+        if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
       }
-      writeFileSync(join(root, "agent.log"), log.join("\n"));
-      const ok = parts.every(Boolean) && parts.length === (unsliced ? 1 : 2);
-      const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)), compacted: parts.reduce((n, p) => n + p.compacted, 0) };
-      rowsI.push(sum);
-      if (!sum) console.log(`✖ run ${i + 1}: ${log.at(-1).slice(0, 300)}`);
-      else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"} pad ${pad} B: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · $${sum.costUsd.toFixed(2)} · ${sum.turns} turns${sum.compacted ? ` · ⚠ ${sum.compacted} auto-compact (peak = the wall, context was dropped)` : ""} · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
-      if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
+      return rowsI;
+    };
+    if (args.includes("--find-slice-bytes")) {
+      // #77: the budget is a property of the model, so measure it instead of shipping one number.
+      // Double from 32 KB until a pad auto-compacts, then 2 bisection steps (1 KB grain).
+      // A pad is good only if every --runs run finished with 0 compacts; a failed run aborts.
+      const good = (pad) => {
+        const rs = runPad(pad);
+        if (!rs.every(Boolean)) { console.error(`✖ --find-slice-bytes: a run at pad ${pad} did not finish — no number`); process.exit(1); }
+        // A compacted run stopped early, so its unread pad is the wall, not a shortcut.
+        if (rs.some((r) => !r.compacted && r.padRead < 0.9 * pad)) { console.error(`✖ --find-slice-bytes: at pad ${pad} the agent read under 90% of it through the file-read tool (sed/script instead) — the result would be a fake high budget; use a model/agent that follows PAD_PROMPT`); process.exit(1); }
+        rs.forEach((r) => r.models.forEach((m) => seen.add(m)));
+        return rs.every((r) => !r.compacted);
+      };
+      const seen = new Set(), CAP = 1024000;
+      let lo = 0, hi = null;
+      for (let p = 32000; p <= CAP && hi === null; p *= 2) good(p) ? (lo = p) : (hi = p);
+      for (let k = 0; k < 2 && hi !== null && hi - lo > 1000; k++) { const m = Math.round((lo + hi) / 2000) * 1000; good(m) ? (lo = m) : (hi = m); }
+      if (!lo) { console.error("✖ --find-slice-bytes: even 32000 B auto-compacted — slice everything this model reads, or give it a larger context"); process.exit(1); }
+      console.log(`\nsliceBytes ${lo} (largest pad with 0 auto-compacts${hi === null ? `; none up to ${CAP} B — the cap, not the wall` : `; ${hi} B compacted`}) · model(s): ${[...seen].join(", ")}`);
+      console.log(`paste into harness.config.json → models.<cli>.<tier>.sliceBytes: ${lo}  (the tier whose model is ${[...seen].join("/")})`);
+      process.exit(0);
     }
+    const pad = Number(opt("--pad", 0));
+    if (!(pad >= 0)) { console.error("--pad <bytes ≥ 0>"); process.exit(2); }
+    const rowsI = runPad(pad);
     const okI = rowsI.filter(Boolean), medI = (k) => okI.map((r) => r[k]).sort((a, b) => a - b)[(okI.length - 1) >> 1];
     if (okI.length) console.log(`\nmedian of ${okI.length}: ` + JSON.stringify({ stage, unsliced, pad, peak: medI("peak"), apiMs: medI("apiMs"), costUsd: medI("costUsd"), turns: medI("turns") }));
     process.exit(okI.length === rowsI.length ? 0 : 1);
@@ -917,6 +959,22 @@ if (args[0] === "--self-test") {
     if (a.status !== 0) fail(`#72: --advance trên fixture sliced${unsliced ? " (--unsliced)" : ""} không exit 0`, a.stderr);
     rmSync(root, { recursive: true, force: true });
   }
+  // #77 --find-slice-bytes: agent giả compact khi đọc > 90000 B → tìm ra đúng 80000 (32k✔ 64k✔ 128k✖ 96k✖ 80k✔).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-find-")), stub = join(root, "stub.mjs");
+    writeFileSync(stub, `import { readdirSync, statSync, readFileSync } from "node:fs"; readFileSync(0);
+let b = 0; try { for (const f of readdirSync("src/catalog")) b += statSync("src/catalog/" + f).size; } catch {}
+const ev = (o) => console.log(JSON.stringify(o));
+const lazy = process.env.STUB_LAZY === "1";
+for (const f of lazy ? [] : readdirSync("src/catalog")) { const id = "r" + f; ev({ type: "assistant", message: { content: [{ type: "tool_use", id, name: "Read", input: { file_path: process.cwd() + "/src/catalog/" + f } }] } }); ev({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: readFileSync("src/catalog/" + f, "utf8") }] } }); }
+if (b > 90000) ev({ type: "system", subtype: "compact_boundary" });
+ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelUsage: { "stub-model": { inputTokens: 1, outputTokens: 1, costUSD: 0 } } });\n`);
+    const f = spawnSync(process.execPath, [join(SRC, "install.mjs"), "--bench", "--stage", "implementation", "--unsliced", "--find-slice-bytes", "--agent", `node ${stub}`], { encoding: "utf8" });
+    if (f.status !== 0 || !/sliceBytes 80000 \(largest pad with 0 auto-compacts; 96000 B compacted\) · model\(s\): stub-model/.test(f.stdout)) fail("#77: --find-slice-bytes không tìm ra 80000 với agent giả compact ở > 90000 B", f.stdout.slice(-800) + f.stderr);
+    const lz = spawnSync(process.execPath, [join(SRC, "install.mjs"), "--bench", "--stage", "implementation", "--unsliced", "--find-slice-bytes", "--agent", `node ${stub}`], { encoding: "utf8", env: { ...process.env, STUB_LAZY: "1" } });
+    if (lz.status !== 1 || !/read under 90%/.test(lz.stderr) || /sliceBytes \d+/.test(lz.stdout)) fail("#77: agent không đọc pad (sed) → --find-slice-bytes phải exit 1, không in số", lz.stdout.slice(-400) + lz.stderr);
+    rmSync(root, { recursive: true, force: true });
+  }
   // #76 --pad: đúng N byte file có sẵn, nằm trong 03, validator xanh (sliceBytes nâng trong sandbox),
   // và với sliceBytes thật thì chính các file đó phải ép chia slice — pad là thứ ngân sách đo.
   for (const unsliced of [false, true]) {
@@ -927,9 +985,10 @@ if (args[0] === "--self-test") {
     if (Math.abs(bytes - N) > 200 || cat.length !== 3 || !cat.every((f) => plan.includes(`\`src/catalog/${f}\``))) fail(`#76: --pad ${N} sai (${bytes} B, ${cat.length} file, trong 03?)`);
     const V = () => JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
     if (V().length) fail(`#76: fixture --pad${unsliced ? " --unsliced" : ""} không qua validator`, V().join("\n"));
-    const cp = join(P, "harness.config.json");
+    const cp = join(P, "harness.config.json"), jp = join(P, T, "task.agent.json"), jK = read(jp);
     writeFileSync(cp, JSON.stringify({ ...JSON.parse(read(cp)), sliceBytes: 50000 }));
-    if (!V().some((x) => unsliced ? /every row needs a Slice/.test(x) : /slice S2 holds \d+ B/.test(x))) fail(`#76: pad ${N} B với sliceBytes 50000 phải ép slice${unsliced ? "" : " (S2 quá tải)"}`, V().join("\n"));
+    const a = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--advance", T, "implementation", ...(unsliced ? [] : ["--slice", "S1"])], { cwd: P, encoding: "utf8" });
+    if (a.status !== 1 || !(unsliced ? /every row needs a Slice/ : /slice S2 holds \d+ B/).test(a.stderr) || read(jp) !== jK) fail(`#76: pad ${N} B với sliceBytes 50000 → --advance phải exit 1, không ghi gì${unsliced ? "" : " (S2 quá tải)"}`, a.stderr);
     rmSync(root, { recursive: true, force: true });
   }
   const git = (cwd, ...a) => spawnSync("git", a, { cwd, stdio: "ignore" });
@@ -1994,19 +2053,33 @@ if (args[0] === "--self-test") {
       if (good.status !== 0) fail("#71: S1 chỉ sửa file của S1 (và task folder) phải qua", good.stderr);
       writeFileSync(srcF, srcKeep); writeFileSync(jp, jKeepS);
     }
-    // #73 e2e: bytes measured on the real repo before the first implementation dispatch.
+    // #73/#77 e2e: bytes measured on the real repo by --advance, before the first implementation dispatch,
+    // against the dispatching model's budget (models.<cli>.<tier>.sliceBytes, else sliceBytes).
     {
       const jKeepB = read(jp), cfgB = JSON.parse(cfgKeep), V = () => JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
       const unsl = planKeep; // fixture 03, no Slice column; src/discount.js + test exist (~0.6 KB)
-      writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [] }));
-      writeFileSync(planP, unsl);
-      writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: 100 }));
-      if (!V().some((x) => /existing files hold \d+ B \(> sliceBytes 100\)/.test(x))) fail("#73: 03 trên file có sẵn vượt sliceBytes, chưa có dispatch nào, không Slice → phải error", V().join("\n"));
+      const fresh = (tel = []) => writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", attempts: {}, telemetry: tel }));
+      const go = (...x) => { const r = adv(T, "implementation", ...x); fresh(); return r; };
+      fresh(); writeFileSync(planP, unsl);
+      const withModel = (top, own) => { const { sliceBytes: _, ...mid } = cfgB.models.claude.mid; writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: top, models: { ...cfgB.models, claude: { ...cfgB.models.claude, mid: { ...mid, ...(own ? { sliceBytes: own } : {}) } } } })); };
+      withModel(100);
+      let r = go("--cli", "claude");
+      if (r.status !== 1 || !/existing files hold \d+ B \(> sliceBytes 100\)/.test(r.stderr) || !/budget 100 B from sliceBytes\b/.test(r.stderr)) fail("#73: 03 trên file có sẵn vượt sliceBytes, chưa dispatch → --advance exit 1", r.stderr);
+      if (V().some((x) => /sliceBytes/.test(x))) fail("#77: validator (pre-commit/CI) không đo byte — nó không biết model nào dispatch", V().join("\n"));
+      withModel(100, 1e6);
+      r = go("--cli", "claude");
+      if (r.status !== 0) fail("#77: models.claude.mid.sliceBytes lớn phải thắng sliceBytes top-level", r.stderr);
+      withModel(1e6, 100);
+      r = go("--cli", "claude");
+      if (r.status !== 1 || !/budget 100 B from models\.claude\.mid\.sliceBytes/.test(r.stderr)) fail("#77: ngân sách riêng của model nhỏ phải chặn, và nói key nào", r.stderr);
+      r = go();
+      if (r.status !== 0) fail("#77: không --cli → dùng sliceBytes top-level (1e6), qua", r.stderr);
       writeFileSync(cfgP, cfgKeep);
-      if (V().some((x) => /sliceBytes/.test(x))) fail("#73: dưới sliceBytes 64000 không được ép slice", V().join("\n"));
-      writeFileSync(cfgP, JSON.stringify({ ...cfgB, sliceBytes: 100 }));
-      writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [{ stage: "implementation", tier: "mid", attempt: 1 }] }));
-      if (V().some((x) => /sliceBytes/.test(x))) fail("#73: sau dispatch implementation đầu tiên byte không đo lại (file lớn dần khi đang build)", V().join("\n"));
+      if (go("--cli", "claude").status !== 0) fail("#73: dưới ngân sách ship sẵn không được ép slice");
+      withModel(100);
+      fresh([{ stage: "implementation", tier: "mid", attempt: 1, startedAt: "2020-01-01T00:00:00Z", endedAt: "2020-01-01T00:01:00Z" }]);
+      r = adv(T, "implementation", "--cli", "claude");
+      if (r.status === 1 && /sliceBytes/.test(r.stderr)) fail("#73: sau dispatch implementation đầu tiên byte không đo lại (file lớn dần khi đang build)", r.stderr);
       writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeepB), currentStage: "implementation", status: "in_progress", telemetry: [{ stage: "implementation", slice: "S1", tier: "mid", attempt: 1 }] }));
       if (!V().some((x) => /no longer declares a Slice column/.test(x))) fail("#73: đã dispatch slice rồi bỏ cột Slice khỏi 03 phải error", V().join("\n"));
       writeFileSync(cfgP, cfgKeep); writeFileSync(jp, jKeepB); writeFileSync(planP, slicedPlan);
