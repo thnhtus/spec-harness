@@ -627,6 +627,11 @@ function buildBase(root) {
   cfg.repos = [{ name: "shop", path: ".", layer: cfg.layers[0] }];
   cfg.tracker.urlPattern = "^https://tracker\\.example/t/.+";
   writeFileSync(join(P, "harness.config.json"), JSON.stringify(cfg, null, 2) + "\n");
+  // #82: a real user deletes the servers they do not use before task one; left as
+  // placeholders, --preflight exits 1 and a --bench --stage full agent correctly
+  // stops at step 0a (found running pi: zero stages, a correct refusal).
+  // The sandbox has no MCP at all — the prompt stands in for the tracker.
+  writeFileSync(join(P, ".mcp.json"), JSON.stringify({ mcpServers: {} }, null, 2) + "\n");
   const pr = join(P, "docs/agents/ProjectRules.md");
   writeFileSync(pr, read(pr)
     .replace("| `<path-scoped unit test command>` |", "| `npm run test:scope` |")
@@ -2146,6 +2151,14 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
   // thứ quanh nó thì phải xanh: (1) mỗi fixture đúng là điểm bàn giao cho adversary
   // — validator chỉ còn thiếu 09, không thiếu gì khác (fixture hỏng thì eval đo
   // nhầm "agent kêu fixture hỏng"); (2) scorer đỏ/xanh đúng trên 09 viết sẵn.
+  // #82: the --bench --stage full sandbox must clear /start-task step 0a, or a
+  // paid run measures an agent correctly refusing to start.
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-base-"));
+    const pf = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight"], { cwd: buildBase(root).P, encoding: "utf8" });
+    rmSync(root, { recursive: true, force: true });
+    if (pf.status !== 0) fail("#82: buildBase sandbox không qua --preflight — bench full sẽ đo agent dừng ở bước 0a", pf.stdout + pf.stderr);
+  }
   {
     const cases = evalCases();
     if (!cases.some((c) => c.expect === "PASS") || !cases.some((c) => c.expect === "FAIL"))
