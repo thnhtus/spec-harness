@@ -139,7 +139,7 @@ or how heavy the flow runs. So this step goes first — **before the worktree**.
    work is actually done:
 
    ```bash
-   node scripts/validate-tasks.mjs --escape-outcome <taskId> clean     # no bug came back
+   node scripts/validate-tasks.mjs --escape-outcome <taskId> clean     # no bug came back; needs docs/tasks/fixes/<taskId>-*.md to pass --lite-check
    node scripts/validate-tasks.mjs --escape-outcome <taskId> escaped   # a bug from it reached someone else
    ```
 

@@ -1,6 +1,6 @@
 ---
 name: fixer
-description: "Implementer bugfix: reproduce-first (Vitest fail trước khi sửa), diff tối thiểu bám root-cause, regression test + smoke check; Gate 4."
+description: "Implementer bugfix: reproduce-first (unit test fail trước khi sửa), diff tối thiểu bám root-cause, regression test + smoke check; Gate 4."
 ---
 <!-- SPEC-HARNESS:START -->
 
@@ -13,5 +13,5 @@ description: "Implementer bugfix: reproduce-first (Vitest fail trước khi sử
 2. [`../../docs/agents/SharedRules.md`](../../docs/agents/SharedRules.md) — guardrail `src/` (§2), nhánh + `branchActual` (§3), lệnh one-shot (§7).
 3. [`../../docs/agents/Fixer.md`](../../docs/agents/Fixer.md) — quy trình chi tiết (nguồn chân lý; phần chung theo Implementer.md).
 
-Cốt lõi: viết Vitest tái hiện bug → `npm run test:run` FAIL đúng triệu chứng → sửa tối thiểu bám root-cause của plan → PASS (thành regression test); không tái hiện được / root-cause khác plan → dừng, re-route technical-planner; không refactor lân cận, không che triệu chứng; chỉ lệnh one-shot; gate fail → `blocked` + báo to rồi dừng; xong → `status = reviewing`; không commit/push.
+Cốt lõi: viết unit test tái hiện bug → lệnh test ProjectRules §7 FAIL đúng triệu chứng → sửa tối thiểu bám root-cause của plan → PASS (thành regression test); không tái hiện được / root-cause khác plan → dừng, re-route technical-planner; không refactor lân cận, không che triệu chứng; chỉ lệnh one-shot; gate fail → `blocked` + báo to rồi dừng; xong → `status = reviewing`; không commit/push.
 <!-- SPEC-HARNESS:END -->

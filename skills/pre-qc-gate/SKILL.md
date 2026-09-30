@@ -20,10 +20,10 @@ read it to understand *what is needed*, not to copy the commands.
 
 | Needed | Where to find it in the repo | Example (TS FE) |
 | --- | --- | --- |
-| One-shot test/lint/build command | **ProjectRules §7** (the normative source) | `npm run test:scope`, `npx tsc -b` |
-| Existing integration test harness | `e2e/`, `tests/`, `*_test.go`, `test/integration/`, `conftest.py`, `playwright.config.*`, `*.spec.*` | vitest project `browser` |
+| One-shot test/lint/build command | **ProjectRules §7** (the normative source) | a path-scoped unit test, a type-check |
+| Existing integration test harness | `e2e/`, `tests/`, `*_test.go`, `test/integration/`, `conftest.py`, `playwright.config.*`, `*.spec.*` | a browser test project |
 | How real login / auth works | the auth helper inside that harness | `helpers/auth.ts` → `loginAs(page)` |
-| Credentials + host | the project's environment variables (`.env`, `.env.test`, CI secrets) | `VITE_API`, `E2E_*` |
+| Credentials + host | the project's environment variables (`.env`, `.env.test`, CI secrets) | `API_URL`, `E2E_*` |
 | Source of AC | tracker MCP; for a task running the harness → `{tasksDir}/*/{taskId}-*/02-FSD-Review.md` | |
 
 **No harness there already means do not build one.** Do not add a dependency, do not create

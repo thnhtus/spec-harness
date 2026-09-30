@@ -1482,6 +1482,14 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     for (const r of ["commands", "agents", "kernel"]) for (const f of walk(join(SRC, r)))
       for (const n of vendorLeaks(read(f), tokens)) hits.push(`${f.slice(SRC.length + 1)}:${n}`);
     if (hits.length) fail(`tên model vendor trong kernel — chỉ harness.config.json → models.<cli> được gọi tên model (R1b):\n  ${hits.join("\n  ")}`);
+    // #79 R4: same scan, other token list — one repo's commands/paths in a shipped
+    // skill make it wrong for every other repo (quick-task told a Go repo to `npx tsc -b`).
+    const repoTokens = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))).repoCommandTokens;
+    if (!Array.isArray(repoTokens) || !repoTokens.length) fail("adapters/example/harness.config.json thiếu repoCommandTokens — R4 không có gì để quét");
+    const repoHits = [];
+    for (const r of ["skills", "agents", "commands", "kernel/docs"]) for (const f of walk(join(SRC, r)))
+      for (const n of vendorLeaks(read(f), repoTokens)) repoHits.push(`${f.slice(SRC.length + 1)}:${n}`);
+    if (repoHits.length) fail(`lệnh/đường dẫn của một repo cụ thể trong kernel — trỏ tới ProjectRules §2/§3/§7 (R4, #79):\n  ${repoHits.join("\n  ")}`);
     const t = ["opus", "gpt-"];
     if (vendorLeaks("a\nuse opus here", t).join() !== "2") fail("vendorLeaks bỏ sót dòng có tên model");
     if (vendorLeaks("corpus\nmy-opus", t).length) fail("vendorLeaks bắt nhầm giữa từ");
@@ -1933,6 +1941,29 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     g("checkout", "-q", "-b", "develop");
     rmSync(join(R, "docs/tasks/sprint-2"), { recursive: true, force: true });
     { const r = boot(full); if (r.status !== 1 || existsSync(join(T, "task.agent.json"))) fail("--bootstrap trên nhánh protected phải exit 1 trước khi ghi gì", r.status + r.stdout + r.stderr + g("rev-parse", "--abbrev-ref", "HEAD").stdout); }
+    rmSync(dirname(R), { recursive: true, force: true });
+  }
+
+  // #80 R5/R6/R7 e2e: --lite-check và --escape-outcome clean phải đứng trên
+  // file evidence thật do run-evidence.mjs ký, không trên lời tự khai.
+  {
+    const R = mkrepo("lite");
+    installInto(R);
+    const v = (...a) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", ...a], { cwd: R, encoding: "utf8" });
+    const vec = { scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 };
+    if (v("--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "L-1").status !== 0) fail("#80: vector 0 phải triage ra fix-bug");
+    if (v("--escape-outcome", "L-1", "clean").status !== 2) fail("#80 R6: clean khi chưa có file evidence phải exit 2");
+    const f = join(R, "docs/tasks/fixes/L-1-x.md");
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, "# L-1\n\n## Evidence\n```\n$ npm run test\nTests: 3 passed\n```\n");
+    if (v("--lite-check", f).status !== 1) fail("#80 R5: evidence dán tay phải exit 1");
+    if (v("--escape-outcome", "L-1", "clean").status !== 2) fail("#80 R6: clean trên evidence dán tay phải exit 2");
+    spawnSync(process.execPath, ["scripts/run-evidence.mjs", "--append", f, "--", process.execPath, "-e", "console.log('ok')"], { cwd: R });
+    const ok = v("--lite-check", f);
+    if (ok.status !== 0) fail("#80 R5: evidence do run-evidence ký phải exit 0", ok.stderr);
+    if (v("--escape-outcome", "L-1", "clean").status !== 0) fail("#80 R6: clean trên evidence xanh phải ghi được");
+    if (v("--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "L-2").status !== 0 || v("--escape-outcome", "L-2", "escaped").status !== 0)
+      fail("#80 R7: escaped không cần evidence");
     rmSync(dirname(R), { recursive: true, force: true });
   }
 

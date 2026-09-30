@@ -92,7 +92,7 @@ update `harness.config.json` too:
 - `evidenceSampleCommand` — a real command, must match that pattern
 - `evidenceNegativeSamples` — ≥2 commands that **must not** match (dev server, watch mode…). If the pattern only has to *accept* the sample, `npm run .*` stays green; this is the opposite direction
 
-Use the repo's real package manager in all three — a pattern written for `npm run` rejects the `yarn build` the team actually runs, and Gate 4 then fails on green tests.
+Use the repo's real package manager in all three — a pattern written for `npm run` rejects the `yarn` commands the team actually runs, and Gate 4 then fails on green tests.
 
 ## Step 4 — verify (required, do not report done before running it)
 

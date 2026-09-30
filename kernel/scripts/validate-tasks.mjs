@@ -24,7 +24,7 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --triage, --calibrate, --config <path>,
+ * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --triage, --calibrate, --lite-check <file>, --config <path>,
  *        --staged (only task folders touched by the current git index),
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
@@ -1299,6 +1299,23 @@ function attestationDefects(text, label, mode = EVIDENCE_MODE) {
   return d;
 }
 
+// R5 (#80): the escape hatch's one gate. quick-task / fix-bug write ONE file,
+// docs/tasks/fixes/<id>-<slug>.md; before this it was prose nobody read, and
+// `--escape-outcome clean` was a claim with nothing behind it. An attestation
+// is required whatever evidenceMode says (the !found.length line): this path has no Gate 4/5 to fall
+// back on, so hand-pasted output would be the whole proof. The LAST attestation
+// must be green -- the repro run before the fix is red on purpose (known-failure),
+// but a file ending red means the fix never went green.
+export function liteDefects(text) {
+  if (!/^##\s+Evidence\b/m.test(text)) return ["no `## Evidence` section"];
+  const found = attestationsIn(text);
+  if (!found.length)
+    return ["no run-evidence attestation — run the ProjectRules §7 commands through `node scripts/run-evidence.mjs --append <this file> -- <command>`"];
+  const d = attestationDefects(text, "evidence");
+  if (found.at(-1).exitCode !== 0) d.push(`the last attestation exits ${found.at(-1).exitCode} — the fix never went green`);
+  return [...new Set(d)];
+}
+
 // Gate 5 artifact: the adversary must record a verdict and paste output it ran
 // itself. Existence alone let it copy 08 across and call that a review.
 //
@@ -2176,6 +2193,19 @@ if (args.has("--self-check")) {
         .some((d) => /attestation/.test(d)),
       'attested: hand-typed output with no attestation must be blocked — that is why this mode exists',
     );
+
+    // liteDefects (#80 R5): one case per branch, each isolating one rule.
+    const ev = (...blocks) => "# X-1\n\n## Evidence\n" + blocks.join("\n");
+    assert.deepEqual(liteDefects(ev(att(0))), [], "lite: an attested green run passes");
+    assert.ok(liteDefects("# X-1\n" + att(0)).some((d) => /## Evidence/.test(d)), "lite: no Evidence section fails");
+    assert.ok(liteDefects(ev("```\n$ " + sample + "\nTests: 12 passed\n```")).some((d) => /no run-evidence/.test(d)),
+      "lite: hand-pasted output fails even in legacy mode — no later gate backs it up");
+    assert.ok(liteDefects(ev(att(0).replace("Tests: 12 passed", "Tests: 99 passed"))).some((d) => /outputHash/.test(d)),
+      "lite: edited output fails");
+    assert.deepEqual(liteDefects("<!-- known-failure: repro -->\n" + ev(att(1), att(0))), [],
+      "lite: red repro then green fix, declared, passes");
+    assert.ok(liteDefects("<!-- known-failure: repro -->\n" + ev(att(0), att(1))).some((d) => /last attestation/.test(d)),
+      "lite: ending red means the fix never went green, known-failure or not");
 
     // Gate 5 must run AFTER the implementer. An earlier startedAt = a copied block.
     const evNew = att(0, 12, "2026-09-18T10:00:00Z");
@@ -3321,6 +3351,18 @@ if (args.has("--escape-outcome")) {
     console.error(`✖ --escape-outcome: ${taskId} has no quick-task/fix-bug verdict in _triage.log — nothing to close the loop on`);
     process.exit(2);
   }
+  // R6 (#80): "clean" is a claim about a task nothing else checked, so it has
+  // to stand on the one artifact the escape hatch leaves. R7: "escaped" needs
+  // nothing -- reporting a bug must never be harder than hiding one.
+  if (result === "clean") {
+    const dir = join(TASKS_DIR, "fixes");
+    const file = existsSync(dir) && readdirSync(dir).find((f) => f.startsWith(`${taskId}-`) && f.endsWith(".md"));
+    const d = file ? liteDefects(readFileSync(join(dir, file), "utf8")) : [`no ${relative(REPO_ROOT, dir)}/${taskId}-<slug>.md`];
+    if (d.length) {
+      console.error(`✖ --escape-outcome ${taskId} clean: the evidence does not pass --lite-check — ${d.join("; ")}`);
+      process.exit(2);
+    }
+  }
   const { appendFileSync, mkdirSync } = await import("node:fs");
   mkdirSync(TASKS_DIR, { recursive: true });
   // vector column is "-" on purpose: triageVectorFor JSON.parses that column,
@@ -3328,6 +3370,19 @@ if (args.has("--escape-outcome")) {
   appendFileSync(logPath, `${new Date().toISOString()}\t${taskId}\toutcome\t${result}\t-\t\n`);
   console.log(`recorded: ${taskId} → ${result}`);
   process.exit(0);
+}
+
+// --lite-check <file> (#80): the escape hatch's gate, R5.
+if (args.has("--lite-check")) {
+  const f = argv[argv.indexOf("--lite-check") + 1];
+  if (!f || !existsSync(f)) {
+    console.error("✖ --lite-check needs an existing file: docs/tasks/fixes/<taskId>-<slug>.md");
+    process.exit(2);
+  }
+  const d = liteDefects(readFileSync(f, "utf8"));
+  for (const x of d) console.error(`✖ ${f}: ${x}`);
+  if (!d.length) console.log(`✔ ${f}: evidence attested, last run green`);
+  process.exit(d.length ? 1 : 0);
 }
 
 if (args.has("--route")) {

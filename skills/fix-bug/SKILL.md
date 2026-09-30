@@ -43,11 +43,11 @@ git status --porcelain                        # must be empty, otherwise STOP an
 git fetch origin
 git switch -C {branch-formula} origin/{target-branch}   # ProjectRules §3; EnterWorktree branches off origin/HEAD, so this has to be corrected
 git branch -D worktree-task-{taskId}-{slug}
-cp -c -R <main-repo>/node_modules node_modules # CoW ~6s; do NOT symlink (shared tsBuildInfo → phantom type errors)
+# dependencies: install them the way ProjectRules §7 says (copy-on-write copy beats a fresh install)
 ```
 
 **Link `.env` right away — this is what unlocks the real e2e API in §5.** Without
-`.env` the worktree has an empty `VITE_API`, requests go nowhere, and the e2e
+`.env` the worktree has no API host, requests go nowhere, and the e2e
 credentials are missing too:
 
 ```bash
@@ -57,12 +57,12 @@ ln -sfn <main-repo>/.env .env   # symlink; do NOT cp — cp has to *read* .env, 
 `ln -s` only *creates* a link, so it runs; `cp` does not. `.env` is a static
 read-only file, so two worktrees sharing it is harmless (unlike `node_modules`),
 and it is already in `.gitignore` so it can never be committed. With the symlink
-in place, `npx vite` inside the worktree picks up `VITE_API` on its own.
+in place, the dev server inside the worktree picks it up on its own.
 
 Quick check, without reading the contents:
 
 ```bash
-test -e .env && grep -c VITE_E2E_CREDENTIAL_USERNAME .env   # 1 → real e2e login works
+test -e .env && grep -c <E2E_USERNAME_VAR> .env   # 1 → real e2e login works (var name: ProjectRules §7)
 ```
 
 The user says "just do it on the current tree" → skip this whole section.
@@ -70,11 +70,11 @@ The user says "just do it on the current tree" → skip this whole section.
 ## 3. Reproduce-first — mandatory, this is the part you do not get to skip
 
 ```
-Write a Vitest that reproduces the bug
-  → npm run test:scope -- <file>   → FAIL with the right symptom
+Write a unit test that reproduces the bug
+  → <§7 scoped test command> <file>   → FAIL with the right symptom
      (failing for the wrong reason = the test is wrong → fix the test, do not touch src/ yet)
   → fix the code
-  → npm run test:scope -- <file>   → PASS
+  → <§7 scoped test command> <file>   → PASS
 ```
 
 That test stays forever as a regression test. Add it to an existing test file for
@@ -95,27 +95,25 @@ before/after repro in the evidence.
   here".
 - Do not hide the symptom: no `@ts-ignore`, no swallowing axios errors, no
   skipping/disabling an existing failing test.
-- The `src/` guardrails still apply — `docs/agents/SharedRules.md` §2. Most
-  commonly violated: requests go through `src/api/apiClient.ts`, server state
-  through `queries/` + react-query, BE errors through `normalizeErrorHelper()`,
-  no new dependencies.
+- The architecture guardrails still apply — ProjectRules §2. No new dependencies.
 
 ## 5. Verify
 
+The ProjectRules §7 command set (scoped test · type-check · lint), each one
+through the wrapper, straight into the evidence file of §6:
+
 ```bash
-npm run test:scope -- <the bug's test file>
-npx tsc -b            # --noEmit at the root is a no-op
-npm run lint
+node scripts/run-evidence.mjs --append docs/tasks/fixes/{taskId}-{slug}.md -- <§7 command>
 ```
 
-`npm run test:run` (full suite) **only if** you touched a shared barrel. The
-`develop` baseline already has ~164 failing tests — compare the **set of failing
-files**, not the total count.
+The whole-repo test command **only if** you touched a shared module. The base
+branch may already have failing tests — compare the **set of failing files**,
+not the total count.
 
 **Real e2e API — same setup as §5b of the `quick-task` skill**, not duplicated
 here: a dedicated dev server on a free port, then a browser-driving MCP if the
-session has one (e.g. BrowserOS neo, Playwright) and **Playwright**
-(`test:e2e:run`), with the same split of responsibilities described there. `.env`
+session has one (e.g. BrowserOS neo) and the **e2e runner**
+(ProjectRules §7), with the same split of responsibilities described there. `.env`
 was symlinked back in §2, so the credentials are already there.
 
 For a bug, both have work to do, and in this order:
@@ -123,7 +121,7 @@ For a bug, both have work to do, and in this order:
 1. **neo** — run the ticket's exact repro against the real UI, confirm the bug is
    real and observe the symptom. This is the before.
 2. after the fix → **neo** again: the after.
-3. **Playwright** — if the symptom can be locked down with an e2e test, write one
+3. **e2e runner** — if the symptom can be locked down with an e2e test, write one
    to keep; if not, the regression test from §3 (unit) is enough.
 
 Smoke ≥ 1 neighbouring flow (test or browser) — bugs tend to breed bugs.
@@ -147,19 +145,22 @@ Why it broke, at which `file:line`.
 Files changed + one line of reasoning per file.
 
 ## Evidence
-- Repro FAIL before the fix: <real output, trimmed>
-- Test PASS after the fix: <real output>
-- `npx tsc -b`: <output>
-- `npm run lint`: <output>
-- Real e2e API (BrowserOS neo / Playwright): <before/after repro on the real UI>
+<!-- known-failure: the repro run before the fix is meant to be red -->
+<the run-evidence.mjs blocks from §3 and §5, appended by --append: repro FAIL,
+test PASS, type-check, lint — never retyped by hand>
+- Real e2e API (browser MCP / e2e runner): <before/after repro on the real UI>
 - Neighbouring flow smoke: <description + result>
 
 ## Regression risk
 What risk is left + how it is reduced (leave empty if none).
 ```
 
-**Do not invent test numbers** — paste the real output, or state plainly that you
-did not run it.
+**Do not invent test numbers** — the wrapper writes them, or state plainly that you
+did not run it. Then the gate:
+
+```bash
+node scripts/validate-tasks.mjs --lite-check docs/tasks/fixes/{taskId}-{slug}.md   # exit 0 or you are not done
+```
 
 ## 7. Stop
 

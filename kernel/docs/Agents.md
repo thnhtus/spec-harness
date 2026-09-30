@@ -389,7 +389,9 @@ It appends one row to `_triage.log` (the same file that already holds the verdic
 
 `--calibrate` then prints an escape-hatch section: how many skipped, how many reported back, how many shipped a bug. Below 80% reporting it says so **before** any verdict about `riskFloor` — a finding computed over a quarter of the escapes describes a biased slice.
 
-> **This half is self-reported and cannot be contradicted.** A task that skipped the harness leaves no artifact, so nothing on disk can dispute a `clean`. That is why coverage is printed next to every finding rather than folded into it. It is still strictly more than the previous state, which was no signal at all.
+**`clean` has to stand on the one artifact the escape hatch leaves** (#80). `quick-task` / `fix-bug` write `docs/tasks/fixes/<taskId>-<slug>.md` with a `## Evidence` section filled by `run-evidence.mjs --append`. `node scripts/validate-tasks.mjs --lite-check <file>` exits 1 when that section is missing, holds no attestation (evidenceMode notwithstanding — this path has no Gate 4/5 behind it), has an edited/copied block, or ends on a red run. `--escape-outcome <id> clean` runs the same check and exits 2 on failure; `escaped` needs nothing, because reporting a bug must never be harder than hiding one.
+
+> **Whether a bug came back later is still self-reported.** `--lite-check` proves the checks ran green at fix time, not that nothing broke afterwards. That is why coverage is printed next to every finding rather than folded into it.
 
 
 The `vector` is the estimate **before**, `attempts` is the rework **during**. Neither knows whether the task actually held up after shipping. That is `outcome`, filled in when the task closes:

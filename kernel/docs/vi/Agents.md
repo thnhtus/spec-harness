@@ -390,7 +390,9 @@ Nó ghi thêm một dòng vào `_triage.log` (chính file đã giữ verdict) v�
 
 `--calibrate` rồi in một mục escape hatch: bao nhiêu task đã bỏ qua harness, bao nhiêu đã báo lại, bao nhiêu để lọt bug. Dưới 80% báo lại thì nó nói điều đó **trước** mọi kết luận về `riskFloor` — finding tính trên một phần tư số escape là mô tả một lát cắt lệch.
 
-> **Nửa này là tự khai và không có gì phản biện được.** Task bỏ qua harness không để lại artifact nào, nên không thứ gì trên đĩa cãi được một chữ `clean`. Đó là lý do độ phủ được in cạnh mọi finding chứ không gộp vào. Dù vậy vẫn hơn hẳn trạng thái trước đó: không có tín hiệu nào cả.
+**`clean` phải đứng trên artifact duy nhất mà nhánh escape để lại** (#80). `quick-task` / `fix-bug` ghi `docs/tasks/fixes/<taskId>-<slug>.md` có mục `## Evidence` do `run-evidence.mjs --append` điền. `node scripts/validate-tasks.mjs --lite-check <file>` exit 1 khi thiếu mục đó, không có attestation nào (bất kể evidenceMode — nhánh này không có Gate 4/5 đứng sau), có block bị sửa/chép, hoặc kết thúc bằng một lần chạy đỏ. `--escape-outcome <id> clean` chạy đúng check đó và exit 2 khi fail; `escaped` không cần gì, vì báo bug không bao giờ được khó hơn giấu bug.
+
+> **Bug có quay lại sau đó hay không thì vẫn là tự khai.** `--lite-check` chứng minh các check đã chạy xanh lúc sửa, không chứng minh sau đó không có gì vỡ. Đó là lý do độ phủ được in cạnh mọi finding chứ không gộp vào.
 
 
 `vector` là ước lượng **trước**, `attempts` là phần làm lại **trong lúc làm**. Cả hai đều không biết task có trụ được sau khi ship hay không. Đó là `outcome`, điền khi đóng task:

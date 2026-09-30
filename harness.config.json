@@ -28,6 +28,8 @@
   "coordinatorTier": "mid",
   "_vendorModelTokens": "install --self-test fails when one of these appears in commands/ agents/ kernel/ outside a fence marked <!-- example -->.",
   "vendorModelTokens": ["haiku", "sonnet", "opus", "gpt-", "gemini-", "composer-"],
+  "_repoCommandTokens": "#79 R4: install --self-test fails when one of these appears in skills/ agents/ commands/ kernel/docs/ outside a fence marked <!-- example -->. They are one repo's commands/paths; a shipped skill names ProjectRules §2/§3/§7 instead.",
+  "repoCommandTokens": ["E-TICKET", "VITE_", "test:scope", "test:run", "test:e2e", "tsc -b", "yarn build", "npx vite", "origin/develop", "apiClient", "react-query", "normalizeErrorHelper", "MR_DEV", "app.clickup.com/t/", "vitest"],
   "_baseTier": "Agents.md §5.3, as data. role -> [trivial, normal, high]. Was prose in three files (Agents.md, vi/Agents.md, start-task.md) that no check ever read — the same shape of drift docEnums was created to end. `scripts/validate-tasks.mjs --tier <role> <complexity> [attempt] --cli <cli>` resolves it, applying the §5.3.1 cascade.",
   "baseTier": {
     "orchestrator": ["cheap", "cheap", "mid"],
