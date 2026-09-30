@@ -1063,7 +1063,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       fail("cài vào repo có remote GitLab mà không sinh .gitlab-ci.yml — CI không chạy gate nào");
     if (existsSync(join(G, ".github/workflows")))
       fail("cài vào repo GitLab mà vẫn sinh .github/workflows/ — preflight xanh nhờ file không bao giờ chạy");
-    rmSync(G, { recursive: true, force: true });
+    rmSync(dirname(G), { recursive: true, force: true });
   }
 
   // Mặc định của harness là MCP GitLab + skill build-and-mr viết cho MR, nên
@@ -1470,6 +1470,11 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     installInto(R, ["codex", "gemini"]);
     if (eff(".claude/agents/adversary.md").length) fail("#63: bỏ effort khỏi config mà dòng effort: cũ vẫn còn");
     if (fm(".gemini/agents/adversary.md").length) fail("gemini không có models.gemini mà vẫn nhận model — đoán tên model của vendor khác");
+    // #81 R1: không đoán tên, nhưng cũng không im lặng — preflight nêu gemini, không nêu codex (đã có key).
+    const pf = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight"], { cwd: R, encoding: "utf8" });
+    const pfo = pf.stdout + pf.stderr;
+    if (!/gemini is installed but harness\.config\.json has no models\.gemini/.test(pfo) || /no models\.codex/.test(pfo))
+      fail("#81 R1: preflight phải cảnh báo đúng CLI đã cài mà thiếu models.<cli>", pfo);
     rmSync(dirname(R), { recursive: true, force: true });
   }
 

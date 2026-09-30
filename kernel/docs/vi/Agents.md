@@ -262,7 +262,7 @@ Kernel không biết bạn chạy Claude Code, Codex hay CLI khác — nên nó 
 "models": { "<cli>": { "cheap": { "model": "<tên>" }, "mid": { "model": "<tên>" }, "strong": { "model": "<tên>" } } }
 ```
 
-Dùng CLI khác nghĩa là thêm key của nó — bảng dưới không đổi, và tên của CLI này không đè tên của CLI kia. CLI không có key thì không route gì: mọi stage chạy model của session. Kernel không bao giờ gọi tên model; `install --self-test` fail khi một token trong `vendorModelTokens` nằm ngoài fence `<!-- example -->`.
+Dùng CLI khác nghĩa là thêm key của nó — bảng dưới không đổi, và tên của CLI này không đè tên của CLI kia. CLI không có key thì không route gì: mọi stage chạy model của session, và `--preflight` cảnh báo từng CLI đã cài ở trạng thái đó (#81). Kernel không bao giờ gọi tên model; `install --self-test` fail khi một token trong `vendorModelTokens` nằm ngoài fence `<!-- example -->`.
 
 Coordinator không phải một dòng của bảng này: model của nó chốt lúc mở session, trước khi có complexity. `coordinatorTier` (một giá trị, `mid`) được render vào frontmatter `/start-task` của Claude — CLI duy nhất có `model` theo command, và chỉ hiệu lực trong turn hiện tại. CLI khác: mở session bằng model hạng đó.
 

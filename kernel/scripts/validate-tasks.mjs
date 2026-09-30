@@ -729,6 +729,13 @@ export function modelsDefects(cfg = CFG) {
   return { errors, warnings };
 }
 
+// R1 (#81): an installed CLI layer with no models.<cli> runs every role on the
+// session model. Legal (a warning, not an error), but it used to be silent:
+// the cascade and per-tier budgets simply did not exist there and nothing said so.
+export function unroutedClis(installed, cfg = CFG) {
+  return [...new Set(installed)].filter((c) => c !== "claude" && !(cfg.models ?? {})[c]);
+}
+
 export function resolveTier(role, complexity, attempt = 1, cfg = CFG, cli = null) {
   const RANKS = ["trivial", "normal", "high"];
   const row = (cfg.baseTier ?? {})[role];
@@ -1760,6 +1767,7 @@ if (args.has("--self-check")) {
     assert.equal(handoffBlockCount(d, "nope"), 0, "no file = never ran");
     writeFileSync(join(d, "r.md"), "### a\nx\n### b\ny\n### c\nz\n");
     assert.equal(handoffBlockCount(d, "r"), 3, "counts append-only blocks");
+    rmSync(d, { recursive: true, force: true });
   }
   // Without a real acTrace.since the default is "9999-12-31", so every AC
   // failure degrades to a warning and pre-commit (--no-warn) blocks nothing.
@@ -2008,6 +2016,7 @@ if (args.has("--self-check")) {
     for (const x of ["ABC-1", "_templates", "sprint-1"]) writeFileSync(join(d, x, "task.agent.json"), "{}");
     assert.deepEqual(strayTaskFolders(d, "sprint-"), ["ABC-1"], "only a task.agent.json dir outside the group prefix is stray");
     assert.deepEqual(strayTaskFolders(join(d, "nope"), "sprint-"), [], "missing tasksDir is not a crash");
+    rmSync(d, { recursive: true, force: true });
   }
 
   // handoffDefects: presence of the two fields the coordinator routes on.
@@ -2022,6 +2031,7 @@ if (args.has("--self-check")) {
     assert.equal(handoffDefects(d, "y").length, 1, "missing Continue automation is caught");
     writeFileSync(join(d, "z.md"), "just prose, no blocks\n");
     assert.equal(handoffDefects(d, "z").length, 3, "no block, no fields");
+    rmSync(d, { recursive: true, force: true });
   }
 
   // calibrate: the findings are the whole point — a rule that never fires is
@@ -2277,6 +2287,7 @@ if (args.has("--self-check")) {
     assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 1 }).lowered, ["scope 2→1"], "lowered is the direction §5.1.3 forbids");
     assert.deepEqual(vectorDriftSince({ scope: 2 }, { scope: 1 }).raised, [], "a lowered dimension is not also 'raised'");
     assert.deepEqual(vectorDriftSince(null, { scope: 2 }), { raised: [], lowered: [] }, "never triaged → nothing to compare");
+    rmSync(d, { recursive: true, force: true });
   }
 
   // --triage input: the one entry point the schema never sees, and the one that
@@ -2383,6 +2394,8 @@ if (args.has("--self-check")) {
     assert.equal(rt("implementer", "high", 1).model, "o", "the tier is mapped through config.models.<cli>");
     assert.equal(resolveTier("implementer", "high", 1, cfg, "codex").model, "z", "another CLI resolves through its own key");
     assert.equal(resolveTier("implementer", "high", 1, cfg, "gemini").model, null, "a CLI with no models key routes nothing");
+    // #81 R1: that silence is named. claude is exempt: it has .claude/ always, and its key is the example's.
+    assert.deepEqual(unroutedClis(["codex", "gemini", "gemini", "claude"], cfg), ["gemini"], "R1: installed CLI with no models key is reported once; a routed one is not");
     assert.equal(resolveTier("implementer", "high", 1, { ...cfg, models: { cheap: "h", mid: "s", strong: "o" } }, "claude").model, null, "the flat legacy map is never mapped to a vendor");
     // modelsDefects: R1a/R1a'/R1c are errors, R1d a warning.
     const md = (c) => modelsDefects({ ...cfg, ...c });
@@ -3005,6 +3018,7 @@ if (args.has("--self-check")) {
     assert.equal(settingsReachable(h, h), "ok", "cwd = harness root");
     assert.equal(settingsReachable(h, join(h, "sub")), "ok", "cwd below root: the CLI walks up and finds it");
     assert.equal(settingsReachable(h, root), "not-loaded", "cwd ABOVE root: the CLI never walks down (layout B trap)");
+    rmSync(root, { recursive: true, force: true });
   }
 
   // denyGaps: present + loaded is not the same as armed. (That the settings.json
@@ -3422,7 +3436,8 @@ if (args.has("--tier")) {
     console.error("  usage: validate-tasks.mjs --tier <role> <trivial|normal|high> [attempt] --cli <name>");
     process.exit(2);
   }
-  if (!r.model) console.error(`⚠ --tier: config.models.${cli} has no ${r.tier} entry — dispatch with no model (session default)`);
+  // R2 (#81): name the exact key to add, not just that one is missing.
+  if (!r.model) console.error(`⚠ --tier: harness.config.json has no models.${cli}.${r.tier}.model — dispatch with no model (session default). Add { "${cli}": { "cheap": { "model": "…" }, "mid": {…}, "strong": {…} } } under "models"`);
   if (AS_JSON) console.log(JSON.stringify({ role, complexity, attempt, ...r }));
   // Bare model name on stdout: the coordinator interpolates it straight into the
   // dispatch. `null` when config.models is empty -- print nothing, so a shell
@@ -3997,6 +4012,9 @@ if (args.has("--preflight")) {
   {
     let guards = {};
     try { guards = JSON.parse(readFileSync(join(REPO_ROOT, ".agents/spec-harness-guards.json"), "utf8")); } catch {}
+    const installed = [...Object.keys(guards), ...["codex", "cursor"].filter((c) => existsSync(join(REPO_ROOT, `.${c}`)))];
+    for (const c of unroutedClis(installed))
+      warns.push(`${c} is installed but harness.config.json has no models.${c} — every role runs the session model on ${c}, no tier cascade on retry (Agents.md §5.3)`);
     for (const [cli, file] of Object.entries(guards)) {
       if (!file) continue;
       let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}

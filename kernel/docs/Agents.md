@@ -261,7 +261,7 @@ The kernel does not know whether you run Claude Code, Codex or another CLI — s
 "models": { "<cli>": { "cheap": { "model": "<name>" }, "mid": { "model": "<name>" }, "strong": { "model": "<name>" } } }
 ```
 
-Using another CLI means adding its key — the table below does not change, and no CLI's names overwrite another's. A CLI with no key routes nothing: every stage runs the session model. The kernel never names a model; `install --self-test` fails on any `vendorModelTokens` entry outside an `<!-- example -->` fence.
+Using another CLI means adding its key — the table below does not change, and no CLI's names overwrite another's. A CLI with no key routes nothing: every stage runs the session model, and `--preflight` warns for each installed CLI in that state (#81). The kernel never names a model; `install --self-test` fails on any `vendorModelTokens` entry outside an `<!-- example -->` fence.
 
 The coordinator is not a row of this table: its model is fixed when the session opens, before complexity exists. `coordinatorTier` (one value, `mid`) is rendered into Claude's `/start-task` frontmatter — the only CLI with a per-command `model`, and it lasts for the current turn. On other CLIs, open the session on a model of that tier.
 
