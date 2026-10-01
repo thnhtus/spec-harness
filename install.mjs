@@ -6,7 +6,7 @@
 //   node install.mjs . --yes          # bỏ hỏi (CI, script)
 //   node install.mjs --self-test      # cài thử vào repo tạm rồi kiểm, không đụng gì
 //
-// Viết bằng Node chứ không phải bash là có chủ đích: Node 20+ vốn đã bắt buộc
+// Viết bằng Node chứ không phải bash là có chủ đích: Node 22+ vốn đã bắt buộc
 // (validator cần), nên bỏ bash đi không thêm phụ thuộc nào — mà xoá được ba thứ
 // cùng lúc: `bash` không chắc có trên PATH của PowerShell (Git for Windows chỉ
 // đưa cmd/ vào PATH, không đưa bin/), `python3` trong self-test, và cả lớp lỗi
@@ -32,8 +32,8 @@ const die = (...m) => { console.error(...m); process.exit(1); };
 
 // Đang chạy bằng chính node này, nên chỉ còn ca "node quá cũ" — ca "không có
 // node" đã do shell báo trước khi script kịp chạy.
-if (Number(process.versions.node.split(".")[0]) < 20)
-  die(`✖ node v${process.versions.node} quá cũ — validator cần Node 20+.`);
+if (Number(process.versions.node.split(".")[0]) < 22)
+  die(`✖ node v${process.versions.node} quá cũ — validator cần Node 22+.`);
 
 // ── nguồn: thư mục cạnh script, hoặc tarball tải về ────────────────────────
 let SRC = dirname(fileURLToPath(import.meta.url));

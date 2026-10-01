@@ -3,7 +3,7 @@
  * validate-tasks.mjs — spec-harness task validator (project-agnostic).
  *
  * Turns the harness conventions (docs/Agents.md, docs/agents/SharedRules.md,
- * docs/tasks/README.md) into enforceable checks. Dependency-free (Node 20+).
+ * docs/tasks/README.md) into enforceable checks. Dependency-free (Node 22+).
  * Everything project-specific lives in harness.config.json, resolved by walking
  * up from the current working directory.
  *

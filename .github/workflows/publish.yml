@@ -26,10 +26,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: https://registry.npmjs.org
-      # Trusted publishing cần npm >= 11.5.1; Node 20 ship npm 10. Ghim major
-      # chứ không @latest: npm 12 đã bỏ Node 20, @latest sẽ tự vỡ bản không chạy
+      # Trusted publishing cần npm >= 11.5.1; Node 24 ship npm 11.x cũ hơn. Ghim major
+      # chứ không @latest: npm major sau có thể bỏ Node đang dùng, @latest sẽ tự vỡ bản không chạy
       # được — workflow đang xanh tự đỏ vào một ngày không ai đụng vào repo.
       - run: npm install -g npm@11
 

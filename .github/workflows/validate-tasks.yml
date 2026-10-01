@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: '20' }
+        with: { node-version: '24' }
       # --preflight trước: config tự mâu thuẫn (hoặc repos[].path sai) thì mọi
       # check sau im lặng no-op. Bao gồm --self-check.
       - run: node kernel/scripts/validate-tasks.mjs --preflight

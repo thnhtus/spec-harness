@@ -14,7 +14,7 @@ Tách từ một harness đã chạy thật 240 task / 17 sprint trên codebase 
 > npx spec-harness     # chép kernel + skills + .claude/
 > ```
 >
-> Dùng package manager khác thì đổi lệnh chạy, không cần cài global: `yarn dlx spec-harness` (Yarn 2+), `pnpm dlx spec-harness`, `bunx spec-harness`. Bốn lệnh chạy cùng một `install.mjs`; harness chỉ cần Node 20+.
+> Dùng package manager khác thì đổi lệnh chạy, không cần cài global: `yarn dlx spec-harness` (Yarn 2+), `pnpm dlx spec-harness`, `bunx spec-harness`. Bốn lệnh chạy cùng một `install.mjs`; harness chỉ cần Node 22+.
 
 > [!WARNING]
 > **`npm i spec-harness` không cài harness.** Lệnh này chỉ tải package vào `node_modules/`, không chạy `install.mjs`. Package cố ý không có `postinstall`: installer hỏi `[y/N]` trước khi ghi đè file, và pnpm/bun hoặc `--ignore-scripts` đều chặn lifecycle script. Muốn ghim version làm devDependency thì chạy `npm i -D spec-harness`, rồi `npx spec-harness`. Lệnh sau dùng bản trong `node_modules/.bin`, không tải lại. Nâng cấp thì chạy `npx spec-harness@latest`, vì nếu không ghi `@latest` thì `npx` sẽ chạy lại bản cũ đã cài.
@@ -400,7 +400,7 @@ Những thứ validator bắt mà con người hay bỏ sót:
 - **Câu hỏi BA bị bỏ quên** — `Q-01 | blocking | open` mà task đã đi qua `fsd_review`.
 - **Nhãn độ phức tạp không khớp vector** — chấm vector nhẹ rồi khai `high` (hoặc ngược lại) để đổi tier model.
 
-Validator dependency-free (Node 20+), chạy từ pre-commit, CI, hoặc tay. Chính nó cũng có `--self-check`: assert cho từng predicate, gồm cả ca âm — lịch sử sạch **không** được bịa ra finding, và **template chưa điền không được thoả mãn gate nào**.
+Validator dependency-free (Node 22+), chạy từ pre-commit, CI, hoặc tay. Chính nó cũng có `--self-check`: assert cho từng predicate, gồm cả ca âm — lịch sử sạch **không** được bịa ra finding, và **template chưa điền không được thoả mãn gate nào**.
 
 CI **không** tuỳ chọn: preflight báo đỏ nếu không workflow nào chạy validator. Pre-commit chạy `--staged`: chỉ kiểm task folder mà commit đó chạm tới — nên nó **không** thấy task hỏng mà commit này không đụng vào (đo thật: hỏng task A, commit file B → đi qua; CI cùng cây báo 5 error). Đó là đánh đổi có chủ ý, và CI là lưới cuối. Một task đang `blocked` chờ BA là trạng thái hợp lệ — để nó chặn mọi commit không liên quan chỉ dạy cả team gõ `--no-verify`, và gate bị bypass theo phản xạ là gate đã chết. CI vẫn quét toàn repo.
 
@@ -455,7 +455,7 @@ yarn dlx spec-harness / pnpm dlx spec-harness / bunx spec-harness   # cùng inst
 git clone --depth 1 <url> /tmp/sh && node /tmp/sh/install.mjs   # repo private
 ```
 
-Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 20+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
+Installer viết bằng **Node**, không phải bash — chạy y hệt nhau từ PowerShell, cmd, bash, zsh, WSL. Node 22+ vốn đã bắt buộc (validator cần nó), nên đây không phải phụ thuộc thêm.
 
 `npx` tải tarball từ npm vào cache rồi chạy `install.mjs` (khai báo ở `bin`) — không để lại bản clone trong project. Chạy `install.mjs` đơn lẻ (không qua npm) thì nó tự tải tarball từ GitHub, ref ghim bằng `SPEC_HARNESS_REF=v0.1.0`.
 

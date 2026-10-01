@@ -29,7 +29,7 @@ Check once when onboarding a new machine. The project's specific toolchain: [`ag
 | Component | Requirement | Check |
 | --- | --- | --- |
 | Git + SSH to the git host | configured | `git --version` & `ssh -T git@<host>` |
-| Node.js (runs the validator) | 20+ | `node -v` |
+| Node.js (runs the validator) | 22+ | `node -v` |
 | A package manager | npm (ships with Node), or yarn / pnpm / bun | `npm -v` / `yarn -v` / `pnpm -v` / `bun -v` |
 | Harness CLI | Claude Code, Codex CLI or Cursor (`install.mjs --cli codex,cursor`) | `claude --version` / `codex --version` |
 

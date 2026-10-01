@@ -30,7 +30,7 @@ Kiểm một lần khi onboard máy mới. Toolchain riêng của project: [`../
 | Thành phần | Yêu cầu | Kiểm |
 | --- | --- | --- |
 | Git + SSH tới git host | đã cấu hình | `git --version` & `ssh -T git@<host>` |
-| Node.js (chạy validator) | 20+ | `node -v` |
+| Node.js (chạy validator) | 22+ | `node -v` |
 | Một package manager | npm (đi kèm Node), hoặc yarn / pnpm / bun | `npm -v` / `yarn -v` / `pnpm -v` / `bun -v` |
 | Harness CLI | Claude Code, Codex CLI hoặc Cursor (`install.mjs --cli codex,cursor`) | `claude --version` / `codex --version` |
 
