@@ -1361,20 +1361,38 @@ function staticLayerRows(t) {
 // still reads AC-nn walked to `reviewing`. A row counts once its first cell is no
 // longer a placeholder (`<…>`, `…`, `src/…`, AC-nn) and some other cell has text.
 const ROW_PLACEHOLDER = /^(`?<[^>]*>`?|…|`?[\w./-]*…`?|AC-nn|AC-ID|)$/;
-export function filledRows(text, heading) {
-  const sec = text.split(/^## /m).find((s) => s.startsWith(heading));
-  if (!sec) return null;
-  return sec.split("\n").filter((l) => /^\|/.test(l) && !/^\|\s*-{3}/.test(l)).slice(1)
-    .map((l) => l.split(/(?<!\\)\|/).slice(1, -1).map((c) => c.trim()))
+// Docs are append-only: on a real repo the top table stayed the untouched
+// template while the real one sat in a later `## Update` round — under a
+// `### Changed files`, or under no heading at all, just the template's header
+// row. So a table counts when its nearest heading (## or ###) names the section
+// OR its header row matches the template's; null = neither exists anywhere.
+export function filledRows(text, heading, header = null) {
+  let near = "", found = false, out = [], tbl = null;
+  const flush = () => {
+    if (tbl && (near.startsWith(heading) || header?.test(tbl[0] ?? ""))) {
+      found = true;
+      out.push(...tbl.slice(1).filter((l) => !/^\|\s*-{3}/.test(l)));
+    }
+    tbl = null;
+  };
+  for (const l of text.split("\n")) {
+    if (/^\|/.test(l)) { (tbl ??= []).push(l); continue; }
+    flush();
+    const h = l.match(/^#{2,3} (.*)/);
+    if (h) { near = h[1]; if (near.startsWith(heading)) found = true; }
+  }
+  flush();
+  if (!found) return null;
+  return out.map((l) => l.split(/(?<!\\)\|/).slice(1, -1).map((c) => c.trim()))
     .filter((c) => !ROW_PLACEHOLDER.test(c[0] ?? "") && c.slice(1).some((x) => x && !ROW_PLACEHOLDER.test(x)));
 }
 export function notesDefects(t) {
-  const rows = filledRows(t, "Changed files");
+  const rows = filledRows(t, "Changed files", /\|\s*Change Type\s*\|/i);
   return rows === null ? ["06 has no `## Changed files` section"]
     : rows.length ? [] : ["06 `Changed files` has no real row (still the template's `src/…`) — Gate 4 needs what was changed and why (Implementer §4)"];
 }
 export function evidenceTableDefects(t) {
-  const rows = filledRows(t, "Command output");
+  const rows = filledRows(t, "Command output", /\|\s*Command \/ Action\s*\|/i);
   if (rows === null) return [];
   return rows.some((c) => EVIDENCE_RE.test(c[1] ?? "")) ? []
     : ["08 `Command output` table has no row with a real §7 command (still `<scoped unit command>`) — the table is what a reviewer reads"];
@@ -1382,10 +1400,10 @@ export function evidenceTableDefects(t) {
 export function adversaryCoverageDefects(t, acs = []) {
   const d = [];
   const rows = filledRows(t, "AC") ?? [];
-  const have = new Set(rows.map((c) => c[0]));
+  const have = new Set(rows.flatMap((c) => c[0].match(/AC-\d+/g) ?? [])); // "AC-01, AC-08" covers both
   const miss = acs.filter((a) => !have.has(a));
   if (miss.length) d.push(`09 "AC — does the test actually assert it" has no row for ${miss.join(", ")} — Gate 5 checks every AC in 02, not a sample (§3.3)`);
-  const insp = (t.split(/^## /m).find((s) => s.startsWith("What was inspected")) ?? "").split("\n").filter((l) => /^-\s+\S/.test(l) && !/^-\s+…\s*$/.test(l));
+  const insp = t.split(/^#{2,3} /m).filter((s) => s.startsWith("What was inspected")).join("\n").split("\n").filter((l) => /^-\s+\S/.test(l) && !/^-\s+…\s*$/.test(l));
   if (!insp.length) d.push('09 "What was inspected" is empty — "found nothing" means nothing without the paths you walked');
   return d;
 }
@@ -1813,6 +1831,12 @@ if (args.has("--self-check")) {
       const filled = a09.replace("| AC-nn |  | yes / no | yes / no / not tried | met / not met |", "| AC-01 | t::x | yes | yes | met |").replace(/(## What was inspected[\s\S]*?)\n- …/, "$1\n- src/a.js");
       assert.deepEqual(adversaryCoverageDefects(filled, ["AC-01"]), [], "09 with every AC row + an inspected path passes");
       assert.ok(adversaryCoverageDefects(filled, ["AC-01", "AC-02"]).some((x) => x.includes("AC-02")), "an AC missing from 09 is named");
+      assert.deepEqual(adversaryCoverageDefects(filled.replace("| AC-01 |", "| AC-01, AC-02 |"), ["AC-01", "AC-02"]), [], "one row naming two ACs covers both");
+      const appended = a09 + "\n## Update — round 2\n\n## AC — does the test actually assert it\n\n| AC | t | a | m | v |\n| --- | --- | --- | --- | --- |\n| AC-01 | t::x | yes | yes | met |\n\n## What was inspected\n\n- src/a.js\n";
+      assert.deepEqual(adversaryCoverageDefects(appended, ["AC-01"]), [], "append-only: the table in a later round counts, the untouched top template does not hide it");
+      assert.deepEqual(notesDefects(n06 + "\n## Update — r2\n\n### Changed files\n\n| f | t | r | a |\n| --- | --- | --- | --- |\n| `src/a.js` | modified | fix | AC-01 |\n"), [], "append-only 06: a later ### Changed files counts");
+      assert.deepEqual(evidenceTableDefects(e08 + `\n## Update — r2\n\nprose\n\n| Verification Type | Command / Action | Covers AC |\n| --- | --- | --- |\n| Unit | \`${sample}\` | AC-01 |\n`), [], "append-only 08: a headless table with the template's header counts");
+      assert.equal(evidenceTableDefects(e08 + "\n## Update — r2\n\n| Other | Thing |\n| --- | --- |\n| x | `npm test` |\n").length, 1, "an unrelated table does not count as Command output");
     }
   }
   // #85: unfilled adapter.
@@ -2684,6 +2708,10 @@ if (args.has("--self-check")) {
     assert.equal(shippedBeforeRule({ status: "done", outcome: { closedAt: "x" } }), true, "done + closed = shipped, Gate 1 is history");
     assert.equal(shippedBeforeRule({ status: "done", outcome: {} }), false, "done without closedAt is not closed");
     assert.equal(shippedBeforeRule({ status: "reviewing", outcome: { closedAt: "x" } }), false, "only done counts");
+    const fresh = { createdAt: "2999-01-01" };
+    assert.equal(templateRowsBlock(fresh), true, "a new task's template rows block");
+    assert.equal(templateRowsBlock({ ...fresh, status: "done", outcome: { closedAt: "x" } }), false, "a shipped + closed task's template rows are history");
+    assert.equal(templateRowsBlock({ createdAt: "1999-01-01" }), false, "before acTrace.since stays a warning");
     const gone = stampDefects([e1, { ...e1, attempt: 2 }], null, "A-1", now).errors;
     assert.equal(gone.length, 1, "#84: a missing log is ONE error, not one per window");
     assert.match(gone[0], /missing entirely.*2 telemetry window/, "#84: the error names the file, the count and the cause");
@@ -3912,6 +3940,12 @@ export function shippedBeforeRule(data) {
   return data.status === "done" && !!data.outcome?.closedAt;
 }
 
+// #86/#87 rows: blocking from acTrace.since, but a shipped + closed task is past
+// every reader of 06/08/09 — history, like Gate 1.
+export function templateRowsBlock(data) {
+  return outcomeIsBlocking(data) && !shippedBeforeRule(data);
+}
+
 export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now()) {
   const errors = [], warnings = [];
   // #84: stampText === null = the FILE is gone, not this task's lines. One error
@@ -5134,7 +5168,7 @@ for (const { sprint, task, path } of folders) {
   // artifact (06/08 at adversarial_review, 09 at reviewing). Tasks created before
   // acTrace.since stay warnings, like every other content rule added later.
   {
-    const sink = outcomeIsBlocking(data) ? errors : warnings;
+    const sink = templateRowsBlock(data) ? errors : warnings;
     const read = (n) => (n && existsSync(join(path, n)) ? readFileSync(join(path, n), "utf8") : null);
     if (stageIdx >= STAGE_ORDER.indexOf("adversarial_review") && STAGE_ORDER.includes("adversarial_review")) {
       const notes = read(GATE4_ARTIFACTS.notes), ev = read(GATE4_ARTIFACTS.evidence);
