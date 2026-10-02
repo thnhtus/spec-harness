@@ -406,6 +406,10 @@ function installAgentsLayer(P, keep) {
 // hand-edited. Swap it in place (same position) for the new key with the SHIPPED
 // value: the old unit does not convert (a file count is not a byte budget).
 const RENAMED = { sliceFiles: "sliceBytes" };
+// 0.12: keys that became required. Default = the shipped example value, so an
+// upgrade does not exit 2 on the first --bootstrap. Not every new key belongs
+// here: one that is the user's own fact (repos, models) must stay a loud exit 2.
+const ADDED = ["protectedBranches"];
 function migrateConfig(f) {
   let cfg; try { cfg = JSON.parse(read(f)); } catch { return []; }
   const ex = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))), done = [];
@@ -415,6 +419,10 @@ function migrateConfig(f) {
     if (!nk) { out[k] = v; continue; }
     if (k[0] !== "_") done.push(`${k} → ${nk}${nk in cfg ? " (already set, old key dropped)" : ` = ${ex[nk]}`}`);
     if (!(nk in cfg)) out[nk] = ex[nk];
+  }
+  for (const k of ADDED) if (!(k in out)) {
+    for (const c of [`_${k}`, k]) if (c in ex) out[c] = ex[c];
+    done.push(`+ ${k} = ${JSON.stringify(ex[k])}`);
   }
   if (done.length) writeFileSync(f, JSON.stringify(out, null, 2) + "\n");
   return done;
@@ -1557,6 +1565,10 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     writeFileSync(cp, JSON.stringify(JSON.parse(read(cp)))); // định dạng riêng của user (minified) — không có gì để đổi thì không được ghi lại
     const again = read(cp);
     if (installInto(T).migrated.length || read(cp) !== again) fail("#75: cài lại lần 2 vẫn đụng config đã đổi");
+    { const o = JSON.parse(again); delete o.protectedBranches; delete o._protectedBranches; writeFileSync(cp, JSON.stringify(o));
+      const m2 = installInto(T).migrated, n2 = JSON.parse(read(cp));
+      if (!/\+ protectedBranches/.test(m2.join()) || !n2.protectedBranches?.includes("main") || !n2._protectedBranches) fail("0.12: nâng từ 0.11 phải tự thêm protectedBranches", JSON.stringify(m2));
+      writeFileSync(cp, again); }
     writeFileSync(cp, JSON.stringify({ ...JSON.parse(again), sliceFiles: 3 }, null, 2) + "\n");
     if (!/already set/.test(installInto(T).migrated.join()) || "sliceFiles" in JSON.parse(read(cp)) || JSON.parse(read(cp)).sliceBytes !== 64000) fail("#75: có cả hai key thì bỏ key cũ, giữ sliceBytes của user");
     writeFileSync(cp, cur);
@@ -2269,7 +2281,7 @@ if (kept.length) {
   for (const k of kept) console.log(`   ${k}`);
 }
 
-if (migrated.length) console.log(`\n🔁 harness.config.json: đổi key đã bị đổi tên:\n${migrated.map((m) => `   ${m}`).join("\n")}`);
+if (migrated.length) console.log(`\n🔁 harness.config.json: key đã đổi tên / mới bắt buộc:\n${migrated.map((m) => `   ${m}`).join("\n")}`);
 
 if (clobbered.length) console.log(`
 ⚠️  ĐÃ ĐÈ file trùng tên của project (kernel bắt buộc đè để nâng được phiên bản):

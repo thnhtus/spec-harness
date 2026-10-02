@@ -20,7 +20,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write # gh release create
       id-token: write # bắt buộc cho OIDC; thiếu là npm publish từ chối
     steps:
       - uses: actions/checkout@v5
@@ -50,3 +50,7 @@ jobs:
           npm pack --silent | tail -1 | xargs -I{} tar xzf {} -C "$RUNNER_TEMP"
           cd "$RUNNER_TEMP/package" && node install.mjs --self-test
       - run: npm publish
+      # Release notes = commit log từ tag trước. Không có CHANGELOG viết tay: nó
+      # lệch code ngay bản sau, còn commit message là thứ đã ghi "Closes #n".
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes --verify-tag
+        env: { GH_TOKEN: "${{ github.token }}" }
