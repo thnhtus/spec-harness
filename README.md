@@ -218,6 +218,7 @@ Xong hết thì `--preflight` phải xanh trước task đầu tiên. Chưa xanh
 | `.claude/settings.json` có được nạp từ cwd hiện tại không | error | bẫy bố cục B ở trên |
 | …và có còn đủ deny rule không (`git push`, `reset --hard`, `stash`, `clean`, `cat .env`, `env`, `printenv`, `Read(.env)`) | error | file tồn tại mà rỗng thì guardrail mất mà không báo; preflight nêu tên rule thiếu |
 | `ProjectRules.md` còn `NOT-FILLED-IN`, hoặc `repos[]` còn `<repo-name>` | error | sửa `.mcp.json` xong là preflight từng xanh trong khi mọi role vẫn đọc `<lint command>` làm §7. Ô `<…>` còn sót trong ProjectRules thì warning |
+| File được track còn gọi `--triage` với vector trần (script CI, Makefile, skill tự viết) | error | 0.12 nhận `{vector, counts, questions}`; installer chỉ sửa được dòng nó cài ra, còn lại preflight chỉ `file:line` |
 | `.mcp.json` còn trỏ placeholder (`example.com`, `<host>`) | error | Gate 1 mất nguồn AC, cả chuỗi truy vết thành tự bịa |
 | `.mcp.json` có field trông như credential | error | file này được commit |
 | CI có chạy `validate-tasks.mjs` không | error | hook chạy `--staged` và `--no-verify` bỏ qua được nó; CI là lưới cuối cho cả hai lỗ đó |

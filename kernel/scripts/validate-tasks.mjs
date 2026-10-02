@@ -1568,6 +1568,16 @@ export function mcpGaps(text) {
 // role then reads `<lint command>` as its §7. Config placeholders are errors (they
 // route: repoName is looked up by name); ProjectRules cells left as `<…>` are
 // warnings, because /init-project-rules is told to leave an honest `<…> TODO:`.
+// 0.12 (#88): --triage takes {vector,counts,questions}. The installer rewrites
+// the one line it shipped; a caller the user wrote (CI script, Makefile, own
+// skill) still passes a bare vector and exits 2 on its first run. Find it here.
+// ponytail: literal callers only — `--triage "$VEC"` is invisible; add a runtime hint if that shows up.
+const STALE_TRIAGE = /--triage\s+(?:['"]<vector|['"]?\{\s*\\?"(?:scope|uncertainty|dependency|dataImpact|integration|testing|blastRadius|reversibility)\\?"\s*:)/;
+export function staleTriageCalls(grepOut) {
+  return String(grepOut ?? "").split("\n").filter((l) => STALE_TRIAGE.test(l))
+    .map((l) => `${l.split(":").slice(0, 2).join(":")} still calls --triage with a bare vector — 0.12 takes '{"vector":{…},"counts":{…},"questions":[…]}' (exits 2 otherwise)`);
+}
+
 export function adapterGaps(projectRules, cfg = CFG) {
   const out = { errors: [], warnings: [] };
   const ph = (s) => /^<[^>]*>$/.test(String(s ?? "").trim());
@@ -1784,6 +1794,15 @@ if (args.has("--self-check")) {
   }
   // #85: unfilled adapter.
   assert.ok(adapterGaps("x\n<!-- NOT-FILLED-IN: y -->", { repos: [] }).errors.length === 1, "NOT-FILLED-IN is an error");
+  {
+    const st = (l) => staleTriageCalls(l).length;
+    assert.equal(st(`ci.sh:3:node scripts/validate-tasks.mjs --triage '{"scope":1,"testing":0}' --task-id X`), 1, "a bare vector caller is found");
+    assert.equal(st(`Makefile:9:\tnode v.mjs --triage "{\\"testing\\":1}"`), 1, "an escaped bare vector is found");
+    assert.equal(st(`a.md:1:--triage '<vector JSON>' --task-id X`), 1, "the old shipped placeholder is found");
+    assert.equal(st(`a.md:1:--triage '{"vector":{"scope":1},"counts":{}}'`), 0, "the complexity object is fine");
+    assert.equal(st(`a.md:1:re-running \`--triage\` does not overwrite`), 0, "prose mentioning --triage is fine");
+    assert.match(staleTriageCalls(`ci.sh:3:--triage '{"scope":1}'`)[0], /^ci\.sh:3 /, "the finding names file:line");
+  }
   assert.ok(adapterGaps(null, { repos: [{ name: "<repo-name>", path: "." }] }).errors.some((e) => e.includes("repos[0].name")), "<repo-name> is an error");
   assert.equal(adapterGaps("| `<lint command>` | x |", { repos: [{ name: "a", path: "." }] }).warnings.length, 1, "a leftover <…> cell warns");
   assert.deepEqual(adapterGaps("| `npm run lint` | x |", { repos: [{ name: "a", path: "." }] }), { errors: [], warnings: [] }, "filled adapter is clean");
@@ -4176,6 +4195,8 @@ if (args.has("--preflight")) {
     if (!existsSync(prp)) errs.push("docs/agents/ProjectRules.md missing — re-run the installer, then /init-project-rules");
     errs.push(...g.errors);
     warns.push(...g.warnings);
+    const gr = spawnSync("git", ["grep", "-n", "-I", "-e", "--triage", "--", ":!scripts/validate-tasks.mjs", ":!node_modules"], { cwd: REPO_ROOT, encoding: "utf8" });
+    errs.push(...staleTriageCalls(gr.stdout));
   }
 
   // Config coherence: run the real thing, don't reimplement it.
