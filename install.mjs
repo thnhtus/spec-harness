@@ -410,6 +410,17 @@ const RENAMED = { sliceFiles: "sliceBytes" };
 // upgrade does not exit 2 on the first --bootstrap. Not every new key belongs
 // here: one that is the user's own fact (repos, models) must stay a loud exit 2.
 const ADDED = ["protectedBranches"];
+// 0.12: start-task.md is the user's (kept), so its old `--triage '<vector JSON>'`
+// line survives an upgrade and the coordinator's step 0 exits 2. Swap exactly
+// that shipped line; anything the user rewrote is left alone.
+const CMD_RENAMED = [["--triage '<vector JSON>'", `--triage '{"vector":{…8 dims},"counts":{"symbol":"…","filesTouched":n,"existingTests":n},"questions":[…]}'`]];
+function migrateCommand(f) {
+  let t; try { t = read(f); } catch { return []; }
+  const hit = CMD_RENAMED.filter(([o]) => t.includes(o));
+  if (!hit.length) return [];
+  writeFileSync(f, hit.reduce((x, [o, n]) => x.split(o).join(n), t));
+  return hit.map(([o]) => `start-task.md: ${o} → complexity object`);
+}
 function migrateConfig(f) {
   let cfg; try { cfg = JSON.parse(read(f)); } catch { return []; }
   const ex = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))), done = [];
@@ -488,6 +499,7 @@ function installInto(P, clis = []) {
   const migrated = migrateConfig(join(P, "harness.config.json"));
   keep(join(SRC, "adapters/ProjectRules.template.md"), join(P, "docs/agents/ProjectRules.md"));
   keep(join(SRC, "commands/start-task.md"), join(P, ".claude/commands/start-task.md"));
+  migrated.push(...migrateCommand(join(P, ".claude/commands/start-task.md")));
   cpSync(join(SRC, "commands/init-project-rules.md"), join(P, ".claude/commands/init-project-rules.md"));
 
   // CI: hook ở máy dev bypass được bằng --no-verify. Workflow thì không.
@@ -1569,6 +1581,12 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       const m2 = installInto(T).migrated, n2 = JSON.parse(read(cp));
       if (!/\+ protectedBranches/.test(m2.join()) || !n2.protectedBranches?.includes("main") || !n2._protectedBranches) fail("0.12: nâng từ 0.11 phải tự thêm protectedBranches", JSON.stringify(m2));
       writeFileSync(cp, again); }
+    { const sf = join(T, ".claude/commands/start-task.md"), keepT = read(sf);
+      writeFileSync(sf, "# mine\n   node scripts/validate-tasks.mjs --triage '<vector JSON>' --task-id X\n");
+      const m3 = installInto(T).migrated, t3 = read(sf);
+      if (!/start-task\.md/.test(m3.join()) || t3.includes("<vector JSON>") || !t3.includes('"counts"') || !t3.startsWith("# mine")) fail("0.12: nâng phải sửa dòng --triage cũ trong start-task.md, giữ phần còn lại", t3);
+      if (installInto(T).migrated.some((x) => /start-task/.test(x))) fail("0.12: sửa start-task.md phải idempotent");
+      writeFileSync(sf, keepT); }
     writeFileSync(cp, JSON.stringify({ ...JSON.parse(again), sliceFiles: 3 }, null, 2) + "\n");
     if (!/already set/.test(installInto(T).migrated.join()) || "sliceFiles" in JSON.parse(read(cp)) || JSON.parse(read(cp)).sliceBytes !== 64000) fail("#75: có cả hai key thì bỏ key cũ, giữ sliceBytes của user");
     writeFileSync(cp, cur);
@@ -2281,7 +2299,7 @@ if (kept.length) {
   for (const k of kept) console.log(`   ${k}`);
 }
 
-if (migrated.length) console.log(`\n🔁 harness.config.json: key đã đổi tên / mới bắt buộc:\n${migrated.map((m) => `   ${m}`).join("\n")}`);
+if (migrated.length) console.log(`\n🔁 nâng adapter tại chỗ (key đổi tên / mới bắt buộc, lệnh cũ):\n${migrated.map((m) => `   ${m}`).join("\n")}`);
 
 if (clobbered.length) console.log(`
 ⚠️  ĐÃ ĐÈ file trùng tên của project (kernel bắt buộc đè để nâng được phiên bản):
