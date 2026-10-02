@@ -419,7 +419,8 @@ const AC_REACHED = (AC_TRACE.reachedIn ?? []).map((e) =>
 const AC_TRACE_SINCE = AC_TRACE.since ?? "9999-12-31";
 // S6: no default. A missing cutoff would silently turn every R5 error into a warning.
 const STAMP_SINCE = CFG.stampSince;
-const STAMP_LOG = join(TASKS_DIR, "_stamp.log");
+const STAMP_LOG_NAME = "_stamp.log";
+const STAMP_LOG = join(TASKS_DIR, STAMP_LOG_NAME);
 const SLICE_BYTES = CFG.sliceBytes;
 const needSliceBytes = (who) => {
   if (Number.isInteger(SLICE_BYTES) && SLICE_BYTES >= 1) return;
@@ -2646,6 +2647,10 @@ if (args.has("--self-check")) {
     assert.ok(stampDefects([{ ...e1, endedAt: "2026-09-29T01:00:00Z" }], log, "A-1", now).errors.some((x) => /before startedAt/.test(x)), "R5b: endedAt before startedAt");
     const round = [{ stage: "a", attempt: 1, startedAt: "2026-09-29T01:02:00Z" }, { stage: "b", attempt: 1, startedAt: "2026-09-29T01:05:00Z" }];
     assert.equal(stampDefects(round, "", "A-1", now).warnings.length, 1, "R5c: all whole minutes is a warning");
+    const gone = stampDefects([e1, { ...e1, attempt: 2 }], null, "A-1", now).errors;
+    assert.equal(gone.length, 1, "#84: a missing log is ONE error, not one per window");
+    assert.match(gone[0], /missing entirely.*2 telemetry window/, "#84: the error names the file, the count and the cause");
+    assert.deepEqual(stampDefects([], null, "A-1", now).errors, [], "#84: no telemetry yet → a missing log is not a defect");
     assert.equal(stampDefects([round[0], e1], "", "A-1", now).warnings.length, 0, "R5c: one real second clears it");
     assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(CFG.stampSince ?? ""), "S6: config.stampSince is required (YYYY-MM-DD)");
   }
@@ -3865,7 +3870,12 @@ function sliceChanged(cwd, snap) {
 // the same ceiling as _triage.log. Upgrade path: sign lines with a per-install key.
 export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now()) {
   const errors = [], warnings = [];
-  const seen = new Set(stampText.split("\n").map((l) => l.split("\t")).filter((c) => c.length >= 6 && c[1] === taskId)
+  // #84: stampText === null = the FILE is gone, not this task's lines. One error
+  // naming that (and who can delete an untracked file) beats N "no line" errors
+  // that read as N hand-typed windows. Only the witness check is skipped.
+  const gone = stampText === null && telemetry.some((e) => e?.startedAt);
+  if (gone) errors.push(`${STAMP_LOG_NAME} is missing entirely (${telemetry.filter((e) => e?.startedAt).length} telemetry window(s) lost their witness) — it is untracked, so a \`git clean\`, a worktree reset or an agent tidying "stray" files deletes it; recover it (backup/other worktree) or re-run the stages (#84)`);
+  const seen = new Set((stampText ?? "").split("\n").map((l) => l.split("\t")).filter((c) => c.length >= 6 && c[1] === taskId)
       .map(([ts, , stage, attempt, slice, kind]) => `${ts}|${stage}|${attempt}|${slice}|${kind}`));
   for (const e of telemetry) {
     if (!e?.startedAt) continue;
@@ -3873,7 +3883,7 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
     if (s > now + 60000) errors.push(`telemetry ${e.stage}#${e.attempt}: startedAt ${e.startedAt} is in the future`);
     if (Number.isFinite(en) && en < s) errors.push(`telemetry ${e.stage}#${e.attempt}: endedAt ${e.endedAt} is before startedAt ${e.startedAt}`);
     for (const [kind, ts] of [["start", e.startedAt], ["end", e.endedAt]])
-      if (ts && !seen.has(`${ts}|${e.stage}|${e.attempt}|${e.slice ?? "-"}|${kind}`))
+      if (ts && !gone && !seen.has(`${ts}|${e.stage}|${e.attempt}|${e.slice ?? "-"}|${kind}`))
         errors.push(`telemetry ${e.stage}#${e.attempt}: ${kind === "start" ? "startedAt" : "endedAt"} ${ts} has no _stamp.log line — only \`--advance\` writes telemetry; a hand-typed window is a guess`);
   }
   const timed = telemetry.filter((e) => e?.startedAt);
@@ -4751,9 +4761,9 @@ for (const { sprint, task, path } of folders) {
     // no-op then, and _triage.log is untracked, so deleting it was the cheapest
     // way to erase the comparison. Say it out loud instead of going quiet.
     if (!triaged && outcomeIsBlocking(data))
-      warnings.push(
-        `no _triage.log entry for ${data.taskId} — step 0 triage either never ran or its log is gone, so the bootstrap vector has nothing to be cross-checked against (§5.1.3)`,
-      );
+      warnings.push(existsSync(join(TASKS_DIR, "_triage.log"))
+        ? `no _triage.log entry for ${data.taskId} — step 0 triage never ran for it, so the bootstrap vector has nothing to be cross-checked against (§5.1.3)`
+        : `_triage.log is missing entirely — it is untracked, so a \`git clean\`, a worktree reset or an agent tidying "stray" files deletes it; ${data.taskId}'s bootstrap vector has nothing to be cross-checked against (§5.1.3, #84)`);
     const drift = vectorDriftSince(triaged, data.complexity.vector);
     if (drift.raised.length)
       warnings.push(
@@ -4837,7 +4847,7 @@ for (const { sprint, task, path } of folders) {
 
   // R5/R5b/R5c (#65): a telemetry window with no _stamp.log witness was typed by hand.
   {
-    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : "", data.taskId);
+    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId);
     const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
     for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
     warnings.push(...st.warnings);
