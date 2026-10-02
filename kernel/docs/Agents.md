@@ -369,6 +369,10 @@ This is the one place the harness can measure rework independently of what it is
 | `status = split` + `splitInto` with ≥2 taskIds | the budget drops to a **warning** — kept as history |
 | `status = split` without `splitInto` (or with only one) | **error** — a "split" that does not split is a rename for giving up |
 
+| `status` in `gate4Statuses` + `outcome.closedAt` + `outcome.overBudget` (a reason, ≥20 chars, not "n/a") | **warning** — shipped over budget, kept as history |
+
+`split` cannot describe a task that already passed Gate 5 and merged — `splitInto` would point at tasks that do not exist. Before `outcome.overBudget` the only way past the error was `--no-verify`. The reason should say which rounds were real rework and which were spec questions (budget counts runs, it cannot tell the two apart); put the full table in `09-Adversarial-Review.md`.
+
 `split` is not in `gate4Statuses`, so no evidence is demanded — it never shipped. This is an escape hatch that is **named and leaves a trace**, not a back door: `--calibrate` counts `split` tasks as a signal that `scope` is being under-scored at bootstrap.
 
 **Context bleed — the `/clear` rule now has a measurement.** Each stage reads only **its own** artifacts (`03` reads `02`, not `01`), so `telemetry[].inputTokens` should **fluctuate around a level**. Without clearing the context the conversation history accumulates — monotonically increasing, each stage larger than the last. ≥4 dispatches increasing monotonically with the last ≥ 2.5× the first → **warning**.

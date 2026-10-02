@@ -370,6 +370,10 @@ Vector là ước lượng **trước**. Thứ duy nhất đo được **sau** l
 | `status = split` + `splitInto` với ≥2 taskId | ngân sách hạ xuống **cảnh báo** — giữ lại làm lịch sử |
 | `status = split` không có `splitInto` (hoặc chỉ có một) | **lỗi** — "split" mà không tách là đổi tên của bỏ cuộc |
 
+| `status` thuộc `gate4Statuses` + `outcome.closedAt` + `outcome.overBudget` (một lý do, ≥20 ký tự, không phải "n/a") | **cảnh báo** — đã ship dù vượt ngân sách, giữ lại làm lịch sử |
+
+`split` không mô tả được task đã qua Gate 5 và đã merge — `splitInto` sẽ trỏ tới những task không tồn tại. Trước `outcome.overBudget`, lối duy nhất qua lỗi là `--no-verify`. Lý do nên nói vòng nào là rework thật, vòng nào là câu hỏi spec (ngân sách đếm vòng, nó không phân biệt được hai loại); bảng đầy đủ để trong `09-Adversarial-Review.md`.
+
 `split` không nằm trong `gate4Statuses`, nên không đòi bằng chứng — nó chưa từng ship. Đây là cửa thoát **có tên và để lại dấu vết**, không phải cửa sau: `--calibrate` đếm task `split` như tín hiệu `scope` đang bị chấm thấp lúc bootstrap.
 
 **Rò rỉ context — luật `/clear` giờ có phép đo.** Mỗi stage chỉ đọc artifact **của nó** (`03` đọc `02`, không đọc `01`), nên `telemetry[].inputTokens` phải **dao động quanh một mức**. Không clear context thì lịch sử hội thoại tích lại — tăng đơn điệu, stage sau lớn hơn stage trước. ≥4 lần dispatch tăng đơn điệu với lần cuối ≥ 2.5× lần đầu → **cảnh báo**.

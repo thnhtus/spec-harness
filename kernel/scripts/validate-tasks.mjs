@@ -598,6 +598,16 @@ function handoffHalted(memDir, role) {
 // coordinator claims. Handoff blocks are append-only (SharedRules §4), so the
 // block count is evidence `attempts` is not: the actor that would spin is the
 // same one that writes `attempts`, and it will not incriminate itself.
+// The other exit from an exhausted budget. split is for a task that has NOT
+// shipped; a task that went over budget, still passed Gate 5 and merged cannot
+// honestly be "split" -- splitInto would point at issues that do not exist --
+// so the only way past the error was --no-verify. Shipped + closed + a written
+// reason (not a dismissal) is a named exit with a trace; --calibrate still sees the attempts.
+function overBudgetAccepted(data) {
+  const why = String(data.outcome?.overBudget ?? "").trim();
+  return GATE4_DONE.has(data.status) && !!data.outcome?.closedAt && why.length >= 20 && !NON_ANSWER_RE.test(why);
+}
+
 function handoffBlockCount(memDir, role) {
   const f = join(memDir, `${role}.md`);
   if (!existsSync(f)) return 0;
@@ -1405,7 +1415,10 @@ function adversaryDefects(t, evidenceText = "") {
   // it. When both files carry attestations, something stricter is available --
   // the adversary MUST run after the implementer. A 09 startedAt earlier than
   // 08's means the block was copied from elsewhere, or from 08 and edited.
-  const advA = attestationsIn(t);
+  // 09 is append-only, so round 1's attestations stay in the file forever;
+  // comparing the OLDEST of the whole file failed every Gate 5 round ≥ 2. Only
+  // the newest `## Update` block (or the whole file if none) is this round's run.
+  const advA = attestationsIn(t.split(new RegExp(UPDATE_HEADING.source, "m")).pop());
   const evA = evidenceText ? attestationsIn(evidenceText) : [];
   if (advA.length && evA.length) {
     const newestEv = Math.max(...evA.map((a) => Date.parse(a.startedAt ?? "")).filter(Number.isFinite));
@@ -2344,6 +2357,14 @@ if (args.has("--self-check")) {
       !adversaryDefects(advNew + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
       "running afterwards is not flagged",
     );
+    assert.ok(
+      !adversaryDefects(advOld + "\n## Update — round 2\n" + advNew + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
+      "round 1's old attestation kept by append-only must not fail round 2",
+    );
+    assert.ok(
+      adversaryDefects(advNew + "\n## Update — round 2\n" + advOld + "\nPASS\n| `" + sample + "` | ok |", evNew).some((d) => /BEFORE/.test(d)),
+      "a stale attestation in the NEWEST block is still flagged",
+    );
   }
 
   // --task: the key is the last two segments, accepting every form the
@@ -2478,6 +2499,19 @@ if (args.has("--self-check")) {
         .findings.some((f) => f.includes("split")),
       "a split is a finding: the retry budget ran out before anyone cut the task up",
     );
+  }
+
+  // over budget but shipped: the exit split cannot give. Every half matters --
+  // a reason without shipping, or shipping without a reason, stays an error.
+  {
+    const why = "5 rounds: 3 real defects, then a spec question answered via FSD";
+    const ok = { status: "done", outcome: { closedAt: "2026-09-22", overBudget: why } };
+    assert.equal(overBudgetAccepted(ok), true, "shipped + closed + reason is accepted");
+    assert.equal(overBudgetAccepted({ ...ok, status: "implementing" }), false, "not shipped -> split is the exit, not this");
+    assert.equal(overBudgetAccepted({ ...ok, outcome: { overBudget: why } }), false, "no closedAt -> not closed");
+    assert.equal(overBudgetAccepted({ ...ok, outcome: { closedAt: "2026-09-22" } }), false, "no reason -> still an error");
+    for (const dodge of ["n/a", "TBD", "retried a lot"])
+      assert.equal(overBudgetAccepted({ ...ok, outcome: { closedAt: "x", overBudget: dodge } }), false, `"${dodge}" is not a reason`);
   }
 
   // contextBleed: the /clear rule with a measurement behind it. False positives
@@ -2647,6 +2681,9 @@ if (args.has("--self-check")) {
     assert.ok(stampDefects([{ ...e1, endedAt: "2026-09-29T01:00:00Z" }], log, "A-1", now).errors.some((x) => /before startedAt/.test(x)), "R5b: endedAt before startedAt");
     const round = [{ stage: "a", attempt: 1, startedAt: "2026-09-29T01:02:00Z" }, { stage: "b", attempt: 1, startedAt: "2026-09-29T01:05:00Z" }];
     assert.equal(stampDefects(round, "", "A-1", now).warnings.length, 1, "R5c: all whole minutes is a warning");
+    assert.equal(shippedBeforeRule({ status: "done", outcome: { closedAt: "x" } }), true, "done + closed = shipped, Gate 1 is history");
+    assert.equal(shippedBeforeRule({ status: "done", outcome: {} }), false, "done without closedAt is not closed");
+    assert.equal(shippedBeforeRule({ status: "reviewing", outcome: { closedAt: "x" } }), false, "only done counts");
     const gone = stampDefects([e1, { ...e1, attempt: 2 }], null, "A-1", now).errors;
     assert.equal(gone.length, 1, "#84: a missing log is ONE error, not one per window");
     assert.match(gone[0], /missing entirely.*2 telemetry window/, "#84: the error names the file, the count and the cause");
@@ -3868,6 +3905,13 @@ function sliceChanged(cwd, snap) {
 // ponytail: the log is a plain file inside tasksDir, so an agent that means it can
 // append a matching line too. This moves a typo-grade fake to a deliberate one,
 // the same ceiling as _triage.log. Upgrade path: sign lines with a per-install key.
+// Gate 1 stops an empty FSD reaching the reviewer; a task already done + closed
+// is past every reviewer, and rewriting its shipped FSD would be a retroactive
+// fake. Same exit as acTrace.since, keyed on the outcome instead of a date.
+export function shippedBeforeRule(data) {
+  return data.status === "done" && !!data.outcome?.closedAt;
+}
+
 export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now()) {
   const errors = [], warnings = [];
   // #84: stampText === null = the FILE is gone, not this task's lines. One error
@@ -4882,6 +4926,7 @@ for (const { sprint, task, path } of folders) {
   // stays as history instead of reddening every commit that touches it. Split
   // with no children is a rename for giving up, so that stays an error.
   const splitAccepted = data.status === "split" && (data.splitInto ?? []).length >= 2;
+  const shippedOver = overBudgetAccepted(data);
   if (data.status === "split" && !splitAccepted)
     errors.push(
       `status=split requires splitInto with >=2 task IDs — a split with no children is just a rename for giving up (Agents.md §5.5)`,
@@ -4925,11 +4970,13 @@ for (const { sprint, task, path } of folders) {
       // status=split is that advice taken. Keeping it an error would leave the
       // task wedged -- append-only docs mean the blocks cannot be removed, and a
       // gate whose only exit is --no-verify is a gate on its way out.
-      (splitAccepted ? warnings : errors).push(
+      (splitAccepted || shippedOver ? warnings : errors).push(
         `${role} ran ${perSlice ?? runs}×${perSlice !== null ? " on one slice" : ""} (budget ${RETRY_BUDGET}) — ` +
           (splitAccepted
             ? `kept as history: this task was split into ${data.splitInto.join(", ")}`
-            : `the gate keeps bouncing it; split the task or fix the spec instead of retrying (Agents.md §5.5)`),
+            : shippedOver
+              ? `kept as history: shipped over budget — ${data.outcome.overBudget}`
+              : `the gate keeps bouncing it; split the task or fix the spec instead of retrying, or once shipped+closed write outcome.overBudget (Agents.md §5.5)`),
       );
   }
 
@@ -5054,7 +5101,7 @@ for (const { sprint, task, path } of folders) {
   {
     const fsd = join(path, "01-FSD.md");
     if (existsSync(fsd) && gate1IsOwed(data.currentStage))
-      for (const d of gate1Defects(readFileSync(fsd, "utf8"))) errors.push(d);
+      for (const d of gate1Defects(readFileSync(fsd, "utf8"))) (shippedBeforeRule(data) ? warnings : errors).push(shippedBeforeRule(data) ? `${d} — kept as history: shipped before Gate 1 was enforced` : d);
   }
 
   // 8. AC traceability, checked per stage. An AC that never reached the plan is
