@@ -204,6 +204,7 @@ Còn vài việc nó không làm thay được:
 | --- | --- |
 | `.mcp.json` | URL server và OAuth chỉ bạn có. Sửa URL rồi gõ `/mcp` để login. File này project-scoped, commit được cho cả team |
 | `acTrace.since` trong `harness.config.json` | Đặt bằng ngày bạn bật harness. Task cũ hơn mốc này chỉ bị warning, không bị chặn; nếu không có mốc thì mọi task có sẵn đều đỏ |
+| `protectedBranches` trong `harness.config.json` | Danh sách regex nhánh mà `--bootstrap` từ chối (ProjectRules §3 ở dạng dữ liệu). Mặc định cài ra `main/master/develop/staging/release/.*`; thiếu key thì exit 2 |
 | `stampSince` trong `harness.config.json` | Giống `acTrace.since`: task tạo từ ngày này phải có mọi khung telemetry khớp một dòng `_stamp.log` (chỉ `--advance` ghi). Thiếu key thì exit 2 |
 
 Bản cài ra để `"evidenceMode": "attested"`: Gate 4/5 đòi evidence do `scripts/run-evidence.mjs` sinh, không nhận output dán tay. Hạ xuống `"legacy"` chỉ hợp lý khi di trú một repo đã có evidence viết tay. Trường này bắt buộc khai tường minh, không có mặc định ngầm.
@@ -216,6 +217,7 @@ Xong hết thì `--preflight` phải xanh trước task đầu tiên. Chưa xanh
 | --- | --- | --- |
 | `.claude/settings.json` có được nạp từ cwd hiện tại không | error | bẫy bố cục B ở trên |
 | …và có còn đủ deny rule không (`git push`, `reset --hard`, `stash`, `clean`, `cat .env`, `env`, `printenv`, `Read(.env)`) | error | file tồn tại mà rỗng thì guardrail mất mà không báo; preflight nêu tên rule thiếu |
+| `ProjectRules.md` còn `NOT-FILLED-IN`, hoặc `repos[]` còn `<repo-name>` | error | sửa `.mcp.json` xong là preflight từng xanh trong khi mọi role vẫn đọc `<lint command>` làm §7. Ô `<…>` còn sót trong ProjectRules thì warning |
 | `.mcp.json` còn trỏ placeholder (`example.com`, `<host>`) | error | Gate 1 mất nguồn AC, cả chuỗi truy vết thành tự bịa |
 | `.mcp.json` có field trông như credential | error | file này được commit |
 | CI có chạy `validate-tasks.mjs` không | error | hook chạy `--staged` và `--no-verify` bỏ qua được nó; CI là lưới cuối cho cả hai lỗ đó |
@@ -292,7 +294,7 @@ taskComplexity = max(base, riskFloor)
 Lối thoát duy nhất là skill `quick-task` / `fix-bug`, và ranh giới của nó cũng do exit code quyết định:
 
 ```bash
-node scripts/validate-tasks.mjs --triage '<vector>' --branch-type bugfix --task-id ABC-1
+node scripts/validate-tasks.mjs --triage '<complexity: vector+counts+questions>' --branch-type bugfix --task-id ABC-1
 # fix-bug → exit 0 · harness → exit 10
 ```
 

@@ -17,7 +17,7 @@ The user has **not** said that and just hands you a ClickUp link → use `/start
 vector (`docs/Agents.md` §5.1), then ask:
 
 ```bash
-node scripts/validate-tasks.mjs --triage '<vector JSON>' --task-id <taskId>
+node scripts/validate-tasks.mjs --triage '{"vector":{…8 dims},"counts":{"symbol":"…","filesTouched":n,"existingTests":n},"questions":[…]}' --task-id <taskId>
 ```
 
 Verdict `harness` (exit 10) → **tell the user**, do not silently keep going. A

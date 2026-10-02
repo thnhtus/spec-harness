@@ -114,14 +114,16 @@ or how heavy the flow runs. So this step goes first — **before the worktree**.
 5. **Triage** — does this task need the harness at all:
 
    ```bash
-   node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type <feature|bugfix|hotfix> --task-id <taskId>
+   node scripts/validate-tasks.mjs --triage '{"vector":{…8 dims},"counts":{"symbol":"…","filesTouched":n,"existingTests":n},"questions":[…]}' --branch-type <feature|bugfix|hotfix> --task-id <taskId>
    ```
 
    `--task-id` is required (exit `2` if missing): without it nothing is written
    to `_triage.log`, and the vector scored here cannot be cross-checked against
    the bootstrap vector. The vector must also be complete — **8 dimensions,
    integer, in range** — `{}` or `{"scope":"2"}` is rejected (exit `2`), not
-   treated as `trivial`.
+   treated as `trivial`. It is the **same complexity object** step 1 passes to
+   `--bootstrap`, checked by the same counts rules (one file ⇒ scope 0), so a
+   score triage accepts is one bootstrap accepts.
 
    | Exit | Verdict | What to do |
    | --- | --- | --- |
@@ -262,7 +264,9 @@ No infinite loop.
 node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli "$CLI"   # exit 1 = STOP
 ```
 
-It runs the validator on this task (Gate FAIL → exit `1`), refuses a skipped stage or a
+When `<stage>` is the next one and the previous role's last handoff says
+`Continue automation: yes`, it moves `currentStage` and marks that role `done`
+itself (rolled back on a gate FAIL) — do not edit them by hand. It runs the validator on this task (Gate FAIL → exit `1`), refuses a skipped stage or a
 handoff that says `Continue automation: no` (exit `1`), renews the lease, bumps
 `attempts[<stage>]`, closes the previous telemetry entry and opens this one with the
 machine's clock and the tier/model it resolved, then prints the role to dispatch, the

@@ -1118,14 +1118,15 @@ function triage(vector, branchType) {
 // a bugfix task carries `regressionOf: <taskId>`, count that instead.
 const ESCAPE_VERDICTS = ["quick-task", "fix-bug"];
 
-export function escapeHatchStats(logText = "", { minSample = CFG.calibrateMinSample ?? 5 } = {}) {
+export function escapeHatchStats(logText = "", { minSample = CFG.calibrateMinSample ?? 5, ran = new Set() } = {}) {
   const verdict = new Map(); // taskId -> escape verdict
   const outcome = new Map(); // taskId -> "escaped" | "clean"
   for (const line of logText.split("\n")) {
     const col = line.split("\t");
     if (col.length < 5) continue;
     const [, taskId, v, flag] = col;
-    if (!taskId) continue;
+    // #88: a task with a folder ran the harness, whatever an earlier triage said.
+    if (!taskId || ran.has(taskId)) continue;
     // A task triaged twice keeps the FIRST escape verdict, for the same reason
     // triageVectorFor keeps the lowest vector: re-running --triage must not
     // erase the run that actually skipped the gates.
@@ -1344,6 +1345,40 @@ function staticLayerRows(t) {
   return rows;
 }
 
+// #86/#87: template rows nobody filled. Gate 4/5 checked that 06 exists and that
+// 08/09 hold one attested run, so a 06 left as `src/…` and a 09 whose AC table
+// still reads AC-nn walked to `reviewing`. A row counts once its first cell is no
+// longer a placeholder (`<…>`, `…`, `src/…`, AC-nn) and some other cell has text.
+const ROW_PLACEHOLDER = /^(`?<[^>]*>`?|…|`?[\w./-]*…`?|AC-nn|AC-ID|)$/;
+export function filledRows(text, heading) {
+  const sec = text.split(/^## /m).find((s) => s.startsWith(heading));
+  if (!sec) return null;
+  return sec.split("\n").filter((l) => /^\|/.test(l) && !/^\|\s*-{3}/.test(l)).slice(1)
+    .map((l) => l.split(/(?<!\\)\|/).slice(1, -1).map((c) => c.trim()))
+    .filter((c) => !ROW_PLACEHOLDER.test(c[0] ?? "") && c.slice(1).some((x) => x && !ROW_PLACEHOLDER.test(x)));
+}
+export function notesDefects(t) {
+  const rows = filledRows(t, "Changed files");
+  return rows === null ? ["06 has no `## Changed files` section"]
+    : rows.length ? [] : ["06 `Changed files` has no real row (still the template's `src/…`) — Gate 4 needs what was changed and why (Implementer §4)"];
+}
+export function evidenceTableDefects(t) {
+  const rows = filledRows(t, "Command output");
+  if (rows === null) return [];
+  return rows.some((c) => EVIDENCE_RE.test(c[1] ?? "")) ? []
+    : ["08 `Command output` table has no row with a real §7 command (still `<scoped unit command>`) — the table is what a reviewer reads"];
+}
+export function adversaryCoverageDefects(t, acs = []) {
+  const d = [];
+  const rows = filledRows(t, "AC") ?? [];
+  const have = new Set(rows.map((c) => c[0]));
+  const miss = acs.filter((a) => !have.has(a));
+  if (miss.length) d.push(`09 "AC — does the test actually assert it" has no row for ${miss.join(", ")} — Gate 5 checks every AC in 02, not a sample (§3.3)`);
+  const insp = (t.split(/^## /m).find((s) => s.startsWith("What was inspected")) ?? "").split("\n").filter((l) => /^-\s+\S/.test(l) && !/^-\s+…\s*$/.test(l));
+  if (!insp.length) d.push('09 "What was inspected" is empty — "found nothing" means nothing without the paths you walked');
+  return d;
+}
+
 function adversaryDefects(t, evidenceText = "") {
   const d = [];
   if (!/\bPASS\b|\bFAIL\b|\bUNCERTAIN\b/.test(t.replace(/PASS \| FAIL \| UNCERTAIN/g, "")))
@@ -1527,6 +1562,28 @@ export function mcpGaps(text) {
   return out;
 }
 
+// #85: an unfilled adapter. The template carries a NOT-FILLED-IN marker and
+// `<…>` cells; only install's self-test read the marker, so a repo whose .mcp.json
+// was tidied passed preflight with ProjectRules still the empty skeleton -- every
+// role then reads `<lint command>` as its §7. Config placeholders are errors (they
+// route: repoName is looked up by name); ProjectRules cells left as `<…>` are
+// warnings, because /init-project-rules is told to leave an honest `<…> TODO:`.
+export function adapterGaps(projectRules, cfg = CFG) {
+  const out = { errors: [], warnings: [] };
+  const ph = (s) => /^<[^>]*>$/.test(String(s ?? "").trim());
+  for (const [i, r] of (cfg.repos ?? []).entries())
+    for (const k of ["name", "path", "layer"])
+      if (ph(r?.[k])) out.errors.push(`config.repos[${i}].${k} is still the placeholder "${r[k]}" — run /init-project-rules (bootstrap records repoName from it)`);
+  if (projectRules == null) return out;
+  if (projectRules.includes("NOT-FILLED-IN"))
+    out.errors.push("docs/agents/ProjectRules.md still carries the NOT-FILLED-IN marker — every role reads §1/§2/§3/§7 from it; run /init-project-rules, then delete the marker");
+  else {
+    const left = [...new Set(projectRules.split("\n").filter((l) => l.startsWith("|")).flatMap((l) => l.match(/`<[^`>]+>`/g) ?? []))];
+    if (left.length) out.warnings.push(`docs/agents/ProjectRules.md table cells still placeholders: ${left.slice(0, 5).join(", ")}${left.length > 5 ? ` (+${left.length - 5})` : ""} — fill them or delete the row`);
+  }
+  return out;
+}
+
 // Allows checking a standalone settings.json (used by install.mjs --self-test):
 // two places each re-listing the deny rules will drift, and that drift means
 // shipping a settings.json that its own preflight calls red.
@@ -1704,6 +1761,32 @@ if (args.has("--self-check")) {
         `${GATE4_ARTIFACTS.adversarial} template must not satisfy Gate 5 untouched`,
       );
   }
+
+  // #86/#87: untouched templates fail, a filled row passes -- per check, one rule each.
+  {
+    const t = (n) => { const f = join(TASKS_DIR, "_templates", n); return existsSync(f) ? readFileSync(f, "utf8") : null; };
+    const n06 = t(GATE4_ARTIFACTS.notes ?? ""), e08 = t(GATE4_ARTIFACTS.evidence ?? ""), a09 = t(GATE4_ARTIFACTS.adversarial ?? "");
+    if (n06) {
+      assert.equal(notesDefects(n06).length, 1, "06 template's `src/…` row is not a changed file");
+      assert.deepEqual(notesDefects(n06.replace("| `src/…` | added / modified | … | AC-… |", "| `src/a.js` | modified | fix | AC-01 |")), [], "one real changed-file row passes");
+    }
+    if (e08) {
+      assert.equal(evidenceTableDefects(e08).length, 1, "08 template's `<scoped unit command>` is not a command");
+      assert.deepEqual(evidenceTableDefects(e08.replace("`<scoped unit command>`", `\`${sample}\``)), [], "a real §7 command row passes");
+    }
+    if (a09) {
+      assert.ok(adversaryCoverageDefects(a09, ["AC-01"]).some((x) => x.includes("AC-01")), "09 template has no row for a declared AC");
+      assert.ok(adversaryCoverageDefects(a09, []).some((x) => x.includes("What was inspected")), "09 template's `- …` is not an inspection");
+      const filled = a09.replace("| AC-nn |  | yes / no | yes / no / not tried | met / not met |", "| AC-01 | t::x | yes | yes | met |").replace(/(## What was inspected[\s\S]*?)\n- …/, "$1\n- src/a.js");
+      assert.deepEqual(adversaryCoverageDefects(filled, ["AC-01"]), [], "09 with every AC row + an inspected path passes");
+      assert.ok(adversaryCoverageDefects(filled, ["AC-01", "AC-02"]).some((x) => x.includes("AC-02")), "an AC missing from 09 is named");
+    }
+  }
+  // #85: unfilled adapter.
+  assert.ok(adapterGaps("x\n<!-- NOT-FILLED-IN: y -->", { repos: [] }).errors.length === 1, "NOT-FILLED-IN is an error");
+  assert.ok(adapterGaps(null, { repos: [{ name: "<repo-name>", path: "." }] }).errors.some((e) => e.includes("repos[0].name")), "<repo-name> is an error");
+  assert.equal(adapterGaps("| `<lint command>` | x |", { repos: [{ name: "a", path: "." }] }).warnings.length, 1, "a leftover <…> cell warns");
+  assert.deepEqual(adapterGaps("| `npm run lint` | x |", { repos: [{ name: "a", path: "." }] }), { errors: [], warnings: [] }, "filled adapter is clean");
 
   // Regression: an untouched template must NOT satisfy traceability. Templates
   // use "AC-nn" placeholders precisely so a real AC-01 is never pre-covered.
@@ -2577,6 +2660,14 @@ if (args.has("--self-check")) {
     assert.equal(ad({ currentStage: "weird" }, "implementation").exit, 1, "a task at an unknown stage is not dispatched");
     const end = ad({ currentStage: "reviewing" }, "reviewing");
     assert.deepEqual([end.exit, end.role, end.attempt, end.prev], [0, null, null, "adversary"], "the last stage dispatches nothing");
+    // #91 promotion: next stage + a continuing handoff moves the task; anything else does not.
+    const pr = (data, st, c) => promotion({ branchType: "feature", agents: {}, ...data }, st, { ...o, continues: (r) => r === c });
+    const p1 = pr({ currentStage: "fsd_write" }, "implementation", "fsd-writer");
+    assert.deepEqual([p1?.currentStage, p1?.agents["fsd-writer"].status], ["implementation", "done"], "next stage + Continue: yes → promoted, previous role done");
+    assert.equal(pr({ currentStage: "fsd_write" }, "implementation", "nobody"), null, "no continuing handoff → not promoted");
+    assert.equal(pr({ currentStage: "fsd_write" }, "adversarial_review", "fsd-writer"), null, "two stages ahead is still a skip");
+    assert.equal(pr({ currentStage: "implementation", branchType: "bugfix" }, "adversarial_review", "fixer")?.agents.fixer.status, "done", "routing: the fixer's handoff promotes a bugfix");
+    assert.equal(pr({ currentStage: "adversarial_review" }, "reviewing", "adversary")?.status, "reviewing", "promotion into the last stage sets status=reviewing");
   }
 
   // escapeHatchStats: the feedback loop for tasks that skipped every gate. The
@@ -2590,6 +2681,7 @@ if (args.has("--self-check")) {
     assert.equal(s(row("A-1", "harness", "-", '{"scope":2}')).escapes, 0, "a harness verdict is not an escape");
     assert.equal(s(row("A-1", "quick-task", "-", '{"scope":0}')).escapes, 1, "quick-task counts as an escape");
     assert.equal(s(row("B-2", "fix-bug", "-", '{"scope":0}')).byVerdict["fix-bug"], 1, "fix-bug counts separately");
+    assert.equal(s(row("A-1", "quick-task", "-", '{"scope":0}'), { ran: new Set(["A-1"]) }).escapes, 0, "#88: a task that has a folder ran the harness — not an escape");
 
     // Re-triaging must not erase the run that actually skipped the gates --
     // same reason triageVectorFor keeps the lowest vector.
@@ -3454,6 +3546,21 @@ if (args.has("--tier")) {
 //   exit 0 = dispatch <stage> · 1 = stop (gate FAIL, halted handoff, skipped stage,
 //   lease not held) · 2 = bad arguments.
 // Pure decision, so --self-check can assert every branch without a filesystem.
+// #91: --advance used to refuse "skip a gate" until the coordinator hand-edited
+// currentStage + agents.<role>.status -- five JSON edits per task, the sort of
+// bookkeeping #64 moved into scripts. When the target is exactly the NEXT stage
+// and the previous role's last handoff says `Continue automation: yes`, that
+// handoff IS the PASS: promote, then validate (a gate FAIL rolls it back).
+export function promotion(data, stage, { stages = STAGE_ORDER, roleStage = ROLE_STAGE, routing = CFG.routing, continues = () => false } = {}) {
+  const at = stages.indexOf(stage), cur = stages.indexOf(data.currentStage);
+  if (at < 1 || cur < 0 || at !== cur + 1) return null;
+  const prev = data.currentStage === "implementation" && routing?.map?.[data[routing.field]]
+    ? routing.map[data[routing.field]] : Object.keys(roleStage).find((r) => roleStage[r] === data.currentStage);
+  if (!prev || !continues(prev)) return null;
+  const last = at === stages.length - 1;
+  return { ...data, currentStage: stage, ...(last ? { status: "reviewing" } : {}), agents: { ...data.agents, [prev]: { ...(data.agents?.[prev] ?? {}), status: "done" } } };
+}
+
 export function advanceDecision(data, stage, { stages = STAGE_ORDER, roleStage = ROLE_STAGE, routing = CFG.routing, halted = () => false } = {}) {
   const at = stages.indexOf(stage), cur = stages.indexOf(data.currentStage);
   if (at < 1) return { exit: 2, why: `stage "${stage}" is not a dispatchable stage (${stages.slice(1).join(", ")})` };
@@ -3751,6 +3858,10 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
 // config — nothing to judge, so nothing for a model to do.
 //   exit 0 = folder written and it validates · 1 = refused (exists, protected
 //   branch, no git user) or the written folder fails the validator · 2 = bad input.
+export function isProtected(branch, list = CFG.protectedBranches ?? []) {
+  return list.some((p) => new RegExp(`^(?:${p})$`).test(branch));
+}
+
 export function bootstrapInputErrors(o, { repos = CFG.repos ?? [], branchTypes = Object.keys(CFG.routing?.map ?? {}), urlPattern = CFG.tracker?.urlPattern } = {}) {
   if (o === null || typeof o !== "object" || Array.isArray(o)) return ["input must be a JSON object"];
   const out = [];
@@ -3776,10 +3887,13 @@ if (args.has("--bootstrap")) {
   if (bad.length) { console.error(`✖ --bootstrap rejected:\n  ${bad.join("\n  ")}`); process.exit(2); }
   const repo = (CFG.repos ?? []).find((r) => r.name === (o.repoName ?? CFG.repos[0].name));
   const git = (...a) => spawnSync("git", a, { cwd: resolve(REPO_ROOT, repo.path ?? "."), encoding: "utf8" }).stdout?.trim() ?? "";
-  const developer = git("config", "user.name");
-  // An empty user.name needs no check here: the schema refuses developer="" and the write rolls back.
+  // #89: input wins, git is the fallback; neither → say which, instead of the schema's "too short".
+  const developer = String(o.developer ?? "").trim() || git("config", "user.name");
+  if (!developer) { console.error('✖ --bootstrap: no developer — pass "developer" in the JSON or set `git config user.name`'); process.exit(2); }
   const head = git("symbolic-ref", "--short", "HEAD"); // not rev-parse: that prints "HEAD" before the first commit
-  if (/^(main|master|develop|staging|release\/.*)$/.test(head)) { console.error(`✖ --bootstrap: the task repo is on protected branch "${head}" — branch off first (Orchestrator §2 #3)`); process.exit(1); }
+  // #92: ProjectRules §3 names the protected branches; config holds them as data, no default.
+  if (!Array.isArray(CFG.protectedBranches) || !CFG.protectedBranches.length) { console.error("✖ --bootstrap: config.protectedBranches (regex list, e.g. [\"main\",\"develop\",\"release/.*\"]) is required — ProjectRules §3 as data"); process.exit(2); }
+  if (isProtected(head)) { console.error(`✖ --bootstrap: the task repo is on protected branch "${head}" (config.protectedBranches) — branch off first (Orchestrator §2 #3)`); process.exit(1); }
   const rel = `${CFG.tasksDir ?? "docs/tasks"}/${GROUP_PREFIX}${o.sprintNumber}/${o.taskId}-${o.slug}/`;
   const dir = join(REPO_ROOT, rel), jp = join(dir, "task.agent.json");
   // Never clobber: the lease (step 0b) may already have created the folder, not the state file.
@@ -3842,10 +3956,16 @@ if (args.has("--advance")) {
   const dir = resolve(taskArg), jp = join(dir, "task.agent.json");
   // A path matching no task folder: the validator itself exits 2 (usage, below).
   // The gate: the same validator run the coordinator used to type by hand.
+  const mem = join(dir, ".agent-memory");
+  if (!existsSync(jp)) { console.error(`✖ --advance: no task.agent.json in ${taskArg}`); usage(); }
+  const before = readFileSync(jp, "utf8");
+  const continues = (r) => { try { return /Continue automation\s*\**\s*:\s*\**\s*yes\b/i.test(readFileSync(join(mem, `${r}.md`), "utf8").split(/^### /m).slice(1).pop() ?? ""); } catch { return false; } };
+  const promoted = promotion(JSON.parse(before), stage, { continues });
+  // Any non-zero exit below (gate FAIL, lease, slice budget…) rolls the promotion back.
+  if (promoted) { writeFileSync(jp, JSON.stringify(promoted, null, 2) + "\n"); process.on("exit", (c) => { if (c !== 0) writeFileSync(jp, before); }); }
   const v = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--quiet", "--no-warn", "--task", dir, "--config", CONFIG_PATH], { encoding: "utf8" });
   if (v.status === 2) { process.stderr.write(v.stderr); usage(); }
   const data = JSON.parse(readFileSync(jp, "utf8"));
-  const mem = join(dir, ".agent-memory");
   const d = v.status === 1 ? { exit: 1, why: "validator: gate FAIL" }
     : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
@@ -3930,18 +4050,29 @@ if (args.has("--advance")) {
 
 if (args.has("--triage")) {
   const at = argv.indexOf("--triage");
-  let vector;
+  let cx;
   try {
-    vector = JSON.parse(argv[at + 1] ?? "");
+    cx = JSON.parse(argv[at + 1] ?? "");
   } catch {
-    console.error("✖ --triage needs the complexity vector as JSON (Agents.md §5.1.2)");
+    console.error("✖ --triage needs the complexity object as JSON: {vector, counts, questions} (Agents.md §5.1.2)");
     process.exit(2);
   }
+  // #88: the same object --bootstrap takes, checked by the same rules. A bare
+  // vector skipped the counts check, so triage could score scope 1 for one file;
+  // bootstrap then forbade both the honest 0 (lower than triage) and the 1 (one
+  // file), and the only way out was a re-triage that logged a harness task as an
+  // escape hatch.
+  if (cx === null || typeof cx !== "object" || !("vector" in cx)) {
+    console.error('✖ --triage takes the complexity object, not a bare vector: \'{"vector":{…},"counts":{"symbol","filesTouched","existingTests"},"questions":[…]}\' — the counts are what keep the vector honest (Agents.md §5.1)');
+    process.exit(2);
+  }
+  const vector = cx.vector;
   const flagVal = (name) => {
     const i = argv.indexOf(name);
     return i >= 0 ? argv[i + 1] : null;
   };
   const bad = vectorInputErrors(vector);
+  if (!bad.length) bad.push(...vectorEvidenceDefects(cx).filter((d) => !/splitEvaluated/.test(d)));
   if (bad.length) {
     console.error(`✖ --triage vector rejected (Agents.md §5.1.2):\n  ${bad.join("\n  ")}`);
     process.exit(2);
@@ -4038,6 +4169,15 @@ if (args.has("--preflight")) {
     }
   }
 
+  // #85: the adapter itself. The source repo ships the template, so it is exempt.
+  if (!isSourceRepo) {
+    const prp = join(REPO_ROOT, "docs/agents/ProjectRules.md");
+    const g = adapterGaps(existsSync(prp) ? readFileSync(prp, "utf8") : null);
+    if (!existsSync(prp)) errs.push("docs/agents/ProjectRules.md missing — re-run the installer, then /init-project-rules");
+    errs.push(...g.errors);
+    warns.push(...g.warnings);
+  }
+
   // Config coherence: run the real thing, don't reimplement it.
   {
     const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--self-check", "--config", CONFIG_PATH], {
@@ -4079,12 +4219,20 @@ if (args.has("--preflight")) {
     const { realpathSync } = await import("node:fs");
     const cj = join(homedir(), ".claude.json");
     if (!isSourceRepo && existsSync(join(REPO_ROOT, ".claude/agents/adversary.md")) && existsSync(cj)) {
-      let trusted = null;
+      let trusted = null, seen = false;
       try {
         const p = JSON.parse(readFileSync(cj, "utf8")).projects ?? {};
-        trusted = [REPO_ROOT, realpathSync(REPO_ROOT)].some((d) => p[d]?.hasTrustDialogAccepted);
+        const ds = [REPO_ROOT, realpathSync(REPO_ROOT)];
+        trusted = ds.some((d) => p[d]?.hasTrustDialogAccepted);
+        seen = ds.some((d) => p[d]);
       } catch {}
-      if (trusted === false)
+      // #93: Claude never opened here + another CLI layer installed = probably not
+      // a Claude user. Say it once as info, not a warning on every run.
+      // ponytail: still a guess from ~/.claude.json; a pi user who later opens claude gets the warning then.
+      const others = existsSync(join(REPO_ROOT, ".agents/spec-harness-guards.json")) || existsSync(join(REPO_ROOT, ".codex")) || existsSync(join(REPO_ROOT, ".cursor"));
+      if (trusted === false && !seen && others) {
+        if (!QUIET && !AS_JSON) console.log("ℹ Claude Code has never opened this folder — if you use it, accept the trust dialog once (adversary/fsd-reviewer write guard, #53)");
+      } else if (trusted === false)
         warns.push("Claude Code has not trusted this folder — it silently skips the adversary/fsd-reviewer write guard (#53). Open `claude` here once and accept the trust dialog");
     }
   }
@@ -4892,6 +5040,21 @@ for (const { sprint, task, path } of folders) {
     }
   }
 
+  // #86/#87: unfilled template rows, checked from the first stage that READS the
+  // artifact (06/08 at adversarial_review, 09 at reviewing). Tasks created before
+  // acTrace.since stay warnings, like every other content rule added later.
+  {
+    const sink = outcomeIsBlocking(data) ? errors : warnings;
+    const read = (n) => (n && existsSync(join(path, n)) ? readFileSync(join(path, n), "utf8") : null);
+    if (stageIdx >= STAGE_ORDER.indexOf("adversarial_review") && STAGE_ORDER.includes("adversarial_review")) {
+      const notes = read(GATE4_ARTIFACTS.notes), ev = read(GATE4_ARTIFACTS.evidence);
+      if (notes !== null) for (const x of notesDefects(notes)) sink.push(`${GATE4_ARTIFACTS.notes}: ${x}`);
+      if (ev !== null) for (const x of evidenceTableDefects(ev)) sink.push(`${GATE4_ARTIFACTS.evidence}: ${x}`);
+    }
+    const adv = GATE4_DONE.has(data.status) ? read(GATE4_ARTIFACTS.adversarial) : null;
+    if (adv !== null) for (const x of adversaryCoverageDefects(adv, declared)) sink.push(`${GATE4_ARTIFACTS.adversarial}: ${x}`);
+  }
+
   // 6. Gate-4 evidence when implementation is reported complete
   if (GATE4_DONE.has(data.status)) {
     const evName = GATE4_ARTIFACTS.evidence;
@@ -4957,7 +5120,7 @@ if (CALIBRATE) {
   // was blind to them: a task waved through as quick-task has no folder, so it
   // is in neither the numerator nor the denominator above. A threshold can only
   // be wrong in a way someone notices if both branches report back.
-  const esc = escapeHatchStats(existsSync(join(TASKS_DIR, "_triage.log")) ? readFileSync(join(TASKS_DIR, "_triage.log"), "utf8") : "");
+  const esc = escapeHatchStats(existsSync(join(TASKS_DIR, "_triage.log")) ? readFileSync(join(TASKS_DIR, "_triage.log"), "utf8") : "", { ran: new Set(allTasks.map((t) => t.taskId)) });
   c.escapeHatch = esc;
   if (AS_JSON) console.log(JSON.stringify(c, null, 2));
   else {

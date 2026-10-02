@@ -16,7 +16,7 @@ A general feature/task (not a bug) → use `quick-task` or `/start-task`.
 ticket), score the 8-dimension vector (`docs/Agents.md` §5.1) and then ask:
 
 ```bash
-node scripts/validate-tasks.mjs --triage '<vector JSON>' --branch-type bugfix --task-id <taskId>
+node scripts/validate-tasks.mjs --triage '{"vector":{…8 dims},"counts":{"symbol":"…","filesTouched":n,"existingTests":n},"questions":[…]}' --branch-type bugfix --task-id <taskId>
 ```
 
 Verdict `harness` (exit 10) → **tell the user**, do not silently carry on. This

@@ -634,6 +634,7 @@ function buildBase(root) {
   writeFileSync(join(P, ".mcp.json"), JSON.stringify({ mcpServers: {} }, null, 2) + "\n");
   const pr = join(P, "docs/agents/ProjectRules.md");
   writeFileSync(pr, read(pr)
+    .replace(/<!-- NOT-FILLED-IN:.*-->\n/, "")
     .replace("| `<path-scoped unit test command>` |", "| `npm run test:scope` |")
     .replace(/\| `<whole-repo unit test command>` \|.*\n\| `<type-check command>` \|.*\n\| `<lint command>` \|.*\n\| `<build command>` \|.*\n/, "")
     .replace("`<dev server, test watch, preview…>`", "none")
@@ -649,7 +650,7 @@ function buildEvalCase(c, root) {
   const base = git("rev-parse", "--short", "HEAD");
 
   // step 0 thật: _triage.log là thứ validator đối chiếu vector bootstrap
-  const vec = JSON.parse(read(join(EVAL, "task/task.agent.json"))).complexity.vector;
+  const vec = JSON.parse(read(join(EVAL, "task/task.agent.json"))).complexity;
   spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-7"], { cwd: P, stdio: "ignore" });
   git("switch", "-qc", "feature/SHOP-7-discount");
   cpSync(join(EVAL, "feature"), P, { recursive: true });
@@ -702,7 +703,7 @@ function buildSlicedCase(root, { unsliced = false, pad = 0 } = {}) {
     writeFileSync(cp, JSON.stringify({ ...JSON.parse(read(cp)), sliceBytes: 1e12 }, null, 2) + "\n");
     git("add", "-A"); git("commit", "--no-verify", "-qm", "catalog");
   }
-  const vec = JSON.parse(read(join(SLICED, "task/task.agent.json"))).complexity.vector;
+  const vec = JSON.parse(read(join(SLICED, "task/task.agent.json"))).complexity;
   spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-8"], { cwd: P, stdio: "ignore" });
   git("switch", "-qc", "feature/SHOP-8-cart");
   const T = "docs/tasks/sprint-1/SHOP-8-cart", t = join(P, T);
@@ -1931,7 +1932,12 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const vec = { scope: 1, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 1, blastRadius: 0, reversibility: 1 };
     const inp = { taskId: "B-1", taskName: "x", slug: "b", trackerUrl: "https://t.x/1", branchType: "bugfix", branch: "bugfix/B-1-b", sprintNumber: 2, complexity: { vector: vec } };
     const boot = (o) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--bootstrap", JSON.stringify(o)], { cwd: R, encoding: "utf8" });
-    spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "B-1"], { cwd: R });
+    const tri = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "B-1"], { cwd: R, encoding: "utf8" });
+    if (tri.status !== 2) fail("#88: --triage với vector trần (không counts) phải exit 2", tri.stdout + tri.stderr);
+    const cx = (counts) => JSON.stringify({ vector: vec, counts, questions: [] });
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", cx({ symbol: "discount", filesTouched: 1, existingTests: 0 }), "--branch-type", "bugfix", "--task-id", "B-1"], { cwd: R }).status !== 2)
+      fail("#88: --triage scope 1 với filesTouched=1 phải exit 2 — cùng luật bootstrap");
+    spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", cx({ symbol: "discount", filesTouched: 2, existingTests: 0 }), "--branch-type", "bugfix", "--task-id", "B-1"], { cwd: R });
     const T = join(R, "docs/tasks/sprint-2/B-1-b");
     if (boot({ ...inp, slug: undefined }).status !== 2) fail("--bootstrap thiếu slug phải exit 2");
     // no counts → the validator rejects the vector's evidence: must roll back, not leave a half task.
@@ -1961,7 +1967,8 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     installInto(R);
     const v = (...a) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", ...a], { cwd: R, encoding: "utf8" });
     const vec = { scope: 0, uncertainty: 0, dependency: 0, dataImpact: 0, integration: 0, testing: 0, blastRadius: 0, reversibility: 0 };
-    if (v("--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "L-1").status !== 0) fail("#80: vector 0 phải triage ra fix-bug");
+    const cx0 = JSON.stringify({ vector: vec, counts: { symbol: "fixit", filesTouched: 1, existingTests: 1 }, questions: [] });
+    if (v("--triage", cx0, "--branch-type", "bugfix", "--task-id", "L-1").status !== 0) fail("#80: vector 0 phải triage ra fix-bug");
     if (v("--escape-outcome", "L-1", "clean").status !== 2) fail("#80 R6: clean khi chưa có file evidence phải exit 2");
     const f = join(R, "docs/tasks/fixes/L-1-x.md");
     mkdirSync(dirname(f), { recursive: true });
@@ -1972,7 +1979,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const ok = v("--lite-check", f);
     if (ok.status !== 0) fail("#80 R5: evidence do run-evidence ký phải exit 0", ok.stderr);
     if (v("--escape-outcome", "L-1", "clean").status !== 0) fail("#80 R6: clean trên evidence xanh phải ghi được");
-    if (v("--triage", JSON.stringify(vec), "--branch-type", "bugfix", "--task-id", "L-2").status !== 0 || v("--escape-outcome", "L-2", "escaped").status !== 0)
+    if (v("--triage", cx0, "--branch-type", "bugfix", "--task-id", "L-2").status !== 0 || v("--escape-outcome", "L-2", "escaped").status !== 0)
       fail("#80 R7: escaped không cần evidence");
     rmSync(dirname(R), { recursive: true, force: true });
   }
@@ -2317,7 +2324,11 @@ if (hookSkipped) console.log(`
     Muốn chặn ngay lúc commit thì chain vào hook sẵn có của bạn:
       "$(git rev-parse --show-toplevel)"/hooks/pre-commit || exit 1`);
 
-console.log(`
+// #90: chỉ nhắc khi adapter còn rỗng — cài lại lên repo đã điền mà vẫn hét "CHƯA CHẠY ĐƯỢC" là dạy người ta lờ dòng này.
+const filled = !read(join(target, "docs/agents/ProjectRules.md")).includes("NOT-FILLED-IN");
+if (filled) console.log(`
+✅ adapter đã điền (giữ nguyên). Kiểm:  node scripts/validate-tasks.mjs --preflight`);
+else console.log(`
 ⚠️  CHƯA CHẠY ĐƯỢC — config và ProjectRules cài ra là khung rỗng.
 
 BẮT BUỘC: mở CLI agent trong thư mục vừa cài rồi gõ
@@ -2333,4 +2344,4 @@ Hai việc nó KHÔNG làm được, bạn tự sửa:
     · .mcp.json                    URL server thật, rồi /mcp để login
     · acTrace.since                = ngày bật harness (task cũ hơn chỉ warning)
 
-Xong thì:  node scripts/validate-tasks.mjs --self-check     ← phải xanh`);
+Xong thì:  node scripts/validate-tasks.mjs --preflight      ← phải xanh (đỏ khi ProjectRules còn NOT-FILLED-IN)`);
