@@ -1571,8 +1571,17 @@ export function mcpGaps(text) {
 // 0.12 (#88): --triage takes {vector,counts,questions}. The installer rewrites
 // the one line it shipped; a caller the user wrote (CI script, Makefile, own
 // skill) still passes a bare vector and exits 2 on its first run. Find it here.
-// ponytail: literal callers only — `--triage "$VEC"` is invisible; add a runtime hint if that shows up.
+// Literal callers only — `--triage "$VEC"` is caught at run time by triageMigrationHint.
 const STALE_TRIAGE = /--triage\s+(?:['"]<vector|['"]?\{\s*\\?"(?:scope|uncertainty|dependency|dataImpact|integration|testing|blastRadius|reversibility)\\?"\s*:)/;
+// The runtime half of the same migration: a caller preflight cannot see
+// (`--triage "$VEC"`, an untracked script) gets its own vector back, wrapped,
+// so the fix is "fill counts" not "re-read the docs".
+export function triageMigrationHint(cx) {
+  const bare = cx !== null && typeof cx === "object" && !Array.isArray(cx);
+  const wrapped = JSON.stringify({ vector: bare ? cx : "{…8 dims}", counts: { symbol: "<grep target>", filesTouched: "<n>", existingTests: "<n>" }, questions: [] });
+  return `✖ --triage takes the complexity object, not a bare vector (0.12, Agents.md §5.1) — the counts are what keep the vector honest. Yours, wrapped:\n  '${wrapped}'`;
+}
+
 export function staleTriageCalls(grepOut) {
   return String(grepOut ?? "").split("\n").filter((l) => STALE_TRIAGE.test(l))
     .map((l) => `${l.split(":").slice(0, 2).join(":")} still calls --triage with a bare vector — 0.12 takes '{"vector":{…},"counts":{…},"questions":[…]}' (exits 2 otherwise)`);
@@ -1802,6 +1811,9 @@ if (args.has("--self-check")) {
     assert.equal(st(`a.md:1:--triage '{"vector":{"scope":1},"counts":{}}'`), 0, "the complexity object is fine");
     assert.equal(st(`a.md:1:re-running \`--triage\` does not overwrite`), 0, "prose mentioning --triage is fine");
     assert.match(staleTriageCalls(`ci.sh:3:--triage '{"scope":1}'`)[0], /^ci\.sh:3 /, "the finding names file:line");
+    const h = triageMigrationHint({ scope: 1, testing: 0 });
+    assert.deepEqual(JSON.parse(h.split("'")[1]).vector, { scope: 1, testing: 0 }, "the hint hands back the caller's own vector, wrapped");
+    assert.ok(/"counts"/.test(h) && /0\.12/.test(triageMigrationHint(null)), "the hint names counts and the version, even for a non-object");
   }
   assert.ok(adapterGaps(null, { repos: [{ name: "<repo-name>", path: "." }] }).errors.some((e) => e.includes("repos[0].name")), "<repo-name> is an error");
   assert.equal(adapterGaps("| `<lint command>` | x |", { repos: [{ name: "a", path: "." }] }).warnings.length, 1, "a leftover <…> cell warns");
@@ -4082,7 +4094,7 @@ if (args.has("--triage")) {
   // file), and the only way out was a re-triage that logged a harness task as an
   // escape hatch.
   if (cx === null || typeof cx !== "object" || !("vector" in cx)) {
-    console.error('✖ --triage takes the complexity object, not a bare vector: \'{"vector":{…},"counts":{"symbol","filesTouched","existingTests"},"questions":[…]}\' — the counts are what keep the vector honest (Agents.md §5.1)');
+    console.error(triageMigrationHint(cx));
     process.exit(2);
   }
   const vector = cx.vector;
