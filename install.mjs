@@ -1092,7 +1092,10 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     if (a.status !== 1 || !(unsliced ? /every row needs a Slice/ : /slice S2 holds \d+ B/).test(a.stderr) || read(jp) !== jK) fail(`#76: pad ${N} B với sliceBytes 50000 → --advance phải exit 1, không ghi gì${unsliced ? "" : " (S2 quá tải)"}`, a.stderr);
     rmSync(root, { recursive: true, force: true });
   }
-  const git = (cwd, ...a) => spawnSync("git", a, { cwd, stdio: "ignore" });
+  // #99/#100 self-test: `git commit` needs an identity, which a CI runner's
+  // global config may not have -- a silently-failed commit left the test
+  // fixture dirty and the new --yes guard (correctly) refused it.
+  const git = (cwd, ...a) => spawnSync("git", ["-c", "user.email=eval@x", "-c", "user.name=eval", ...a], { cwd, stdio: "ignore" });
   const mkrepo = (name) => {
     const d = join(mkdtempSync(join(tmpdir(), "sh-")), name);
     mkdirSync(d, { recursive: true });
