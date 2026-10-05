@@ -2410,9 +2410,11 @@ if (done.includes("amp")) console.log(`
 
 if (hookSkipped) console.log(`
 ℹ️  pre-commit hook chưa cắm (${hookSkipped}) — harness vẫn chạy bình thường.
-    Gate chạy tay hoặc từ CI: node scripts/validate-tasks.mjs
-    Muốn chặn ngay lúc commit thì chain vào hook sẵn có của bạn:
-      "$(git rev-parse --show-toplevel)"/hooks/pre-commit || exit 1`);
+    Gate chạy tay hoặc từ CI: node scripts/validate-tasks.mjs${
+      hookSkipped === "không nằm trong git repo"
+        ? '\n    Cắm được hook thì: git init && npx spec-harness   (chạy lại installer sau khi init, không phải trước)'
+        : '\n    Muốn chặn ngay lúc commit thì chain vào hook sẵn có của bạn:\n      "$(git rev-parse --show-toplevel)"/hooks/pre-commit || exit 1'
+    }`);
 
 // #90: chỉ nhắc khi adapter còn rỗng — cài lại lên repo đã điền mà vẫn hét "CHƯA CHẠY ĐƯỢC" là dạy người ta lờ dòng này.
 const filled = !read(join(target, "docs/agents/ProjectRules.md")).includes("NOT-FILLED-IN");

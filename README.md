@@ -11,6 +11,7 @@ Tách từ một harness đã chạy thật 240 task qua 17 sprint trên codebas
 >
 > ```bash
 > cd ~/code/my-app     # repo code của bạn
+> git init             # cài SAU khi có git thì hook pre-commit mới cắm được; thiếu bước này thì chạy lại installer sau khi init
 > npx spec-harness     # chép kernel + skills + .claude/
 > ```
 >
@@ -210,6 +211,13 @@ Còn vài việc nó không làm thay được:
 Bản cài ra để `"evidenceMode": "attested"`: Gate 4/5 đòi evidence do `scripts/run-evidence.mjs` sinh, không nhận output dán tay. Hạ xuống `"legacy"` chỉ hợp lý khi di trú một repo đã có evidence viết tay. Trường này bắt buộc khai tường minh, không có mặc định ngầm.
 
 Xong hết thì `--preflight` phải xanh trước task đầu tiên. Chưa xanh thì gate chạy mà không kiểm gì, và bạn chỉ phát hiện sau vài chục task.
+
+Một việc nữa `--preflight` không tự biết (chỉ cảnh báo ở #97, không chặn): `sliceBytes` của model bạn chưa đo. Config mẫu chỉ có số đo cho `claude/sonnet` (64000, #76) — thêm CLI/model khác mà không đo thì rơi về ngưỡng này, và dấu hiệu đầu tiên là auto-compact giữa task lớn chứ không phải lỗi rõ ràng:
+
+```bash
+node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --agent '<CLI + model thật của bạn>'
+# dán số ra vào models.<cli>.<tier>.sliceBytes
+```
 
 `--preflight` chạy `--self-check` cộng thêm những thứ nằm ngoài file config mà self-check không thấy:
 

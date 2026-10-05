@@ -747,6 +747,23 @@ export function unroutedClis(installed, cfg = CFG) {
   return [...new Set(installed)].filter((c) => c !== "claude" && !(cfg.models ?? {})[c]);
 }
 
+// #97: the same silence, one field over. sliceBudget() falls back to the
+// top-level sliceBytes when a model has none of its own -- legal, and the only
+// thing it can do, but that fallback was measured on one specific model (#76;
+// see config.sliceBytes). Routed to a different model it is a guess, and the
+// first sign of a wrong guess is an auto-compact mid-implementation, which looks
+// like the implementer forgetting rather than a config that was never measured.
+// Only the tier that actually dispatches implementation is checked: a budget on
+// a tier no implementer run uses would be measured for nothing.
+export function unmeasuredSliceBudgets(installed, cfg = CFG) {
+  const tier = (cfg.baseTier ?? {}).implementer?.[1]; // normal column = the base tier
+  if (!tier) return [];
+  return [...new Set(installed)]
+    .filter((c) => (cfg.models ?? {})[c]?.[tier]?.model && sliceBudget(cfg, c, tier).from === "sliceBytes")
+    .map((c) => `models.${c}.${tier} (${cfg.models[c][tier].model}) has no sliceBytes — implementation falls back to the top-level ${cfg.sliceBytes}, measured on a different model (#76, see config). Measure yours:\n` +
+      `    node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --agent '<your ${c} command>'`);
+}
+
 export function resolveTier(role, complexity, attempt = 1, cfg = CFG, cli = null) {
   const RANKS = ["trivial", "normal", "high"];
   const row = (cfg.baseTier ?? {})[role];
@@ -2671,6 +2688,14 @@ if (args.has("--self-check")) {
     const mb = (v) => modelsDefects({ coordinatorTier: "mid", models: { claude: { cheap: { model: "a" }, mid: { model: "b", sliceBytes: v }, strong: { model: "c" } } } }).errors;
     assert.deepEqual(mb(64000), [], "#77: models.<cli>.<tier>.sliceBytes is a known key");
     assert.equal(mb("64k").length, 1, "#77: a declared sliceBytes that is not an integer ≥ 1 is a config error, not a silent fallback");
+    {
+      const u = { sliceBytes: 64000, baseTier: { implementer: ["mid", "mid", "strong"] },
+        models: { claude: { mid: { model: "s", sliceBytes: 64000 } }, codex: { mid: { model: "g" } } } };
+      const w = unmeasuredSliceBudgets(["claude", "codex", "gemini"], u);
+      assert.equal(w.length, 1, "#97: only the routed CLI whose implementer tier lacks its own sliceBytes is reported");
+      assert.ok(w[0].startsWith("models.codex.mid (g)") && w[0].includes("--find-slice-bytes"), "#97: the warning names the key and the measuring command");
+      assert.deepEqual(unmeasuredSliceBudgets(["codex"], { ...u, models: { codex: { mid: { model: "g", sliceBytes: 1 } } } }), [], "#97: a measured budget is silent");
+    }
     // #69
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S2", 1), { stage: "fsd_write", slice: "S1" }]), ["S1"], "#69: a slice with no implementation dispatch is missing");
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S1", 1), sl("S2", 1)]), [], "#69: every slice dispatched");
@@ -4265,6 +4290,8 @@ if (args.has("--preflight")) {
     const installed = [...Object.keys(guards), ...["codex", "cursor"].filter((c) => existsSync(join(REPO_ROOT, `.${c}`)))];
     for (const c of unroutedClis(installed))
       warns.push(`${c} is installed but harness.config.json has no models.${c} — every role runs the session model on ${c}, no tier cascade on retry (Agents.md §5.3)`);
+    // claude: .claude/ is always installed, so it never shows up in guards.json.
+    for (const w of unmeasuredSliceBudgets(["claude", ...installed])) warns.push(w);
     for (const [cli, file] of Object.entries(guards)) {
       if (!file) continue;
       let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}
@@ -4370,7 +4397,7 @@ if (args.has("--preflight")) {
   else {
     const hookPath = spawnSync("git", ["rev-parse", "--git-path", "hooks/pre-commit"], { cwd: REPO_ROOT, encoding: "utf8" });
     const hook = hookPath.status === 0 ? resolve(REPO_ROOT, hookPath.stdout.trim()) : null;
-    if (!hook || !existsSync(hook)) warns.push("no pre-commit hook — gates only run in CI, you find out later");
+    if (!hook || !existsSync(hook)) warns.push("no pre-commit hook — gates only run in CI, you find out later. Installed before `git init`? Re-run `npx spec-harness` to wire it");
 
     // CI is not optional, and calling it optional is how the gate ends up
     // running nowhere. The hook is deliberately --staged, so it cannot see a

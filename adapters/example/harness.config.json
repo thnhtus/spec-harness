@@ -16,17 +16,12 @@
     "mr_created",
     "done"
   ],
-  "_models": "Per CLI: { \"<cli>\": { cheap|mid|strong: { model, effort? } } } — effort ∈ low/medium/high, rendered as `effort:` (Claude) / `model_reasoning_effort` (Codex) only. install.mjs renders each role's base tier (normal column of baseTier) into that CLI's role files; `--tier <role> <complexity> [attempt] --cli <cli>` resolves a dispatch. No key for a CLI = it routes nothing (session model). Model names live HERE only — the kernel never names one (vendorModelTokens). Add your CLI's key; claude's aliases below are Claude Code's own. Optional sliceBytes per entry (#77): that model's implementation byte budget, measured with `install.mjs --bench --stage implementation --unsliced --find-slice-bytes`; absent = top-level sliceBytes. codex.mid 448000 (#95) was measured through a 9router proxy (cx/gpt-5.5; codex assumed model_context_window 258400): 448 KB → 0 compacts, 512 KB → 1. It is that proxy's wall, not OpenAI's — re-measure on a direct OpenAI login.",
+  "_models": "Per CLI: { \"<cli>\": { cheap|mid|strong: { model, effort? } } } — effort ∈ low/medium/high, rendered as `effort:` (Claude) / `model_reasoning_effort` (Codex) only. install.mjs renders each role's base tier (normal column of baseTier) into that CLI's role files; `--tier <role> <complexity> [attempt] --cli <cli>` resolves a dispatch. No key for a CLI = it routes nothing (session model). Model names live HERE only — the kernel never names one (vendorModelTokens). Add your CLI's key; claude's aliases below are Claude Code's own. Optional sliceBytes per entry (#77): that model's implementation byte budget, measured with `install.mjs --bench --stage implementation --unsliced --find-slice-bytes`; absent = top-level sliceBytes. No models.codex shipped (#96): the only measurement (#95, 448000) went through a proxy alias that does not exist on a direct OpenAI login. Add yours with your real model name, then measure.",
   "models": {
     "claude": {
       "cheap": { "model": "haiku" },
       "mid": { "model": "sonnet", "sliceBytes": 64000 },
       "strong": { "model": "opus" }
-    },
-    "codex": {
-      "cheap": { "model": "cx/gpt-5.5" },
-      "mid": { "model": "cx/gpt-5.5", "sliceBytes": 448000 },
-      "strong": { "model": "cx/gpt-5.5" }
     }
   },
   "_coordinatorTier": "The /start-task coordinator's tier. One value, not a baseTier row: its model is fixed when the session opens, before complexity exists. Rendered only into Claude's command frontmatter (the only CLI with a per-command model, current turn only). cheap was measured on a real run: it failed bootstrap and cost a retry.",
