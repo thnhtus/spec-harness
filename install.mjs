@@ -22,7 +22,7 @@ import {
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 
 const REPO = process.env.SPEC_HARNESS_REPO || "thnhtus/spec-harness";
@@ -814,7 +814,8 @@ if (args[0] === "--eval") {
 // agent CLI — không phải wall clock (một lần chạy thật: 8.6h wall, 37' API, phần
 // chênh là 503 retry). Thuần, để self-test chạy được trên fixture đóng hộp.
 // ponytail: chỉ hiểu stream-json của Claude Code (event "result" + <usage> trong
-// tool_result của subagent). CLI khác → "no result event", exit 1, không đoán số.
+// tool_result của subagent) và `codex exec --json` (#78, số đọc từ rollout).
+// CLI khác → "no result event", exit 1, không đoán số.
 // #77: bytes of src/catalog/ that came back through the file-read tool — the pad
 // only measures a model that READ it (haiku renamed 256 KB with sed, read 46 KB).
 function padRead(text) {
@@ -828,7 +829,40 @@ function padRead(text) {
   }
   return n;
 }
-function benchStats(text) {
+// #78 Codex: `codex exec --json` stdout only has usage summed per turn and no compaction
+// event, but the rollout it writes (CODEX_HOME/sessions/**/rollout-*-<thread_id>.jsonl)
+// has both: event_msg/token_count.last_token_usage per model call and a `compacted` line
+// per auto-compact (observed codex-cli 0.154.0). OpenAI input_tokens already include cached.
+// ponytail: --ephemeral writes no rollout → null ("no result"), never a guessed number.
+function codexRollout(id) {
+  const dir = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "sessions");
+  const f = existsSync(dir) && readdirSync(dir, { recursive: true }).find((n) => String(n).endsWith(`-${id}.jsonl`));
+  return f ? read(join(dir, String(f))) : null;
+}
+function codexStats(text) {
+  const ids = new Set(); let peak = 0, compacted = 0, tools = 0, turns = 0, padRead = 0, model = "?", total = null, done = null;
+  for (const l of text.split("\n")) {
+    let e; try { e = JSON.parse(l); } catch { continue; }
+    const p = e.payload ?? {};
+    if (e.type === "compacted") compacted++;
+    if (e.type === "turn_context" && p.model) model = p.model;
+    if (e.type === "token_usage_record" && p.usage?.input_tokens) turns++;
+    if (p.type === "token_count" && p.info) { peak = Math.max(peak, p.info.last_token_usage?.input_tokens ?? 0); total = p.info.total_token_usage; }
+    if (p.type === "task_complete") done = p;
+    if (p.type === "function_call") {
+      tools++;
+      let a = {}; try { a = JSON.parse(p.arguments); } catch {}
+      if (/src\/catalog\//.test(a.cmd ?? "")) ids.add(p.call_id);
+    }
+    if (p.type === "function_call_output" && ids.has(p.call_id)) padRead += String(p.output ?? "").length;
+  }
+  if (!done || !total) return null;
+  return { apiMs: done.duration_ms, costUsd: null, turns, tools, peak, compacted, padRead,
+    models: { [model]: { in: total.input_tokens, out: total.output_tokens, cacheRead: total.cached_input_tokens, cacheWrite: total.cache_write_input_tokens ?? 0, thinking: total.reasoning_output_tokens ?? 0, cost: null } }, agents: [] };
+}
+function benchStats(text, rollout = codexRollout) {
+  const th = /"type":"thread\.started","thread_id":"([^"]+)"/.exec(text);
+  if (th) return codexStats(rollout(th[1]) ?? ""); // no rollout (--ephemeral) → no numbers
   const agents = new Map();
   let result = null, tools = 0, peak = 0, compacted = 0;
   for (const l of text.split("\n")) {
@@ -856,8 +890,9 @@ function benchStats(text) {
   const models = Object.fromEntries(Object.entries(result.modelUsage ?? {}).map(([m, u]) => [m, {
     in: u.inputTokens, out: u.outputTokens, cacheRead: u.cacheReadInputTokens, cacheWrite: u.cacheCreationInputTokens,
     thinking: u.thinkingTokens ?? 0, cost: u.costUSD }]));
-  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, peak, compacted, models, agents: [...agents.values()] };
+  return { apiMs: result.duration_api_ms, costUsd: result.total_cost_usd, turns: result.num_turns, tools, peak, compacted, padRead: padRead(text), models, agents: [...agents.values()] };
 }
+const usd = (c) => (c == null ? "$?" : `$${c.toFixed(2)}`); // codex reports no cost
 
 if (args[0] === "--bench") {
   const opt = (k, d) => (args.includes(k) ? args[args.indexOf(k) + 1] : d);
@@ -865,7 +900,7 @@ if (args[0] === "--bench") {
   const perRun = Number(opt("--timeout", 3600)) * 1000;
   const bench = JSON.parse(read(join(EVAL, "cases.json"))).benchTask;
   if (!cmd || !["adversary", "full", "implementation"].includes(stage) || !(runs >= 1))
-    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced] [--pad <bytes> | --find-slice-bytes]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
+    { console.error("dùng: node install.mjs --bench --agent '<lệnh in stream-json của Claude hoặc codex exec --json, đọc prompt từ stdin>' [--stage adversary|full|implementation [--unsliced] [--pad <bytes> | --find-slice-bytes]] [--runs n] [--timeout <giây>] [--keep]"); process.exit(2); }
   if (stage === "implementation") {
     // #72: một lần chạy = mọi slice nối tiếp (mỗi slice 1 agent mới, qua --advance thật);
     // --unsliced = 1 agent cho cả plan. peak = context lớn nhất của 1 turn — con số
@@ -882,16 +917,14 @@ if (args[0] === "--bench") {
           if (a.status !== 0) { log.push(`advance ${sl}: ${a.stderr}`); parts.push(null); break; }
           const r = spawnSync(cmd, { cwd: P, shell: true, input: IMPL_PROMPT(T, sl) + (pad && sl !== "S1" ? PAD_PROMPT : ""), encoding: "utf8", timeout: perRun, maxBuffer: 256 << 20 });
           log.push(`--- ${sl ?? "all"} ---\n${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
-          const st = benchStats(r.stdout ?? "");
-          if (st) st.padRead = padRead(r.stdout ?? "");
-          parts.push(st);
+          parts.push(benchStats(r.stdout ?? ""));
         }
         writeFileSync(join(root, "agent.log"), log.join("\n"));
         const ok = parts.every(Boolean) && parts.length === (unsliced ? 1 : 2);
-        const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)), compacted: parts.reduce((n, p) => n + p.compacted, 0), padRead: parts.reduce((n, p) => n + p.padRead, 0), models: [...new Set(parts.flatMap((p) => Object.keys(p.models)))] };
+        const sum = ok && { apiMs: parts.reduce((n, p) => n + p.apiMs, 0), costUsd: parts.some((p) => p.costUsd == null) ? null : parts.reduce((n, p) => n + p.costUsd, 0), turns: parts.reduce((n, p) => n + p.turns, 0), peak: Math.max(...parts.map((p) => p.peak)), compacted: parts.reduce((n, p) => n + p.compacted, 0), padRead: parts.reduce((n, p) => n + p.padRead, 0), models: [...new Set(parts.flatMap((p) => Object.keys(p.models)))] };
         rowsI.push(sum);
         if (!sum) console.log(`✖ run ${i + 1}: ${log.at(-1).slice(0, 300)}`);
-        else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"} pad ${pad} B: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · $${sum.costUsd.toFixed(2)} · ${sum.turns} turns${pad ? ` · read ${sum.padRead} B of the pad${sum.padRead < 0.9 * pad ? " ⚠ UNREAD — this run measures nothing" : ""}` : ""}${sum.compacted ? ` · ⚠ ${sum.compacted} auto-compact (peak = the wall, context was dropped)` : ""} · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
+        else console.log(`✔ run ${i + 1} ${unsliced ? "unsliced" : "sliced S1+S2"} pad ${pad} B: peak ${sum.peak} tok · api ${(sum.apiMs / 60000).toFixed(1)}' · ${usd(sum.costUsd)} · ${sum.turns} turns${pad ? ` · read ${sum.padRead} B of the pad${sum.padRead < 0.9 * pad ? " ⚠ UNREAD — this run measures nothing" : ""}` : ""}${sum.compacted ? ` · ⚠ ${sum.compacted} auto-compact (peak = the wall, context was dropped)` : ""} · per dispatch peak ${parts.map((p) => p.peak).join(" / ")}`);
         if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
       }
       return rowsI;
@@ -934,10 +967,10 @@ if (args[0] === "--bench") {
     writeFileSync(join(root, "agent.log"), `${r.stdout ?? ""}\n--- stderr ---\n${r.stderr ?? ""}`);
     const st = benchStats(r.stdout ?? "");
     rows.push(st);
-    if (!st) console.log(`✖ run ${i + 1}: no result event — --bench reads Claude stream-json (--output-format stream-json --verbose)${r.error ? "; " + (r.error.code ?? r.error.message) : ""}`);
+    if (!st) console.log(`✖ run ${i + 1}: no result event — --bench reads Claude stream-json (--output-format stream-json --verbose) or codex exec --json + its rollout (no --ephemeral)${r.error ? "; " + (r.error.code ?? r.error.message) : ""}`);
     else {
-      console.log(`✔ run ${i + 1}: api ${(st.apiMs / 60000).toFixed(1)}' · $${st.costUsd.toFixed(2)} · ${st.turns} turns · ${st.tools} tool calls`);
-      for (const [m, u] of Object.entries(st.models)) console.log(`    ${m.padEnd(34)} out ${u.out} (think ${u.thinking}) · cacheW ${u.cacheWrite} · $${u.cost.toFixed(2)}`);
+      console.log(`✔ run ${i + 1}: api ${(st.apiMs / 60000).toFixed(1)}' · ${usd(st.costUsd)} · ${st.turns} turns · ${st.tools} tool calls`);
+      for (const [m, u] of Object.entries(st.models)) console.log(`    ${m.padEnd(34)} out ${u.out} (think ${u.thinking}) · cacheW ${u.cacheWrite} · ${usd(u.cost)}`);
       for (const a of st.agents) console.log(`    ▸ ${a.type.padEnd(18)} ${(a.model || "-").padEnd(7)} ${a.tokens} tok · ${a.tools} tools · ${(a.ms / 1000).toFixed(0)}s`);
     }
     if (args.includes("--keep")) console.log(`    sandbox: ${P}  (agent log: ../agent.log)`); else rmSync(root, { recursive: true, force: true });
@@ -963,10 +996,37 @@ if (args[0] === "--self-test") {
       ev({ type: "result", duration_api_ms: 60000, total_cost_usd: 0.5, num_turns: 3, modelUsage: { m: { inputTokens: 1, outputTokens: 2, cacheReadInputTokens: 3, cacheCreationInputTokens: 4, thinkingTokens: 5, costUSD: 0.5 } } }),
     ].join("\n");
     const b = benchStats(canned);
-    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, peak: 1000, compacted: 1, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
+    const want = { apiMs: 60000, costUsd: 0.5, turns: 3, tools: 2, peak: 1000, compacted: 1, padRead: 0, models: { m: { in: 1, out: 2, cacheRead: 3, cacheWrite: 4, thinking: 5, cost: 0.5 } },
       agents: [{ type: "adversary", model: "mid", tokens: 1200, tools: 7, ms: 9000 }] };
     if (JSON.stringify(b) !== JSON.stringify(want)) fail("benchStats đọc sai stream-json đóng hộp", JSON.stringify(b));
     if (benchStats(canned.split("\n").slice(0, 5).join("\n")) !== null) fail("benchStats: không có event result mà vẫn ra số");
+    // #78 Codex: stdout nói ai là thread, số nằm trong rollout. Shape lấy từ một run thật (codex-cli 0.154.0).
+    {
+      const out = [JSON.stringify({ type: "thread.started", thread_id: "T9" }),
+        JSON.stringify({ type: "turn.completed", usage: { input_tokens: 184352 } })].join("\n");
+      const tc = (last, tot) => JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { last_token_usage: { input_tokens: last }, total_token_usage: tot, model_context_window: 258400 } } });
+      const roll = [
+        JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.5" } }),
+        JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "c1", arguments: JSON.stringify({ cmd: "cat src/catalog/part-00.js" }) } }),
+        JSON.stringify({ type: "token_usage_record", payload: { usage: { input_tokens: 12806 } } }),
+        tc(12806),
+        JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "c1", output: "x".repeat(4000) } }),
+        JSON.stringify({ type: "token_usage_record", payload: { usage: { input_tokens: 40200 } } }),
+        tc(40200),
+        JSON.stringify({ type: "compacted", payload: { message: "summary" } }),
+        // c2 đọc file ngoài pad: output của nó KHÔNG được vào padRead (nếu bỏ lọc src/catalog/ thì padRead = 4000 + 500).
+        JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "c2", arguments: JSON.stringify({ cmd: "cat README.md" }) } }),
+        JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "c2", output: "y".repeat(500) } }),
+        tc(13105, { input_tokens: 184352, cached_input_tokens: 109952, cache_write_input_tokens: 0, output_tokens: 711, reasoning_output_tokens: 60 }),
+        JSON.stringify({ type: "event_msg", payload: { type: "task_complete", duration_ms: 32764 } }),
+      ].join("\n");
+      const cx = benchStats(out, (id) => (id === "T9" ? roll : null));
+      const wantCx = { apiMs: 32764, costUsd: null, turns: 2, tools: 2, peak: 40200, compacted: 1, padRead: 4000,
+        models: { "gpt-5.5": { in: 184352, out: 711, cacheRead: 109952, cacheWrite: 0, thinking: 60, cost: null } }, agents: [] };
+      if (JSON.stringify(cx) !== JSON.stringify(wantCx)) fail("#78: benchStats đọc sai rollout codex đóng hộp", JSON.stringify(cx));
+      if (benchStats(out, () => null) !== null) fail("#78: không có rollout (--ephemeral) mà benchStats vẫn ra số");
+      if (benchStats(out, () => roll.split("\n").slice(0, -1).join("\n")) !== null) fail("#78: rollout thiếu task_complete (run chết giữa chừng) mà vẫn ra số");
+    }
     const u = spawnSync(process.execPath, [join(SRC, "install.mjs"), "--bench"], { encoding: "utf8" });
     if (u.status !== 2) fail(`--bench không --agent phải exit 2, được ${u.status}`);
     if (!JSON.parse(read(join(EVAL, "cases.json"))).benchTask?.startsWith("/start-task ")) fail("cases.json thiếu benchTask cho --bench --stage full");

@@ -358,7 +358,7 @@ Một case được tính đúng khi thoả cả ba điều kiện: verdict kh�
 
 ### Đo thời gian/token: `--bench`
 
-Trước khi đổi thứ gì cho nhanh hơn, hãy đo. `--bench` dựng cùng sandbox với `--eval` rồi đọc số từ stream-json của agent: `duration_api_ms` (wall clock vô nghĩa khi có retry 503), cost, turns, tool calls, token theo model, và mọi subagent đã dispatch.
+Trước khi đổi thứ gì cho nhanh hơn, hãy đo. `--bench` dựng cùng sandbox với `--eval` rồi đọc số từ stream-json của agent (Claude) hoặc từ `codex exec --json` + rollout của nó (#78, OpenAI): `duration_api_ms` (wall clock vô nghĩa khi có retry 503), cost (Codex báo `$?` — proxy không trả `total_cost_usd`), turns, tool calls, token theo model, và mọi subagent đã dispatch.
 
 ```bash
 # <!-- example -->  một stage (adversary, case clean), 3 lần, lấy median
@@ -371,9 +371,11 @@ node install.mjs --bench --stage implementation [--unsliced] --agent 'claude -p 
 node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --runs 2 --agent '…như trên, --model <model của bạn>…'
 # một điểm đo tay: --pad N = N byte file có sẵn implementer phải đọc
 node install.mjs --bench --stage implementation --unsliced --pad 64000 --agent '…'
+# Codex: `--json` đủ (số nằm trong rollout $CODEX_HOME/sessions/**); không dùng --ephemeral
+node install.mjs --bench --stage adversary --agent 'codex exec --json --model <model> --dangerously-bypass-approvals-and-sandbox -'
 ```
 
-Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` thì exit 2. Không có event `result` (CLI khác, hoặc quên `--output-format stream-json`) thì exit 1, không đoán số.
+Chỉ chạy tay, không chạy trong CI. Thiếu `--agent` thì exit 2. Không có event `result` (Claude: CLI khác hoặc quên `--output-format stream-json`; Codex: `--ephemeral` không ghi rollout, hoặc chạy chưa xong) thì exit 1, không đoán số.
 
 ### Sổ sách do script làm: `--advance`, `--contract`
 
