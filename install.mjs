@@ -132,6 +132,21 @@ function wouldClobber(P) {
   return out;
 }
 
+// #99: --yes skips the confirmation that lists `wouldClobber()` and overwrites
+// unconditionally -- fine for a committed file (`git checkout --` recovers it),
+// but an uncommitted edit to a kernel file (scripts/lease.mjs, hooks/pre-commit,
+// a project's own docs/*.md with the same name) was never in the index, so
+// there is nothing to check out back. README recommends --yes for CI/scripts,
+// and `npx spec-harness@latest` is the normal upgrade route, not an exotic one.
+// git itself answers "would this overwrite something uncommitted": a file is
+// dirty if it is untracked, or tracked with a worktree diff against HEAD.
+function dirtyAgainstGit(P, relPaths) {
+  if (!relPaths.length) return [];
+  const r = spawnSync("git", ["status", "--porcelain", "--", ...relPaths], { cwd: P, encoding: "utf8" });
+  if (r.status !== 0) return []; // not a git repo (or git missing): nothing to compare against, let --yes proceed
+  return r.stdout.split("\n").filter(Boolean).map((l) => l.slice(3));
+}
+
 // Version của kernel đang cài. Đọc từ package.json của NGUỒN, không hardcode —
 // hai chỗ khai số thì chúng sẽ lệch, và đó đúng là bug đã có (plugin.json 0.1.0
 // vs package.json 0.1.1).
@@ -1734,6 +1749,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     writeFileSync(join(C, "keep.txt"), "của user");
     mkdirSync(join(C, "docs"), { recursive: true });
     writeFileSync(join(C, "docs/README.md"), "docs của project tôi");
+    git(C, "add", "-A"); git(C, "commit", "-q", "-m", "base"); // #99: committed, not dirty — this test is about the clobber list, not the new guard
     const noTty = run(C, [], { stdio: ["pipe", "pipe", "pipe"] });
     if (noTty.status === 0) fail("không TTY mà vẫn cài — rào chắn xác nhận đã tự đồng ý");
     if (!/TTY/.test(noTty.stderr)) fail("dừng vì không TTY nhưng không nói lý do", noTty.stderr);
@@ -1749,6 +1765,27 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     if (y.status !== 0) fail("--yes phải cài được mà không cần TTY", y.stderr);
     if (!existsSync(join(C, "scripts/validate-tasks.mjs"))) fail("--yes chạy xong mà không có validator");
     if (!existsSync(join(C, "keep.txt"))) fail("cài đè làm mất file không liên quan của project");
+
+    // #99: an UNCOMMITTED edit to a file about to be clobbered has no `git
+    // checkout --` back out. --yes must refuse, not overwrite-and-hope.
+    const D = mkrepo("dirty");
+    mkdirSync(join(D, "hooks"), { recursive: true });
+    writeFileSync(join(D, "hooks/pre-commit"), "#!/bin/sh\n# my local patch, never committed\n");
+    const dirtyRun = run(D, ["--yes"]);
+    if (dirtyRun.status === 0) fail("#99: --yes đè lên file chưa commit mà không chặn");
+    if (!dirtyRun.stderr.includes("hooks/pre-commit")) fail("#99: từ chối nhưng không nêu tên file", dirtyRun.stderr);
+    if (read(join(D, "hooks/pre-commit")) !== "#!/bin/sh\n# my local patch, never committed\n")
+      fail("#99: từ chối nhưng vẫn đã ghi đè");
+    if (existsSync(join(D, "scripts/validate-tasks.mjs"))) fail("#99: một file dirty chặn toàn bộ cài đặt, nhưng không được ghì một phần");
+
+    // Committed edit to the same file: --yes overwrites it (git checkout -- recovers it), unaffected by #99.
+    const E = mkrepo("committed-edit");
+    mkdirSync(join(E, "hooks"), { recursive: true });
+    writeFileSync(join(E, "hooks/pre-commit"), "#!/bin/sh\n# committed patch\n");
+    git(E, "add", "-A"); git(E, "commit", "-q", "-m", "base");
+    const cleanRun = run(E, ["--yes"]);
+    if (cleanRun.status !== 0) fail("#99: một edit đã commit không được chặn", cleanRun.stderr);
+    if (read(join(E, "hooks/pre-commit")).includes("committed patch")) fail("#99: edit đã commit lẽ ra phải bị đè");
 
     // Đối số thư mục + thư mục không tồn tại + thừa đối số.
     const P2 = mkrepo("argdir");
@@ -2335,11 +2372,18 @@ if (!existsSync(target)) die(`✖ không có thư mục: ${where}`);
 // Đích có file = đang cài đè lên repo code. Trước đây đối số thư mục là bắt
 // buộc và đóng vai rào chắn đó; bỏ nó đi thì xác nhận phải thay chỗ — và xác
 // nhận này mạnh hơn: nó liệt kê đúng file sắp mất chứ không chỉ hỏi chung chung.
+const clobberHit = existsSync(target) ? wouldClobber(target) : [];
+// #99: an uncommitted edit about to be clobbered has no `git checkout --` back
+// out. Checked unconditionally -- including under --yes, which is exactly the
+// unattended path where nobody is there to read "sẽ ĐÈ" before it happens.
+const dirty = dirtyAgainstGit(target, clobberHit);
+if (dirty.length)
+  die(`\n✖ ${dirty.length} file sắp bị đè đang có thay đổi chưa commit — không ghi, không thể khôi phục bằng git:\n${dirty.map((f) => `   ${f}`).join("\n")}\n  Commit hoặc stash trước, rồi chạy lại.`);
+
 if (!yes && readdirSync(target).filter((n) => n !== ".git").length) {
-  const hit = wouldClobber(target);
   console.log(`cài spec-harness vào: ${target}`);
-  if (hit.length)
-    console.log(`\n⚠️  sẽ ĐÈ ${hit.length} file trong project:\n${hit.map((f) => `   ${f}`).join("\n")}`);
+  if (clobberHit.length)
+    console.log(`\n⚠️  sẽ ĐÈ ${clobberHit.length} file trong project:\n${clobberHit.map((f) => `   ${f}`).join("\n")}`);
   // Không có TTY (CI, `| tee`, docker build) thì readline trả EOF ngay và câu
   // hỏi thành "tự đồng ý" — đúng kiểu lỗi rào chắn im lặng biến mất. Chặn hẳn.
   if (!process.stdin.isTTY) die("\n✖ không có TTY để hỏi — thêm --yes nếu chắc.");

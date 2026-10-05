@@ -29,7 +29,7 @@
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
 
-import { readFileSync, readdirSync, existsSync, statSync, writeFileSync, renameSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, statfsSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -738,6 +738,22 @@ export function modelsDefects(cfg = CFG) {
     }
   }
   return { errors, warnings };
+}
+
+// #100: lease.mjs is only sound on a local fs (its KNOWN LIMIT). Two signals,
+// both cheap: the Linux statfs magic (other platforms report a vfs index that
+// means nothing portable, so they get no verdict from it), and -- the half that
+// actually breaks the TTL -- a file just written there carrying a server clock.
+// ponytail: NFS on macOS with an in-sync clock passes silently; add mount(8)
+// parsing if a lease clash is ever reported from one.
+export const NETFS_MAGIC = { 0x6969: "nfs", 0xff534d42: "cifs", 0xfe534d42: "smb2", 0x517b: "smb",
+  0x5346414f: "afs", 0x01021997: "9p", 0x65735546: "fuse" };
+export function netFsVerdict({ platform, type, skewMs }) {
+  const out = [];
+  const name = platform === "linux" ? NETFS_MAGIC[type] : undefined;
+  if (name) out.push(`on a ${name} filesystem`);
+  if (Math.abs(skewMs) > 5000) out.push(`its clock is ${Math.round(skewMs / 1000)}s off the local one`);
+  return out;
 }
 
 // R1 (#81): an installed CLI layer with no models.<cli> runs every role on the
@@ -2696,6 +2712,13 @@ if (args.has("--self-check")) {
       assert.ok(w[0].startsWith("models.codex.mid (g)") && w[0].includes("--find-slice-bytes"), "#97: the warning names the key and the measuring command");
       assert.deepEqual(unmeasuredSliceBudgets(["codex"], { ...u, models: { codex: { mid: { model: "g", sliceBytes: 1 } } } }), [], "#97: a measured budget is silent");
     }
+    // #100
+    assert.deepEqual(netFsVerdict({ platform: "linux", type: 0x6969, skewMs: 0 }), ["on a nfs filesystem"], "#100: NFS magic on linux is named");
+    assert.deepEqual(netFsVerdict({ platform: "darwin", type: 0x6969, skewMs: 0 }), [], "#100: the magic means nothing off Linux");
+    assert.deepEqual(netFsVerdict({ platform: "linux", type: 0xef53, skewMs: 0 }), [], "#100: ext4 is not in the map");
+    assert.deepEqual(netFsVerdict({ platform: "darwin", type: 0, skewMs: 9000 }), ["its clock is 9s off the local one"], "#100: clock skew is platform-independent");
+    assert.deepEqual(netFsVerdict({ platform: "darwin", type: 0, skewMs: 500 }), [], "#100: small skew is noise, not a verdict");
+    assert.deepEqual(netFsVerdict({ platform: "linux", type: 0x6969, skewMs: 9000 }), ["on a nfs filesystem", "its clock is 9s off the local one"], "#100: both signals can fire together");
     // #69
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S2", 1), { stage: "fsd_write", slice: "S1" }]), ["S1"], "#69: a slice with no implementation dispatch is missing");
     assert.deepEqual(missingSlices(["S1", "S2"], [sl("S1", 1), sl("S2", 1)]), [], "#69: every slice dispatched");
@@ -4386,6 +4409,21 @@ if (args.has("--preflight")) {
   }
 
   if (!existsSync(TASKS_DIR)) errs.push(`tasksDir "${CFG.tasksDir}" does not exist (resolved: ${TASKS_DIR})`);
+  else {
+    // #100: probe, don't assume. Both reads are best-effort -- an unwritable or
+    // exotic tasksDir must not turn preflight red over a diagnostic.
+    let type, skewMs = 0;
+    try { type = statfsSync(TASKS_DIR).type; } catch {}
+    const probe = join(TASKS_DIR, `.fsprobe-${process.pid}`);
+    try { writeFileSync(probe, ""); skewMs = statSync(probe).mtimeMs - Date.now(); } catch {}
+    finally { try { rmSync(probe, { force: true }); } catch {} }
+    const why = netFsVerdict({ platform: process.platform, type, skewMs });
+    if (why.length)
+      warns.push(
+        `tasksDir is ${why.join(" and ")} — scripts/lease.mjs is only sound on a local filesystem (mkdir atomicity, mtime against the local clock).\n` +
+          "    Two /start-task sessions on one task can both hold the lease and overwrite each other's handoff. Move tasksDir to a local disk.",
+      );
+  }
   for (const r of REPOS)
     if (!existsSync(resolve(REPO_ROOT, r.path)))
       errs.push(`repos[].path "${r.path}" does not resolve (tried ${resolve(REPO_ROOT, r.path)}) — agents cannot reach that repo`);
