@@ -1637,6 +1637,23 @@ export function denyGaps(settingsText) {
   );
 }
 
+// #106: an ask rule is wrong in BOTH directions, and the deny direction is the
+// one an upgrade produces: a project installed before push moved to `ask` keeps
+// denying it, so the push the user approved can never run -- on Claude and, since
+// the guard unions the project's deny list, on every hook CLI too.
+export function askGaps(settingsText) {
+  let parsed;
+  try { parsed = JSON.parse(settingsText); } catch { return []; } // denyGaps already reports unparseable
+  const deny = parsed?.permissions?.deny ?? [], ask = parsed?.permissions?.ask ?? [];
+  return REQUIRED_ASK.flatMap((r) =>
+    deny.includes(r)
+      ? [`.claude/settings.json still DENIES \`${r}\` — it belongs in permissions.ask: a push the user approved after the final gate can never run. Run the installer again to migrate it (#106)`]
+      : ask.includes(r)
+        ? []
+        : [`.claude/settings.json has no ask rule \`${r}\` — it runs with no confirmation, so nothing pauses before the last irreversible step`],
+  );
+}
+
 // A placeholder URL is worse than a missing one: `https://<git-host>/...` kills
 // the CLI with ERR_INVALID_URL at startup, and `example.com` resolves fine while
 // answering nothing -- Gate 1 loses its source of AC and the whole trace chain
@@ -1738,7 +1755,7 @@ export function adapterGaps(projectRules, cfg = CFG) {
 if (args.has("--check-settings")) {
   const f = argv[argv.indexOf("--check-settings") + 1];
   if (!f) { console.error("usage: --check-settings <settings.json>"); process.exit(2); }
-  const gaps = denyGaps(readFileSync(f, "utf8"));
+  const t = readFileSync(f, "utf8"), gaps = [...denyGaps(t), ...askGaps(t)];
   gaps.forEach((g) => console.error(`✖ ${g}`));
   process.exit(gaps.length ? 1 : 0);
 }
@@ -3355,6 +3372,13 @@ if (args.has("--self-check")) {
       .some((d) => /git clean/.test(d)),
     "a partial deny list must name the rule that is missing, not just fail",
   );
+  // askGaps (#106): both directions, and the upgrade direction loudest.
+  assert.match(askGaps('{"permissions":{"deny":["Bash(git push:*)"]}}')[0], /still DENIES/,
+    "a pre-#104 settings.json that still denies push must be reported, not silently accepted");
+  assert.match(askGaps('{"permissions":{}}')[0], /no ask rule/, "a missing ask rule means push runs with no confirmation");
+  assert.deepEqual(askGaps('{"permissions":{"ask":["Bash(git push:*)"]}}'), [], "push in ask is the correct state");
+  assert.deepEqual(askGaps("not json"), [], "unparseable settings.json is denyGaps' error to report, not reported twice");
+
   // This list used to hold fragments ("git push") matched with
   // `d.includes(r)`, and the moment `env` joined it the check started lying:
   // the unrelated rule `Read(.env)` satisfied the requirement for `Bash(env:*)`,
@@ -4452,8 +4476,9 @@ if (args.has("--preflight")) {
         `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Case B").`,
     );
   // Present and loaded still says nothing about armed.
+  const st = reach === "ok" ? readFileSync(join(REPO_ROOT, ".claude/settings.json"), "utf8") : "";
   if (reach === "ok")
-    for (const gap of denyGaps(readFileSync(join(REPO_ROOT, ".claude/settings.json"), "utf8"))) errs.push(gap);
+    for (const gap of [...denyGaps(st), ...askGaps(st)]) errs.push(gap);
 
   // Codex/Cursor do not read permissions.deny: their deny-list is a hook. A CLI
   // layer present with the hook gone is the same failure as a missing settings.json.

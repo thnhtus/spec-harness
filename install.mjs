@@ -449,6 +449,24 @@ function migrateCommand(f) {
   writeFileSync(f, hit.reduce((x, [o, n]) => x.split(o).join(n), t));
   return hit.map(([o]) => `start-task.md: ${o} → complexity object`);
 }
+// #106: settings.json is the user's (kept), so a project installed before git push
+// moved deny -> ask keeps denying it after every upgrade: the push the user approves
+// can never run, and the deny-list guard on the hook CLIs unions that same file.
+// Move exactly the shipped ask rules; every other rule, key and the file's own
+// formatting stay. Nothing to change = the file is not rewritten.
+const ASK_RULES = ["Bash(git push:*)"]; // = REQUIRED_ASK in validate-tasks.mjs; the self-test locks the two together
+function migrateSettings(f) {
+  let t, cfg; try { t = read(f); cfg = JSON.parse(t); } catch { return []; }
+  const perms = cfg.permissions;
+  if (!perms || typeof perms !== "object") return [];
+  const deny = Array.isArray(perms.deny) ? perms.deny : [], ask = Array.isArray(perms.ask) ? perms.ask : [];
+  const moved = ASK_RULES.filter((r) => deny.includes(r)), added = ASK_RULES.filter((r) => !ask.includes(r));
+  if (!moved.length && !added.length) return [];
+  perms.deny = deny.filter((r) => !moved.includes(r));
+  perms.ask = [...ask, ...added];
+  writeFileSync(f, JSON.stringify(cfg, null, 2) + "\n");
+  return added.map((r) => `.claude/settings.json: ${r} ${moved.includes(r) ? "deny → ask" : "+ ask"} (#106)`);
+}
 function migrateConfig(f) {
   let cfg; try { cfg = JSON.parse(read(f)); } catch { return []; }
   const ex = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))), done = [];
@@ -524,7 +542,7 @@ function installInto(P, clis = []) {
   // bằng văn bản; văn bản là thứ model chọn tuân thủ, deny thì không.
   keep(join(SRC, "adapters/example/settings.json"), join(P, ".claude/settings.json"));
   keep(join(SRC, "adapters/example/harness.config.json"), join(P, "harness.config.json"));
-  const migrated = migrateConfig(join(P, "harness.config.json"));
+  const migrated = [...migrateConfig(join(P, "harness.config.json")), ...migrateSettings(join(P, ".claude/settings.json"))];
   // #101: _stamp.log/_triage.log are untracked witnesses; `git clean -fd` or an agent
   // tidying "stray" files deletes them and the gate then blocks. Ignored files survive -fd.
   // Not committed: append-only, conflicts on every dispatch, and tracking adds no trust.
@@ -1679,6 +1697,26 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     writeFileSync(cp, JSON.stringify(JSON.parse(read(cp)))); // định dạng riêng của user (minified) — không có gì để đổi thì không được ghi lại
     const again = read(cp);
     if (installInto(T).migrated.length || read(cp) !== again) fail("#75: cài lại lần 2 vẫn đụng config đã đổi");
+    // #106: a pre-#104 settings.json (push in deny, no ask) must come out of the upgrade
+    // with push in ask, the user's own rules intact, preflight's check green, and a
+    // second run a no-op.
+    {
+      const sp = join(T, ".claude/settings.json"), vt = join(T, "scripts/validate-tasks.mjs");
+      const chk = () => spawnSync(process.execPath, [vt, "--check-settings", sp], { encoding: "utf8" });
+      const o = JSON.parse(read(sp)); delete o.permissions.ask;
+      o.permissions.deny = ["Bash(git push:*)", ...o.permissions.deny, "Bash(rm -rf:*)"];
+      writeFileSync(sp, JSON.stringify(o));
+      if (!/still DENIES/.test(chk().stderr)) fail("#106: settings.json cũ còn deny git push mà --check-settings im lặng");
+      const m = installInto(T).migrated, n = JSON.parse(read(sp));
+      if (!m.some((x) => /deny → ask/.test(x)) || n.permissions.deny.includes("Bash(git push:*)") || !n.permissions.ask?.includes("Bash(git push:*)") || !n.permissions.deny.includes("Bash(rm -rf:*)"))
+        fail("#106: nâng cấp không chuyển git push deny → ask (hoặc làm mất rule riêng của user)", JSON.stringify({ m, p: n.permissions }));
+      if (chk().status !== 0) fail("#106: sau khi nâng, --check-settings vẫn đỏ", chk().stderr);
+      const s2 = read(sp);
+      if (installInto(T).migrated.some((x) => /#106/.test(x)) || read(sp) !== s2) fail("#106: cài lại lần 2 vẫn ghi lại settings.json");
+    }
+    // The installer's ASK_RULES and the validator's REQUIRED_ASK are one list in two files.
+    if (!read(join(SRC, "kernel/scripts/validate-tasks.mjs")).includes(`export const REQUIRED_ASK = ${JSON.stringify(ASK_RULES).replaceAll(",", ", ")};`))
+      fail("#106: ASK_RULES (install.mjs) lệch REQUIRED_ASK (validate-tasks.mjs) — migration sẽ chuyển sai rule");
     { const o = JSON.parse(again); delete o.protectedBranches; delete o._protectedBranches; writeFileSync(cp, JSON.stringify(o));
       const m2 = installInto(T).migrated, n2 = JSON.parse(read(cp));
       if (!/\+ protectedBranches/.test(m2.join()) || !n2.protectedBranches?.includes("main") || !n2._protectedBranches) fail("0.12: nâng từ 0.11 phải tự thêm protectedBranches", JSON.stringify(m2));
