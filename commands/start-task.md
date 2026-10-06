@@ -48,8 +48,8 @@ Your responsibilities only:
 node scripts/validate-tasks.mjs --preflight || exit 1
 ```
 
-It catches the CLI opened in the wrong directory (the `git push` deny silently
-gone) and a self-contradicting config (every gate a no-op).
+It catches the CLI opened in the wrong directory (the `reset --hard` deny and
+the `git push` ask silently gone) and a self-contradicting config (every gate a no-op).
 
 Exit `1` → **stop, fix, do not run on**. Warnings (no git / no hook / no CI)
 are runnable: tell the user in one line and move on.

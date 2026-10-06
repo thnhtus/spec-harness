@@ -26,7 +26,7 @@ Tách từ một harness đã chạy thật 240 task qua 17 sprint trên codebas
 npx spec-harness --cli codex,gemini   # thêm lớp cho CLI khác; .claude/ luôn được cài
 ```
 
-Mọi CLI khác Claude nhận `AGENTS.md` + `.agents/skills/`. Guard deny (`git push` / `reset --hard` / `stash` / `clean` / `.env`) chỉ có ở CLI có hook project:
+Mọi CLI khác Claude nhận `AGENTS.md` + `.agents/skills/`. Guard deny (`reset --hard` / `stash` / `clean` / `.env`) chỉ có ở CLI có hook project; `git push` là `ask` riêng (#104/#106) — dừng hỏi user sau gate cuối, không deny cứng.
 
 | Hạng | CLI | File guard | Kiểm |
 |---|---|---|---|
@@ -50,7 +50,8 @@ Cài lại không cần `--cli`: installer tự nhận các lớp đã có và n
 | 7 role | `.claude/agents/` | `.codex/agents/*.toml` | đọc `.claude/agents/` |
 | Skills + `start-task` / `init-project-rules` | `.claude/` | `.agents/skills/` | `.agents/skills/` |
 | `adversary` / `fsd-reviewer` chỉ ghi trong `tasksDir` | hook frontmatter → `--guard-role`, bắt cả Edit/Write lẫn Bash `>`/`sed -i`/`cp` (cần trust folder) | ❌ chỉ prose | ❌ chỉ prose |
-| Deny `git push` / `reset --hard` / `.env` | `permissions.deny` | hook `PreToolUse` → `--guard codex` | hook `beforeShellExecution` + `beforeReadFile` → `--guard cursor` |
+| Deny `reset --hard` / `.env` | `permissions.deny` | hook `PreToolUse` → `--guard codex` | hook `beforeShellExecution` + `beforeReadFile` → `--guard cursor` |
+| Ask `git push` (dừng hỏi user sau gate cuối) | `permissions.ask` | `.codex/rules/*.rules` (`execpolicy`, #105) | hook `beforeShellExecution` trả `ask` |
 | Gợi ý khi dán link task | ✅ | ✅ | ❌ (Cursor không chèn được context) |
 | MCP | `.mcp.json` | `.codex/config.toml` | `.cursor/mcp.json` |
 
@@ -145,7 +146,7 @@ my-workspace/
 └── be/          ← code, không bị đụng
 ```
 
-Mở CLI trong `harness/`. CLI chỉ đọc `.claude/` ở cwd và các thư mục cha, không quét xuống thư mục con. Mở ở `my-workspace/` thì `harness/.claude/` vô hình: mất skills, mất `/start-task`, và mất cả deny `git push` / `git reset --hard`. Từ trong `harness/` bạn vẫn sửa được repo anh em bằng `/add-dir ../fe ../be`.
+Mở CLI trong `harness/`. CLI chỉ đọc `.claude/` ở cwd và các thư mục cha, không quét xuống thư mục con. Mở ở `my-workspace/` thì `harness/.claude/` vô hình: mất skills, mất `/start-task`, và mất cả deny `git reset --hard` lẫn ask `git push`. Từ trong `harness/` bạn vẫn sửa được repo anh em bằng `/add-dir ../fe ../be`.
 
 Chạy `--add-dir harness` từ thư mục cha không thay được cách trên. Nó nạp skills và commands nhưng bỏ qua `settings.json`, nên guardrail mất mà không báo gì, trong khi mọi thứ khác trông vẫn chạy. Installer đặt sẵn một `CLAUDE.md` cảnh báo ở thư mục cha để bắt trường hợp bạn lỡ mở nhầm (đã có `CLAUDE.md` thì không đè).
 
@@ -225,7 +226,7 @@ node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --
 | Kiểm | Mức | Vì sao |
 | --- | --- | --- |
 | `.claude/settings.json` có được nạp từ cwd hiện tại không | error | bẫy bố cục B ở trên |
-| …và có còn đủ deny rule không (`git push`, `reset --hard`, `stash`, `clean`, `cat .env`, `env`, `printenv`, `Read(.env)`) | error | file tồn tại mà rỗng thì guardrail mất mà không báo; preflight nêu tên rule thiếu |
+| …và có còn đủ deny rule không (`reset --hard`, `stash`, `clean`, `cat .env`, `env`, `printenv`, `Read(.env)`), và `git push` có đang nằm ở `ask` chứ không còn kẹt ở `deny` không (#106) | error | file tồn tại mà rỗng thì guardrail mất mà không báo; preflight nêu tên rule thiếu |
 | `ProjectRules.md` còn `NOT-FILLED-IN`, hoặc `repos[]` còn `<repo-name>` | error | sửa `.mcp.json` xong là preflight từng xanh trong khi mọi role vẫn đọc `<lint command>` làm §7. Ô `<…>` còn sót trong ProjectRules thì warning |
 | File được track còn gọi `--triage` với vector trần (script CI, Makefile, skill tự viết) | error | 0.12 nhận `{vector, counts, questions}`; installer chỉ sửa được dòng nó cài ra, còn lại preflight chỉ `file:line` |
 | `.mcp.json` còn trỏ placeholder (`example.com`, `<host>`) | error | Gate 1 mất nguồn AC, cả chuỗi truy vết thành tự bịa |
@@ -418,7 +419,7 @@ Validator không có dependency (Node 22+), chạy được từ pre-commit, CI 
 
 CI là bắt buộc: preflight báo đỏ nếu không workflow nào chạy validator. Pre-commit chạy `--staged`, chỉ kiểm task folder mà commit đó chạm tới, nên nó không thấy task hỏng ở chỗ khác. Đo thật: làm hỏng task A, commit file B thì commit đi qua, còn CI trên cùng cây báo 5 error. Đây là đánh đổi có chủ ý, và CI là lưới cuối. Một task đang `blocked` chờ BA là trạng thái hợp lệ. Nếu nó chặn mọi commit không liên quan, cả team sẽ quen gõ `--no-verify`, và gate bị bypass theo phản xạ thì coi như mất. CI vẫn quét toàn repo.
 
-Ngoài validator còn một lớp nữa: `.claude/settings.json` deny sẵn `git push`, `git reset --hard`, `git stash`, `git clean`, cùng `cat .env` / `env` / `printenv` / `Read(.env)`. Luật "đừng phá working tree" viết trong prompt thì model có thể bỏ qua; deny ở tầng permission thì không, cùng lý do harness chọn exit code. Preflight nêu tên rule nào thiếu.
+Ngoài validator còn một lớp nữa: `.claude/settings.json` deny sẵn `git reset --hard`, `git stash`, `git clean`, cùng `cat .env` / `env` / `printenv` / `Read(.env)`. `git push` nằm ở `permissions.ask`: dừng hỏi user sau khi gate cuối qua, không deny cứng. Luật "đừng phá working tree" viết trong prompt thì model có thể bỏ qua; deny ở tầng permission thì không, cùng lý do harness chọn exit code. Preflight nêu tên rule nào thiếu.
 
 > Lớp này không phải sandbox. Deny khớp theo tool cộng tiền tố lệnh. Trước đây chỉ có `Read(.env)`: nó chặn tool Read, nhưng agent còn Bash, và `cat .env` đi thẳng qua. Bốn rule trên giảm xác suất tai nạn chứ không chặn được hết: `python3 -c "print(open('.env').read())"` vẫn lọt, và không danh sách deny nào theo kịp mọi cách đọc một file. Bảo vệ thật là không để secret trong repo; deny-list chỉ là lớp phụ.
 
