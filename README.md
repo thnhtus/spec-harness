@@ -207,6 +207,7 @@ Còn vài việc nó không làm thay được:
 | `acTrace.since` trong `harness.config.json` | Đặt bằng ngày bạn bật harness. Task cũ hơn mốc này chỉ bị warning, không bị chặn; nếu không có mốc thì mọi task có sẵn đều đỏ |
 | `protectedBranches` trong `harness.config.json` | Danh sách regex nhánh mà `--bootstrap` từ chối (ProjectRules §3 ở dạng dữ liệu). Mặc định cài ra `main/master/develop/staging/release/.*`; thiếu key thì exit 2 |
 | `stampSince` trong `harness.config.json` | Giống `acTrace.since`: task tạo từ ngày này phải có mọi khung telemetry khớp một dòng `_stamp.log` (chỉ `--advance` ghi). Thiếu key thì exit 2 |
+| `_stamp.log` / `_triage.log` | Installer tự thêm hai file này vào `.gitignore` (sống qua `git clean -fd`, không commit vì append-only và commit không tăng độ tin cậy). Mất log thì `node scripts/validate-tasks.mjs --restamp` dựng lại từ telemetry (cột thứ 7 `restamp`); log còn thì từ chối |
 
 Bản cài ra để `"evidenceMode": "attested"`: Gate 4/5 đòi evidence do `scripts/run-evidence.mjs` sinh, không nhận output dán tay. Hạ xuống `"legacy"` chỉ hợp lý khi di trú một repo đã có evidence viết tay. Trường này bắt buộc khai tường minh, không có mặc định ngầm.
 

@@ -2764,6 +2764,7 @@ if (args.has("--self-check")) {
     assert.equal(gone.length, 1, "#84: a missing log is ONE error, not one per window");
     assert.match(gone[0], /missing entirely.*2 telemetry window/, "#84: the error names the file, the count and the cause");
     assert.deepEqual(stampDefects([], null, "A-1", now).errors, [], "#84: no telemetry yet → a missing log is not a defect");
+    assert.deepEqual(stampDefects([e1], restampLines([{ taskId: "A-1", telemetry: [e1] }]).join(""), "A-1", now).errors, [], "#102: a rebuilt log witnesses every window");
     assert.equal(stampDefects([round[0], e1], "", "A-1", now).warnings.length, 0, "R5c: one real second clears it");
     assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(CFG.stampSince ?? ""), "S6: config.stampSince is required (YYYY-MM-DD)");
   }
@@ -4016,6 +4017,34 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
   if (timed.length >= 2 && timed.every((e) => /:00(\.0+)?Z$/.test(e.startedAt)))
     warnings.push(`every telemetry startedAt is on a whole minute (${timed.length} entries) — a machine clock almost never does that`);
   return { errors, warnings };
+}
+
+// --restamp (#102): rebuild a lost _stamp.log from telemetry. Re-running every stage is
+// the only other recovery. Refuses while the log exists, so live witnesses are never rewritten.
+// ponytail: whoever deletes the log and runs this launders hand-typed windows; the 7th
+// column "restamp" keeps the rebuilt lines visible in audit. Same ceiling as _triage.log.
+export function restampLines(tasks = []) {
+  return tasks.flatMap((j) => (j.telemetry ?? []).flatMap((e) =>
+    [["start", e?.startedAt], ["end", e?.endedAt]].filter(([, t]) => t)
+      .map(([k, t]) => `${t}\t${j.taskId}\t${e.stage}\t${e.attempt}\t${e.slice ?? "-"}\t${k}\trestamp\n`)));
+}
+
+if (args.has("--restamp")) {
+  if (existsSync(STAMP_LOG)) { console.error(`✖ --restamp: ${STAMP_LOG_NAME} exists — refusing to rewrite live witnesses (delete it yourself only if it is corrupt)`); process.exit(1); }
+  const tasks = [];
+  if (existsSync(TASKS_DIR))
+    for (const g of readdirSync(TASKS_DIR)) {
+      const gd = join(TASKS_DIR, g);
+      if (!g.startsWith(GROUP_PREFIX) || !statSync(gd).isDirectory()) continue;
+      for (const f of readdirSync(gd)) {
+        const jp = join(gd, f, "task.agent.json");
+        if (existsSync(jp)) try { tasks.push(JSON.parse(readFileSync(jp, "utf8"))); } catch {}
+      }
+    }
+  const text = restampLines(tasks);
+  writeFileSync(STAMP_LOG, text.join(""));
+  console.log(`✔ --restamp: ${text.length} line(s) from ${tasks.length} task(s) → ${rel(STAMP_LOG)} (7th column "restamp")`);
+  process.exit(0);
 }
 
 // --bootstrap (#64): stage 1 as a command. In the measured run the orchestrator

@@ -512,6 +512,15 @@ function installInto(P, clis = []) {
   keep(join(SRC, "adapters/example/settings.json"), join(P, ".claude/settings.json"));
   keep(join(SRC, "adapters/example/harness.config.json"), join(P, "harness.config.json"));
   const migrated = migrateConfig(join(P, "harness.config.json"));
+  // #101: _stamp.log/_triage.log are untracked witnesses; `git clean -fd` or an agent
+  // tidying "stray" files deletes them and the gate then blocks. Ignored files survive -fd.
+  // Not committed: append-only, conflicts on every dispatch, and tracking adds no trust.
+  try {
+    const td = (JSON.parse(read(join(P, "harness.config.json"))).tasksDir ?? "docs/tasks").replace(/\/+$/, "");
+    const gi = join(P, ".gitignore"), cur = existsSync(gi) ? read(gi) : "";
+    const add = [`${td}/_stamp.log`, `${td}/_triage.log`].filter((l) => !cur.split(/\r?\n/).includes(l));
+    if (add.length) writeFileSync(gi, cur + (cur && !cur.endsWith("\n") ? "\n" : "") + add.join("\n") + "\n");
+  } catch {}
   keep(join(SRC, "adapters/ProjectRules.template.md"), join(P, "docs/agents/ProjectRules.md"));
   keep(join(SRC, "commands/start-task.md"), join(P, ".claude/commands/start-task.md"));
   migrated.push(...migrateCommand(join(P, ".claude/commands/start-task.md")));
@@ -2179,6 +2188,21 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const cfgKeep = read(cfgP), cfgNo = JSON.parse(cfgKeep); delete cfgNo.stampSince; writeFileSync(cfgP, JSON.stringify(cfgNo));
     if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--task", T], { cwd: P }).status !== 2) fail("S6: thiếu config.stampSince phải exit 2");
     writeFileSync(cfgP, cfgKeep);
+    // #101 .gitignore + #102 --restamp: ignored logs survive `git clean -fd`; a lost one is rebuilt, never overwritten.
+    const giP = join(P, ".gitignore");
+    if (!/^docs\/tasks\/_stamp\.log$/m.test(read(giP)) || !/^docs\/tasks\/_triage\.log$/m.test(read(giP))) fail("#101: installer không ghi _stamp.log/_triage.log vào .gitignore");
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp"], { cwd: P }).status !== 1) fail("#102: --restamp khi log còn phải exit 1");
+    const logP = join(P, "docs/tasks/_stamp.log"), logKeep = read(logP), jKeep = read(jp);
+    // createdAt ≥ stampSince, else a missing witness is only a warning (older tasks).
+    writeFileSync(jp, JSON.stringify({ ...JSON.parse(jKeep), createdAt: JSON.parse(read(cfgP)).stampSince }, null, 2));
+    rmSync(logP);
+    const lost = JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+    if (!lost.some((x) => /missing entirely/.test(x))) fail("#102: mất log phải báo missing entirely", lost.join("\n"));
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp"], { cwd: P }).status !== 0) fail("#102: --restamp khi mất log phải exit 0");
+    const back = JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+    if (back.length) fail("#102: sau --restamp validator phải sạch", back.join("\n"));
+    if (read(logP).split("\n").filter(Boolean).some((l) => l.split("\t")[6] !== "restamp")) fail("#102: dòng dựng lại phải có cột restamp");
+    writeFileSync(logP, logKeep); writeFileSync(jp, jKeep);
     // Closing a window is witnessed too: a re-dispatch ends the open entry, and the task still validates.
     if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("--advance lần 2 cùng stage không exit 0");
     const j2 = J();
