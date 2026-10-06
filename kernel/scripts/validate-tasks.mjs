@@ -59,13 +59,12 @@ const taskFlagAt = argv.indexOf("--task");
 const TASK_ARG = taskFlagAt !== -1 ? argv[taskFlagAt + 1] : null;
 
 // Declared here, not next to denyGaps(): --guard below runs BEFORE config load.
-// `git push` is deliberately NOT here: it is the last step of a task, not an
-// accident. Claude gets it as `permissions.ask` in settings.json (pause, show
-// the command, run it on the user's yes).
-// ponytail: the hook guard below only implements DENY, so on the other CLIs
-// push is unguarded and only AGENTS.md prose holds it to "after the final gate,
-// ask first". Upgrade path: map `ask` to the CLIs whose hook schema has an ask
-// verdict (cursor/antigravity already answer "ask" on allow).
+// `git push` is deliberately NOT in REQUIRED_DENY: it is the last step of a task,
+// not an accident. It is REQUIRED_ASK: pause, show the command, run it on the
+// user's yes. Claude gets that from `permissions.ask` in settings.json; every
+// other CLI gets it from --guard below, in whatever shape its hook schema has.
+// Deny wins over ask.
+export const REQUIRED_ASK = ["Bash(git push:*)"];
 const REQUIRED_DENY = [
   "Bash(git reset --hard:*)", "Bash(git stash:*)", "Bash(git clean:*)",
   "Bash(cat .env:*)", "Bash(env:*)", "Bash(printenv:*)", "Read(.env)",
@@ -150,6 +149,25 @@ const GUARD_MODES = {
   cursor: "cursor", antigravity: "antigravity", cline: "cline",
 };
 
+// A real "ask" verdict, per CLI schema (survey in #104). A CLI missing here has
+// none, so an ask hit is ALLOWED and AGENTS.md prose holds -- never turned into a
+// deny, that would make a user-approved push impossible.
+//   exit-3  pi: the extension turns it into ctx.ui.confirm().
+//   codex   parses permissionDecision "ask" but marks the hook run failed (openai/codex#28437).
+//   cline   cancel / overrideInput only. kiro, windsurf, devin, goose, opencode: exit code only.
+// ponytail: gemini's `decision:"ask"` is implemented (PR #21146 upstream) but
+// undocumented (#28046). Cursor ask is shell-only: beforeReadFile has none, and an
+// invalid answer there blocks every read (#45) -- REQUIRED_ASK is Bash-only so
+// reads never reach this. qwen/copilot/antigravity: headless or cloud ask -> deny, theirs.
+const hso = (why) => ({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask", permissionDecisionReason: why } });
+export const ASK_FORMATS = {
+  cursor: (why) => ({ permission: "ask", user_message: why, agent_message: why }),
+  copilot: (why) => ({ permissionDecision: "ask", permissionDecisionReason: why }),
+  droid: hso, qwen: hso,
+  gemini: (why) => ({ decision: "ask", reason: why }),
+  antigravity: (why) => ({ decision: "ask", reason: why }),
+};
+
 // Cline 3.x: replace ONLY the denied entries of the batch with ones that fail
 // carrying the reason; allowed entries still run and the task goes on.
 // ponytail: /dev/null/<reason> fails with ENOTDIR on POSIX only; on Windows the
@@ -195,13 +213,25 @@ if (args.has("--guard")) {
   const root = [input.cwd, input.workspaceRoots?.[0], input.workspacePaths?.[0], input.working_dir]
     .find((x) => typeof x === "string") ?? process.cwd();
   const settings = findUpward(join(".claude", "settings.json"), root);
-  if (settings) try { for (const r of JSON.parse(readFileSync(settings, "utf8"))?.permissions?.deny ?? []) deny.add(r); } catch {}
+  const ask = new Set(REQUIRED_ASK);
+  if (settings) try {
+    const perms = JSON.parse(readFileSync(settings, "utf8"))?.permissions;
+    for (const r of perms?.deny ?? []) deny.add(r);
+    for (const r of perms?.ask ?? []) ask.add(r);
+  } catch {}
   const s = guardSubjects(input);
   // ponytail: a path key on ANY tool is checked as a read, so writing `.env`
   // is blocked too. Fail-safe on purpose; split by tool name if it bites.
   const hit = s.read.map((p) => guardVerdict("read", p, deny)).find(Boolean)
     ?? s.shell.map((c) => guardVerdict("shell", c, deny)).find(Boolean);
-  if (!hit) allow();
+  if (!hit) {
+    const q = s.shell.map((c) => guardVerdict("shell", c, ask)).find(Boolean);
+    if (!q) allow();
+    const why = `needs the user's yes: spec-harness ask rule ${q} (docs/Instructions.md §1) — only after the final gate (status = reviewing)`;
+    if (ASK_FORMATS[cli]) { say(ASK_FORMATS[cli](why)); process.exit(0); }
+    if (cli === "pi") { console.error(why); process.exit(3); }
+    allow(); // no ask verdict in this CLI's schema: AGENTS.md prose holds
+  }
   const why = `blocked by spec-harness deny rule ${hit} (docs/Instructions.md §1)`;
   if (mode === "cursor") say({ permission: "deny", user_message: why, agent_message: why });
   if (mode === "cline") { say(clineDeny(input, deny, why)); process.exit(0); }
@@ -3305,7 +3335,17 @@ if (args.has("--self-check")) {
   // guardVerdict: the deny-list for Codex/Cursor. Each case isolates ONE branch.
   {
     const g = (k, s) => guardVerdict(k, s, REQUIRED_DENY);
-    assert.equal(g("shell", "git push origin main"), null, "guard: push is NOT hard-denied — settings.json `ask` pauses for the user after the final gate");
+    assert.equal(g("shell", "git push origin main"), null, "guard: push is NOT hard-denied");
+    const ga = (c) => guardVerdict("shell", c, REQUIRED_ASK);
+    assert.equal(ga("npm test && git push origin main"), "Bash(git push:*)", "ask: push after && must ask");
+    assert.equal(ga("git pushx"), null, "ask: a prefix is a whole word");
+    assert.equal(ga("git status"), null, "ask: an ordinary command passes");
+    for (const [cli, f] of Object.entries(ASK_FORMATS)) {
+      const o = f("WHY"), t = JSON.stringify(o);
+      assert.ok(/"ask"/.test(t) && !/deny/.test(t), `ASK_FORMATS.${cli} must say ask, never deny`);
+    }
+    assert.equal(ASK_FORMATS.cursor("W").permission, "ask", "cursor: flat permission field");
+    assert.equal(ASK_FORMATS.qwen("W").hookSpecificOutput.permissionDecision, "ask", "qwen/droid: hookSpecificOutput shape");
     assert.equal(g("shell", "git reset --hard"), "Bash(git reset --hard:*)", "guard: bare prefix (no args) must block");
     assert.equal(g("shell", "npm test && git reset --hard HEAD"), "Bash(git reset --hard:*)", "guard: a denied command after && must block");
     assert.equal(g("shell", "ls; git  stash"), "Bash(git stash:*)", "guard: after ; with doubled space must block");
