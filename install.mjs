@@ -17,7 +17,7 @@
 
 import {
   cpSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync,
-  symlinkSync, lstatSync, statSync, unlinkSync, chmodSync, mkdtempSync, realpathSync,
+  symlinkSync, lstatSync, statSync, unlinkSync, chmodSync, mkdtempSync, realpathSync, appendFileSync,
 } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -1006,6 +1006,8 @@ if (args[0] === "--bench") {
 }
 
 if (args[0] === "--self-test") {
+  // #103: --advance creates the stamp key on first use; the self-test must never touch ~/.spec-harness.
+  process.env.SPEC_HARNESS_KEY_FILE = join(mkdtempSync(join(tmpdir(), "sh-key-")), "stamp.key");
   const fail = (m, extra) => { console.error(`✖ self-test: ${m}`); if (extra) console.error(extra); process.exit(1); };
   // --bench (#59): parser đọc đúng stream-json đóng hộp — số sai thì mọi so sánh trước/sau đều sai.
   {
@@ -2202,6 +2204,17 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const back = JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
     if (back.length) fail("#102: sau --restamp validator phải sạch", back.join("\n"));
     if (read(logP).split("\n").filter(Boolean).some((l) => l.split("\t")[6] !== "restamp")) fail("#102: dòng dựng lại phải có cột restamp");
+    // #103: a hand-appended (unsigned) line no longer witnesses; done tasks are not rebuilt.
+    const jT = JSON.parse(read(jp)), fake = { stage: "implementation", tier: "mid", attempt: 1, startedAt: "2026-09-29T01:00:07Z", endedAt: "2026-09-29T01:20:13Z" };
+    writeFileSync(jp, JSON.stringify({ ...jT, telemetry: [...jT.telemetry, fake] }, null, 2));
+    appendFileSync(logP, `${fake.startedAt}\t${jT.taskId}\timplementation\t1\t-\tstart\n${fake.endedAt}\t${jT.taskId}\timplementation\t1\t-\tend\n`);
+    const forged = JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+    if (forged.filter((x) => /validly signed/.test(x)).length !== 2) fail("#103: dòng _stamp.log gõ tay (không chữ ký) vẫn được tính là nhân chứng", forged.join("\n"));
+    writeFileSync(jp, JSON.stringify({ ...jT, status: "done" }, null, 2)); rmSync(logP);
+    const rs = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp"], { cwd: P, encoding: "utf8" });
+    if (rs.status !== 0 || !/skipped done task/.test(rs.stdout) || read(logP).includes(jT.taskId)) fail("#103: --restamp không được dựng lại nhân chứng cho task done", rs.stdout + rs.stderr);
+    rmSync(logP);
+    if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp", "--include-done"], { cwd: P }).status !== 0 || !read(logP).includes(jT.taskId)) fail("#103: --include-done phải dựng lại cả task done");
     writeFileSync(logP, logKeep); writeFileSync(jp, jKeep);
     // Closing a window is witnessed too: a re-dispatch ends the open entry, and the task still validates.
     if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("--advance lần 2 cùng stage không exit 0");

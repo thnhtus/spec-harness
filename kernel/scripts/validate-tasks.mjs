@@ -29,11 +29,12 @@
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
 
-import { readFileSync, readdirSync, existsSync, statSync, statfsSync, writeFileSync, renameSync, rmSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, statSync, statfsSync, writeFileSync, renameSync, rmSync, mkdirSync as mkdirP } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
+import { homedir } from "node:os";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -2764,7 +2765,12 @@ if (args.has("--self-check")) {
     assert.equal(gone.length, 1, "#84: a missing log is ONE error, not one per window");
     assert.match(gone[0], /missing entirely.*2 telemetry window/, "#84: the error names the file, the count and the cause");
     assert.deepEqual(stampDefects([], null, "A-1", now).errors, [], "#84: no telemetry yet → a missing log is not a defect");
-    assert.deepEqual(stampDefects([e1], restampLines([{ taskId: "A-1", telemetry: [e1] }]).join(""), "A-1", now).errors, [], "#102: a rebuilt log witnesses every window");
+    const K = "k1", signed = restampLines([{ taskId: "A-1", telemetry: [e1] }], K).join("");
+    assert.deepEqual(stampDefects([e1], signed, "A-1", now, K).errors, [], "#102/#103: a rebuilt, signed log witnesses every window");
+    assert.equal(stampDefects([e1], signed, "A-1", now, "other").errors.length, 2, "#103: a line signed by another key witnesses nothing");
+    assert.equal(stampDefects([e1], log, "A-1", now, K).errors.length, 2, "#103: an unsigned (hand-appended) line witnesses nothing once a key exists");
+    assert.equal(stampDefects([e1], signed.replace("\tstart\t", "\tend\t"), "A-1", now, K).errors.length, 1, "#103: editing a signed line breaks its signature");
+    assert.deepEqual(stampDefects([e1], signed, "A-1", now, null).errors, [], "#103: no key on this machine (CI) → signatures skipped, columns still matched");
     assert.equal(stampDefects([round[0], e1], "", "A-1", now).warnings.length, 0, "R5c: one real second clears it");
     assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(CFG.stampSince ?? ""), "S6: config.stampSince is required (YYYY-MM-DD)");
   }
@@ -3995,14 +4001,39 @@ export function templateRowsBlock(data) {
   return outcomeIsBlocking(data) && !shippedBeforeRule(data);
 }
 
-export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now()) {
+// #103: every _stamp.log line carries an HMAC (col 8) over cols 1-7, keyed by a per-install
+// key OUTSIDE the repo (~/.spec-harness/stamp.key, or $SPEC_HARNESS_KEY_FILE). A line typed
+// by an agent that only edits files in the repo has no valid signature. No key on this
+// machine (CI, fresh clone) = signatures cannot be checked, so they are skipped, not failed.
+// ponytail: an agent with a shell as the same OS user can still read the key and sign.
+// Upgrade path: key held by a process the agent cannot read (keychain / CI secret).
+function KEY_FILE() { return process.env.SPEC_HARNESS_KEY_FILE || join(homedir(), ".spec-harness", "stamp.key"); }
+export function stampKey() { try { return readFileSync(KEY_FILE(), "utf8").trim() || null; } catch { return null; } }
+export function stampSig(key, cols) { return createHmac("sha256", key).update(cols.join("\t")).digest("hex"); }
+export function stampLine(key, cols, mark = "-") { const c = [...cols, mark]; return `${c.join("\t")}\t${stampSig(key, c)}\n`; }
+// First use creates the key. Lines written before it existed are signed once, here —
+// otherwise turning signing on would invalidate every witness already in the log.
+function ensureStampKey() {
+  const k = stampKey();
+  if (k) return k;
+  const f = KEY_FILE(), nk = randomBytes(32).toString("hex");
+  mkdirP(dirname(f), { recursive: true });
+  writeFileSync(f, nk + "\n", { mode: 0o600 });
+  if (existsSync(STAMP_LOG))
+    writeFileSync(STAMP_LOG, readFileSync(STAMP_LOG, "utf8").split("\n").filter(Boolean).map((l) => {
+      const c = l.split("\t"); return stampLine(nk, c.slice(0, 6), c[6] ?? "-");
+    }).join(""));
+  return nk;
+}
+
+export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.now(), key = null) {
   const errors = [], warnings = [];
   // #84: stampText === null = the FILE is gone, not this task's lines. One error
   // naming that (and who can delete an untracked file) beats N "no line" errors
   // that read as N hand-typed windows. Only the witness check is skipped.
   const gone = stampText === null && telemetry.some((e) => e?.startedAt);
   if (gone) errors.push(`${STAMP_LOG_NAME} is missing entirely (${telemetry.filter((e) => e?.startedAt).length} telemetry window(s) lost their witness) — it is untracked, so a \`git clean\`, a worktree reset or an agent tidying "stray" files deletes it; recover it (backup/other worktree) or re-run the stages (#84)`);
-  const seen = new Set((stampText ?? "").split("\n").map((l) => l.split("\t")).filter((c) => c.length >= 6 && c[1] === taskId)
+  const seen = new Set((stampText ?? "").split("\n").map((l) => l.split("\t")).filter((c) => c.length >= 6 && c[1] === taskId && (!key || (c.length >= 8 && c[7] === stampSig(key, c.slice(0, 7)))))
       .map(([ts, , stage, attempt, slice, kind]) => `${ts}|${stage}|${attempt}|${slice}|${kind}`));
   for (const e of telemetry) {
     if (!e?.startedAt) continue;
@@ -4011,7 +4042,7 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
     if (Number.isFinite(en) && en < s) errors.push(`telemetry ${e.stage}#${e.attempt}: endedAt ${e.endedAt} is before startedAt ${e.startedAt}`);
     for (const [kind, ts] of [["start", e.startedAt], ["end", e.endedAt]])
       if (ts && !gone && !seen.has(`${ts}|${e.stage}|${e.attempt}|${e.slice ?? "-"}|${kind}`))
-        errors.push(`telemetry ${e.stage}#${e.attempt}: ${kind === "start" ? "startedAt" : "endedAt"} ${ts} has no _stamp.log line — only \`--advance\` writes telemetry; a hand-typed window is a guess`);
+        errors.push(`telemetry ${e.stage}#${e.attempt}: ${kind === "start" ? "startedAt" : "endedAt"} ${ts} has no ${key ? "validly signed " : ""}_stamp.log line — only \`--advance\` writes telemetry; a hand-typed window is a guess`);
   }
   const timed = telemetry.filter((e) => e?.startedAt);
   if (timed.length >= 2 && timed.every((e) => /:00(\.0+)?Z$/.test(e.startedAt)))
@@ -4023,27 +4054,34 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
 // the only other recovery. Refuses while the log exists, so live witnesses are never rewritten.
 // ponytail: whoever deletes the log and runs this launders hand-typed windows; the 7th
 // column "restamp" keeps the rebuilt lines visible in audit. Same ceiling as _triage.log.
-export function restampLines(tasks = []) {
+export function restampLines(tasks = [], key) {
   return tasks.flatMap((j) => (j.telemetry ?? []).flatMap((e) =>
     [["start", e?.startedAt], ["end", e?.endedAt]].filter(([, t]) => t)
-      .map(([k, t]) => `${t}\t${j.taskId}\t${e.stage}\t${e.attempt}\t${e.slice ?? "-"}\t${k}\trestamp\n`)));
+      .map(([k, t]) => stampLine(key, [t, j.taskId, e.stage, e.attempt, e.slice ?? "-", k], "restamp"))));
 }
 
+// #103: a done task is shipped history — rebuilding its witness is exactly how a fake window
+// would be laundered after the fact. Skipped unless --include-done says so out loud.
 if (args.has("--restamp")) {
   if (existsSync(STAMP_LOG)) { console.error(`✖ --restamp: ${STAMP_LOG_NAME} exists — refusing to rewrite live witnesses (delete it yourself only if it is corrupt)`); process.exit(1); }
-  const tasks = [];
+  const tasks = [], skipped = [];
   if (existsSync(TASKS_DIR))
     for (const g of readdirSync(TASKS_DIR)) {
       const gd = join(TASKS_DIR, g);
       if (!g.startsWith(GROUP_PREFIX) || !statSync(gd).isDirectory()) continue;
       for (const f of readdirSync(gd)) {
         const jp = join(gd, f, "task.agent.json");
-        if (existsSync(jp)) try { tasks.push(JSON.parse(readFileSync(jp, "utf8"))); } catch {}
+        if (!existsSync(jp)) continue;
+        try {
+          const j = JSON.parse(readFileSync(jp, "utf8"));
+          if (j.status === "done" && !args.has("--include-done")) skipped.push(j.taskId); else tasks.push(j);
+        } catch {}
       }
     }
-  const text = restampLines(tasks);
+  const text = restampLines(tasks, ensureStampKey());
   writeFileSync(STAMP_LOG, text.join(""));
-  console.log(`✔ --restamp: ${text.length} line(s) from ${tasks.length} task(s) → ${rel(STAMP_LOG)} (7th column "restamp")`);
+  console.log(`✔ --restamp: ${text.length} line(s) from ${tasks.length} task(s) → ${rel(STAMP_LOG)} (col 7 "restamp", col 8 HMAC)`);
+  if (skipped.length) console.log(`  skipped done task(s): ${skipped.join(", ")} — their windows stay unwitnessed; pass --include-done to rebuild them too`);
   process.exit(0);
 }
 
@@ -4173,7 +4211,8 @@ if (args.has("--advance")) {
   const now = new Date().toISOString().replace(/\.\d+Z$/, "Z");
   needStampSince("--advance");
   const { appendFileSync } = await import("node:fs");
-  const stamp = (e, kind) => appendFileSync(STAMP_LOG, `${now}\t${data.taskId}\t${e.stage}\t${e.attempt}\t${e.slice ?? "-"}\t${kind}\n`);
+  const skey = ensureStampKey();
+  const stamp = (e, kind) => appendFileSync(STAMP_LOG, stampLine(skey, [now, data.taskId, e.stage, e.attempt, e.slice ?? "-", kind]));
   data.telemetry ??= [];
   // #71: closing a slice entry checks what that dispatch changed — before anything is written.
   const repoDir = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
@@ -4415,7 +4454,6 @@ if (args.has("--preflight")) {
   // frontmatter hooks, logged only to the debug log — the read-only roles then
   // write anywhere. Warning: ~/.claude.json is user state, not the repo's.
   {
-    const { homedir } = await import("node:os");
     const { realpathSync } = await import("node:fs");
     const cj = join(homedir(), ".claude.json");
     if (!isSourceRepo && existsSync(join(REPO_ROOT, ".claude/agents/adversary.md")) && existsSync(cj)) {
@@ -5019,7 +5057,7 @@ for (const { sprint, task, path } of folders) {
 
   // R5/R5b/R5c (#65): a telemetry window with no _stamp.log witness was typed by hand.
   {
-    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId);
+    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId, Date.now(), stampKey());
     const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
     for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
     warnings.push(...st.warnings);
