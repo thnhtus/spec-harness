@@ -219,6 +219,17 @@ function installCodex(P, keep) {
       },
     }, null, 2) + "\n");
   else keep(null, hooksPath);
+  // #105: Codex hooks have no "ask" verdict (openai/codex#28437), so the one rule
+  // that must PAUSE rather than block -- git push -- goes through Codex's own
+  // execpolicy instead. Rendered from the same ask list as every other CLI.
+  // Ours, overwritten on upgrade: the user's own rules go in another .rules file,
+  // Codex loads every file in the folder.
+  // ponytail: rules only govern commands run OUTSIDE the sandbox. Inside it the
+  // network is off, so a push fails rather than running unasked.
+  mkdirSync(join(P, ".codex/rules"), { recursive: true });
+  const rules = spawnSync(process.execPath,
+    [join(P, "scripts/validate-tasks.mjs"), "--codex-rules", join(P, ".claude/settings.json")], { encoding: "utf8" });
+  if (rules.status === 0) writeFileSync(join(P, ".codex/rules/spec-harness.rules"), rules.stdout);
   // MCP: Codex reads config.toml, not .mcp.json. Generated from the project's
   // .mcp.json (already filled in by then on a re-install), kept once written.
   const cfgPath = join(P, ".codex/config.toml");
@@ -1883,6 +1894,18 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     // #104: codex has no ask verdict (openai/codex#28437) -> push must pass, not be denied.
     if (hookRun(cx, bash("git push origin main"), join(M, "src")).status !== 0) fail("Codex guard DENY git push — CLI không có ask, push do user duyệt sẽ kẹt");
 
+    // #105: codex asks via execpolicy, not a hook. The generated file must be loadable
+    // (match/not_match are Codex's own inline tests) and answer prompt for push only.
+    const rf = join(M, ".codex/rules/spec-harness.rules");
+    if (!existsSync(rf)) fail("thiếu .codex/rules/spec-harness.rules — Codex không hỏi trước git push");
+    const cxChk = (c) => spawnSync("codex", ["execpolicy", "check", "--rules", rf, "--", ...c.split(" ")], { encoding: "utf8" });
+    if (cxChk("git status").error) console.log("ℹ không có `codex` trong PATH — bỏ qua kiểm tra .codex/rules bằng execpolicy");
+    else {
+      const yes = cxChk("git push origin main"), no = cxChk("git status");
+      if (yes.status !== 0 || !/"decision":"prompt"/.test(yes.stdout)) fail("codex execpolicy không trả prompt cho git push", yes.stdout + yes.stderr);
+      if (no.status !== 0 || /"decision"/.test(no.stdout)) fail("codex execpolicy hỏi cả lệnh hợp lệ git status", no.stdout + no.stderr);
+    }
+
     const cu = JSON.parse(read(join(M, ".cursor/hooks.json"))).hooks;
     for (const ev of ["beforeShellExecution", "beforeReadFile"]) if (!cu[ev]?.[0]?.command) fail(`.cursor/hooks.json thiếu ${ev}`);
     // R3: Cursor treats invalid JSON from a permission hook as DENY, so the allow
@@ -2487,9 +2510,9 @@ console.log(`
     Hook đó TẮT tới khi bạn trust folder: mở \`claude\` ở đây một lần, đồng ý trust dialog.`);
 
 if (done.includes("codex")) console.log(`
-⚠️  Codex: hook guard (deny reset --hard/stash/clean/.env) TẮT cho tới khi bạn trust.
+⚠️  Codex: hook guard (deny reset --hard/stash/clean/.env) VÀ .codex/rules (hỏi trước git push, #105) TẮT cho tới khi bạn trust.
     Mở codex trong project → trust project → gõ /hooks → trust 2 hook spec-harness.
-    Chưa trust thì Codex bỏ qua hook trong im lặng — preflight không thấy được.
+    Chưa trust thì Codex bỏ qua cả hook lẫn rules trong im lặng — preflight không thấy được.
     Trust gắn với ĐƯỜNG DẪN THẬT (realpath) + hash của hook: mở qua symlink/đường khác
     hoặc sửa .codex/hooks.json = phải /hooks trust lại. Windows: Codex chưa bắn
     PreToolUse cho lệnh shell (openai/codex#24453) — trên Windows chỉ còn pre-commit/CI.`);
