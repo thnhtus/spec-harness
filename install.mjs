@@ -296,7 +296,7 @@ const ADAPTERS = {
   goose: { file: ".agents/plugins/spec-harness/hooks/hooks.json", json: { hooks: { PreToolUse: [{ matcher: "shell|developer__shell",
     hooks: [{ type: "command", command: `node "\${PLUGIN_ROOT}/../../../${V}" --guard goose` }] }] } },
     also: [[".agents/plugins/spec-harness/plugin.json", JSON.stringify({ name: "spec-harness", version: "1.0.0",
-      description: "spec-harness deny-list guard (git push / reset --hard / .env)" }, null, 2) + "\n"]] },
+      description: "spec-harness deny-list guard (reset --hard / stash / clean / .env)" }, null, 2) + "\n"]] },
   opencode: { file: ".opencode/plugins/spec-harness.js", own: true, text: pluginSrc("opencode") },
   pi: { file: ".pi/extensions/spec-harness.js", own: true, text: pluginSrc("pi") },
 };
@@ -571,7 +571,7 @@ function installInto(P, clis = []) {
 // Bố cục B (harness/ đứng cạnh fe/ be/): CLI chỉ đọc .claude/ ở cwd và các thư
 // mục CHA, không quét xuống con. Mở CLI ở my-workspace/ thì harness/.claude/
 // vô hình — mất skills, mất /start-task, và (nguy hiểm nhất) mất deny
-// git push/reset --hard trong settings.json. `--add-dir harness` KHÔNG cứu
+// git reset --hard + hỏi-trước-push trong settings.json. `--add-dir harness` KHÔNG cứu
 // được: nó nạp skills + commands nhưng BỎ QUA settings.json, tức là chạy có vẻ
 // bình thường trong khi guardrail đã biến mất — im lặng, đúng kiểu hỏng tệ nhất.
 // Nên đặt biển báo ở thư mục cha: CLAUDE.md ở cwd luôn được nạp, nên đây là chỗ
@@ -604,7 +604,7 @@ spec-harness cài ở \`${here}/\`, không phải ở đây.
 
 \`.claude/\` của nó nằm trong \`${here}/\` — CLI không quét xuống thư mục con,
 nên mở ở đây là mất skills, mất \`/start-task\`, và mất cả guardrail deny
-\`git push\` / \`git reset --hard\` trong settings.json.
+\`git reset --hard\` (và hỏi trước \`git push\`) trong settings.json.
 
 **Thoát và mở lại ở đúng chỗ:**
 
@@ -1876,7 +1876,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     mkdirSync(join(M, "src"), { recursive: true });
     const cx = JSON.parse(read(join(M, ".codex/hooks.json"))).hooks.PreToolUse[0].hooks[0].command;
     const bash = (c) => ({ tool_name: "Bash", tool_input: { command: c }, cwd: join(M, "src") });
-    if (hookRun(cx, bash("npm test && git push origin main"), join(M, "src")).status !== 2) fail("Codex PreToolUse không chặn `git push` sau &&");
+    if (hookRun(cx, bash("npm test && git reset --hard HEAD"), join(M, "src")).status !== 2) fail("Codex PreToolUse không chặn `git reset --hard` sau &&");
     if (hookRun(cx, bash("git status"), join(M, "src")).status !== 0) fail("Codex guard chặn cả lệnh hợp lệ — hook sẽ bị tắt");
 
     const cu = JSON.parse(read(join(M, ".cursor/hooks.json"))).hooks;
@@ -1969,7 +1969,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const env = { ...process.env, GEMINI_PROJECT_DIR: A, QWEN_PROJECT_DIR: A, FACTORY_PROJECT_DIR: A,
       PLUGIN_ROOT: join(A, ".agents/plugins/spec-harness") };
     const sh = (cmd, cwd) => (p) => spawnSync("sh", ["-c", cmd], { cwd, env, input: JSON.stringify(p), encoding: "utf8" });
-    const PUSH = "npm test && git push origin main", ENV = join(A, ".env");
+    const PUSH = "npm test && git reset --hard HEAD", ENV = join(A, ".env");
     // [cli, runner, shell payload(cmd), read payload(path), how a DENY looks, how an ALLOW looks]
     const exitDeny = (x) => x.status === 2, exitAllow = (x) => x.status === 0 && !x.stdout.trim();
     const jsonIs = (k, v) => (x) => { try { return x.status === 0 && JSON.parse(x.stdout)[k] === v; } catch { return false; } };
@@ -2007,7 +2007,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     ];
     for (const [cli, run, shellP, readP, isDeny, isAllow] of cases) {
       const d = run(shellP(PUSH));
-      if (!isDeny(d)) fail(`${cli}: hook không chặn \`git push\` sau && — deny-list trên ${cli} là giả`, d.stdout + d.stderr);
+      if (!isDeny(d)) fail(`${cli}: hook không chặn \`git reset --hard\` sau && — deny-list trên ${cli} là giả`, d.stdout + d.stderr);
       if (readP && !isDeny(run(readP(ENV)))) fail(`${cli}: hook không chặn đọc .env`);
       const ok = run(shellP("git status"));
       if (!isAllow(ok)) fail(`${cli}: hook chặn/sai hợp đồng với lệnh hợp lệ — CLI sẽ chặn MỌI lệnh hoặc user tắt hook`, ok.stdout + ok.stderr);
@@ -2028,12 +2028,12 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
 
     // In-process plugins: load the generated file and call it like the CLI does.
     let piH; (await import(join(A, ".pi/extensions/spec-harness.js"))).default({ on: (ev, h) => { if (ev === "tool_call") piH = h; } });
-    if (!piH?.({ toolName: "bash", input: { command: PUSH } }, { cwd: A })?.block) fail("pi: extension không chặn git push");
+    if (!piH?.({ toolName: "bash", input: { command: PUSH } }, { cwd: A })?.block) fail("pi: extension không chặn git reset --hard");
     if (!piH({ toolName: "read", input: { path: ENV } }, { cwd: A })?.block) fail("pi: extension không chặn đọc .env");
     if (piH({ toolName: "bash", input: { command: "git status" } }, { cwd: A })) fail("pi: extension chặn lệnh hợp lệ");
     const oc = (await (await import(join(A, ".opencode/plugins/spec-harness.js"))).SpecHarness({}))["tool.execute.before"];
     const ocRun = (args) => oc({ tool: "bash" }, { args }).then(() => "ok", () => "blocked");
-    if (await ocRun({ command: PUSH }) !== "blocked") fail("opencode: plugin không chặn git push");
+    if (await ocRun({ command: PUSH }) !== "blocked") fail("opencode: plugin không chặn git reset --hard");
     if (await ocRun({ filePath: ENV }) !== "blocked") fail("opencode: plugin không chặn đọc .env");
     if (await ocRun({ command: "git status" }) !== "ok") fail("opencode: plugin chặn lệnh hợp lệ");
 
@@ -2454,7 +2454,7 @@ ${clobbered.map((f) => `   ${f}`).join("\n")}
 if (signpost) console.log(`
 ℹ️  đã đặt biển báo ${signpost}
     Harness đứng cạnh repo code, nên PHẢI mở CLI trong ${where} — mở ở thư mục
-    cha là mất skills, /start-task và guardrail deny git push. Biển báo đó bắt
+    cha là mất skills, /start-task và guardrail deny reset --hard và hỏi trước khi push. Biển báo đó bắt
     lỗi giúp bạn nếu lỡ mở nhầm.`);
 
 console.log(`
@@ -2462,7 +2462,7 @@ console.log(`
     Hook đó TẮT tới khi bạn trust folder: mở \`claude\` ở đây một lần, đồng ý trust dialog.`);
 
 if (done.includes("codex")) console.log(`
-⚠️  Codex: hook guard (deny git push/reset --hard/.env) TẮT cho tới khi bạn trust.
+⚠️  Codex: hook guard (deny reset --hard/stash/clean/.env) TẮT cho tới khi bạn trust.
     Mở codex trong project → trust project → gõ /hooks → trust 2 hook spec-harness.
     Chưa trust thì Codex bỏ qua hook trong im lặng — preflight không thấy được.
     Trust gắn với ĐƯỜNG DẪN THẬT (realpath) + hash của hook: mở qua symlink/đường khác

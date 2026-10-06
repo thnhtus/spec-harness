@@ -17,7 +17,7 @@ Các repo agent được phép sửa khai báo trong `harness.config.json → re
 
 - **Nhánh được bảo vệ — tuyệt đối không đụng:** `main`, `develop`, `staging`, `release/*`.
 - Luật nhánh làm việc (đặt tên, tạo bằng `--ff-only`, ngoại lệ nhánh do user tự quản): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
-- **Chỉ khi user yêu cầu rõ ràng trong phiên hiện tại:** `git commit`, `git push` (kể cả lần đầu), tạo/cập nhật MR, force-push, xoá nhánh. Qua hết gate → `status = reviewing`, tóm tắt, **dừng và chờ user**.
+- **Chỉ khi user yêu cầu rõ ràng trong phiên hiện tại:** `git commit`, `git push` (kể cả lần đầu), tạo/cập nhật MR, force-push, xoá nhánh. Qua hết gate → `status = reviewing`, tóm tắt, **dừng và hỏi user** có commit/push không. `git push` không bị deny cứng: nó nằm ở `permissions.ask`, chỉ chạy sau gate cuối và khi user đồng ý.
 - Không bao giờ `git stash` đè thay đổi của user; không bỏ lại nhánh còn thay đổi chưa commit mà không xác nhận.
 
 ## 2. Phạm vi

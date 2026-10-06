@@ -59,8 +59,15 @@ const taskFlagAt = argv.indexOf("--task");
 const TASK_ARG = taskFlagAt !== -1 ? argv[taskFlagAt + 1] : null;
 
 // Declared here, not next to denyGaps(): --guard below runs BEFORE config load.
+// `git push` is deliberately NOT here: it is the last step of a task, not an
+// accident. Claude gets it as `permissions.ask` in settings.json (pause, show
+// the command, run it on the user's yes).
+// ponytail: the hook guard below only implements DENY, so on the other CLIs
+// push is unguarded and only AGENTS.md prose holds it to "after the final gate,
+// ask first". Upgrade path: map `ask` to the CLIs whose hook schema has an ask
+// verdict (cursor/antigravity already answer "ask" on allow).
 const REQUIRED_DENY = [
-  "Bash(git push:*)", "Bash(git reset --hard:*)", "Bash(git stash:*)", "Bash(git clean:*)",
+  "Bash(git reset --hard:*)", "Bash(git stash:*)", "Bash(git clean:*)",
   "Bash(cat .env:*)", "Bash(env:*)", "Bash(printenv:*)", "Read(.env)",
 ];
 
@@ -3277,7 +3284,7 @@ if (args.has("--self-check")) {
   assert.ok(denyGaps("not json").some((d) => /valid JSON/.test(d)),
     "unparseable settings.json means the CLI ignores it — that is worse than missing, not better");
   assert.ok(
-    denyGaps('{"permissions":{"deny":["Bash(git push:*)","Bash(git reset --hard:*)","Bash(git stash:*)"]}}')
+    denyGaps('{"permissions":{"deny":["Bash(git reset --hard:*)","Bash(git stash:*)"]}}')
       .some((d) => /git clean/.test(d)),
     "a partial deny list must name the rule that is missing, not just fail",
   );
@@ -3298,11 +3305,11 @@ if (args.has("--self-check")) {
   // guardVerdict: the deny-list for Codex/Cursor. Each case isolates ONE branch.
   {
     const g = (k, s) => guardVerdict(k, s, REQUIRED_DENY);
-    assert.equal(g("shell", "git push origin main"), "Bash(git push:*)", "guard: plain git push must block");
-    assert.equal(g("shell", "git push"), "Bash(git push:*)", "guard: bare prefix (no args) must block");
+    assert.equal(g("shell", "git push origin main"), null, "guard: push is NOT hard-denied — settings.json `ask` pauses for the user after the final gate");
+    assert.equal(g("shell", "git reset --hard"), "Bash(git reset --hard:*)", "guard: bare prefix (no args) must block");
     assert.equal(g("shell", "npm test && git reset --hard HEAD"), "Bash(git reset --hard:*)", "guard: a denied command after && must block");
     assert.equal(g("shell", "ls; git  stash"), "Bash(git stash:*)", "guard: after ; with doubled space must block");
-    assert.equal(g("shell", "git pushx"), null, "guard: a prefix is a whole word, `git pushx` is not `git push`");
+    assert.equal(g("shell", "git stashx"), null, "guard: a prefix is a whole word, `git stashx` is not `git stash`");
     assert.equal(g("shell", "git status"), null, "guard: an allowed command must pass");
     assert.equal(g("read", "/repo/.env"), "Read(.env)", "guard: reading .env must block");
     assert.equal(g("read", "/repo/src/env.ts"), null, "guard: a file merely named like env must pass");
@@ -4355,10 +4362,10 @@ if (args.has("--preflight")) {
   const reach = isSourceRepo ? "source-repo" : settingsReachable(REPO_ROOT, process.cwd());
   if (reach === "source-repo") warns.push("spec-harness source repo — skipping the .claude/settings.json check");
   else if (reach === "missing")
-    errs.push(`${join(REPO_ROOT, ".claude/settings.json")} does not exist — re-run install.mjs; the deny-list on git push / reset --hard is not installed`);
+    errs.push(`${join(REPO_ROOT, ".claude/settings.json")} does not exist — re-run install.mjs; the deny-list on reset --hard / stash / clean is not installed`);
   else if (reach === "not-loaded")
     errs.push(
-      `.claude/settings.json lives in ${REPO_ROOT} but the CLI is running in ${process.cwd()} — the CLI only walks UP, so it is not loaded and the deny-list on git push / reset --hard is gone.\n` +
+      `.claude/settings.json lives in ${REPO_ROOT} but the CLI is running in ${process.cwd()} — the CLI only walks UP, so it is not loaded and the deny-list on reset --hard / stash / clean and the push confirmation are gone.\n` +
         `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Case B").`,
     );
   // Present and loaded still says nothing about armed.

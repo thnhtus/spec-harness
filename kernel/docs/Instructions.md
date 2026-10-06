@@ -16,7 +16,7 @@ The repos an agent may edit are declared in `harness.config.json → repos`; lay
 
 - **Protected branches — never touch:** `main`, `develop`, `staging`, `release/*`.
 - Working-branch rules (naming, `--ff-only` creation, the user-managed-branch exception): [`agents/SharedRules.md` §3](./agents/SharedRules.md).
-- **Only on an explicit request in the current session:** `git commit`, `git push` (including the first one), creating or updating an MR, force-push, deleting a branch. Once the gates pass → `status = reviewing`, summarise, **stop and wait for the user**.
+- **Only on an explicit request in the current session:** `git commit`, `git push` (including the first one), creating or updating an MR, force-push, deleting a branch. Once the gates pass → `status = reviewing`, summarise, **stop and ask the user** whether to commit/push. `git push` is not hard-denied: it sits in `permissions.ask`, so it runs only after the final gate and the user's yes.
 - Never `git stash` over the user's changes; never leave a branch with uncommitted changes without confirming.
 
 ## 2. Scope
