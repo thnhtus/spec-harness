@@ -4101,7 +4101,7 @@ function sliceChanged(cwd, snap) {
 // attempt, slice, start|end) — so an entry with no matching line was typed by hand.
 // ponytail: the log is a plain file inside tasksDir, so an agent that means it can
 // append a matching line too. This moves a typo-grade fake to a deliberate one,
-// the same ceiling as _triage.log. Upgrade path: sign lines with a per-install key.
+// the same ceiling as _triage.log. Signed since #103 — residual ceiling is below.
 // Gate 1 stops an empty FSD reaching the reviewer; a task already done + closed
 // is past every reviewer, and rewriting its shipped FSD would be a retroactive
 // fake. Same exit as acTrace.since, keyed on the outcome instead of a date.
