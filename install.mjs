@@ -1431,8 +1431,12 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const src = read(join(SRC, "install.mjs"));
     const pkg = JSON.parse(read(join(SRC, "package.json")));
     const shipped = new Set(pkg.files.map((f) => f.replace(/\/$/, "")));
-    // package.json luôn có trong tarball dù không khai trong files (npm ép).
-    shipped.add("package.json");
+    // package.json / README.md luôn có trong tarball dù không khai trong files (npm ép).
+    shipped.add("package.json"); shipped.add("README.md");
+    // README ship theo mặc định nhưng file nó trỏ tới thì không: link gãy trên trang npm.
+    for (const [, link] of read(join(SRC, "README.md")).matchAll(/\]\((?!https?:)([^)#]+)\)/g))
+      if (!existsSync(join(SRC, link)) || !(shipped.has(link) || [...shipped].some((f) => link.startsWith(f + "/"))))
+        fail(`README link → ${link}: không tồn tại hoặc không nằm trong package.json files — link gãy trên trang npm`);
     const missing = new Set();
     // `existsSync(join(SRC, ...))` = chỗ đã biết file có thể vắng và xử lý được
     // (ví dụ harness.config.json của repo gốc, cố ý không đóng gói). Đọc thẳng

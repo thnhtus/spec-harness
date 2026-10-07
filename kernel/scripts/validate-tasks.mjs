@@ -4473,7 +4473,7 @@ if (args.has("--preflight")) {
   else if (reach === "not-loaded")
     errs.push(
       `.claude/settings.json lives in ${REPO_ROOT} but the CLI is running in ${process.cwd()} — the CLI only walks UP, so it is not loaded and the deny-list on reset --hard / stash / clean and the push confirmation are gone.\n` +
-        `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (README "Case B").`,
+        `    Open the CLI in ${REPO_ROOT}, or symlink .claude up (docs/advanced.md "B: cạnh các repo code").`,
     );
   // Present and loaded still says nothing about armed.
   const st = reach === "ok" ? readFileSync(join(REPO_ROOT, ".claude/settings.json"), "utf8") : "";
@@ -4513,7 +4513,7 @@ if (args.has("--preflight")) {
     if (isSourceRepo) {
       /* the source repo ships the template; it never runs against a tracker */
     } else if (!existsSync(mcpPath))
-      warns.push(".mcp.json missing — no tracker MCP means Gate 1 has no source of AC (README \"MCP server\")");
+      warns.push(".mcp.json missing — no tracker MCP means Gate 1 has no source of AC (docs/advanced.md \"MCP server\")");
     else {
       const g = mcpGaps(readFileSync(mcpPath, "utf8"));
       errs.push(...g.errors);
@@ -4613,7 +4613,7 @@ if (args.has("--preflight")) {
   // Optional layers: the README is explicit that both are optional, so these
   // stay warnings. They still cost you the gate that runs without being asked.
   const gitDir = findUpward(".git", REPO_ROOT);
-  if (!gitDir) warns.push("not a git repo — no pre-commit hook, no CI, no history for task docs (README \"Do I need git init\")");
+  if (!gitDir) warns.push("not a git repo — no pre-commit hook, no CI, no history for task docs (docs/advanced.md \"Ghi chú cài đặt\")");
   else {
     const hookPath = spawnSync("git", ["rev-parse", "--git-path", "hooks/pre-commit"], { cwd: REPO_ROOT, encoding: "utf8" });
     const hook = hookPath.status === 0 ? resolve(REPO_ROOT, hookPath.stdout.trim()) : null;

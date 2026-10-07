@@ -17,7 +17,8 @@
     "agents/",
     "adapters/",
     "commands/",
-    "hooks/"
+    "hooks/",
+    "docs/advanced.md"
   ],
   "repository": {
     "type": "git",
