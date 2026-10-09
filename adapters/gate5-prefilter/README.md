@@ -12,12 +12,13 @@ context overflow — all exit 0, nothing blocks, nothing is required.
 ```bash
 export TYPESAFE_API_KEY=...   # store outside the repo, e.g. macOS Keychain
 node adapters/gate5-prefilter/prefilter.mjs <task-folder>
-echo $?   # 1 = confident FAIL, route back to the implementer without dispatching adversary
-          # 0 = run the real adversary (no key / unsure / PASS)
+echo $?   # 78 = confident FAIL (never 1: node exits 1 on a crash)
+          # anything else = run the real adversary
 ```
 
-Wire it into `/start-task`'s Gate 4 → Gate 5 handoff as an optional early-exit
-check; it is not part of the kernel and is never required.
+Nothing to wire: `install` ships it as `scripts/gate5-prefilter.mjs`, and
+`validate-tasks.mjs --advance <task> adversarial_review` runs it on its own
+(#109). A coordinator that skips prose still cannot skip `--advance`.
 
 ## Why PASS never blocks
 

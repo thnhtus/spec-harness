@@ -5,7 +5,7 @@
 //
 //   exit 0  skipped (no key, no endpoint, bad response, low confidence, too
 //           large) OR the decision was PASS. Either way: run the real adversary.
-//   exit 1  the decision model says FAIL with high confidence. The adversary
+//   exit 78 the decision model says FAIL with high confidence. The adversary
 //           dispatch can be skipped and the task routed straight back to the
 //           implementer, saving one 54k-132k-token review.
 //
@@ -136,5 +136,6 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   const why = Object.entries(r.answers).filter(([k, a]) => a.type === "noul" && a.noul >= 0.7).map(([k]) => k);
   console.error(`gate5-prefilter: FAIL (confidence ${r.confidence.toFixed(2)})${why.length ? ` — ${why.join(", ")}` : ""}`);
   console.error("This is a cheap pre-read, not the Gate 5 record: the adversary still owns 09.");
-  process.exit(1);
+  // 78, not 1: node exits 1 on an uncaught throw, and a crash must never block (#109).
+  process.exit(78);
 }

@@ -61,7 +61,7 @@ assert.equal(r.code, 0, "no key → exit 0"); assert.match(r.err, /no TYPESAFE_A
 answer = v("PASS", 1.0); r = await run({ TYPESAFE_API_KEY: "k" });
 assert.equal(r.code, 0, "PASS at confidence 1.0 must NOT block"); assert.match(r.err, /not actionable/);
 answer = v("FAIL", 0.97); r = await run({ TYPESAFE_API_KEY: "k" });
-assert.equal(r.code, 1, "confident FAIL blocks"); assert.match(r.err, /code_violates_ac/);
+assert.equal(r.code, 78, "confident FAIL blocks with the dedicated code, never 1"); assert.match(r.err, /code_violates_ac/);
 answer = v("FAIL", 0.5); r = await run({ TYPESAFE_API_KEY: "k" });
 assert.equal(r.code, 0, "unsure FAIL → skipped, adversary decides");
 answer = { garbage: true }; r = await run({ TYPESAFE_API_KEY: "k" });

@@ -205,10 +205,12 @@ git worktree remove <path> && git branch -d <branch>   # -d, NOT -D: -d refuses 
 **This** task's worktree is never in the list (not merged yet) — so step 7 never
 touches what you just did.
 
-## K. Optional Gate 5 pre-filter (#108)
+## K. Optional Gate 5 pre-filter (#108, #109)
 
-`scripts/gate5-prefilter.mjs <task> <target-branch>` is inert without `TYPESAFE_API_KEY`: no key, no network, a bad response, an oversized state or a low-confidence answer all exit `0` and the adversary is dispatched as usual.
+`--advance <task> adversarial_review` runs `scripts/gate5-prefilter.mjs` itself when that file exists. It used to be a line in this command for the coordinator to run; a real 7-stage run read that line and never ran it, so it moved to the one command a coordinator cannot skip.
 
-Only a confident **FAIL** (exit `1`) is acted on. A PASS is never trusted: over 20 cases it called two real bugs PASS at confidence 0.78 and 0.98, because it reads text and never runs code. A FAIL is safe to act on — measured through the script, 5 of 14 buggy cases were caught and 0 of 6 clean ones were wrongly flagged — so skipping a 54k–132k-token review on it is a net saving, small (about a third of bad tasks) but never at the cost of a good one.
+Exit `78` from the script → `--advance` exits `1` with `pre-filter FAIL`, the adversary is not dispatched, and that counts as the one Gate 5 FAIL retry. Any other outcome — no script, no `TYPESAFE_API_KEY`, exit `0`, a crash (node exits `1` on a throw, which is why `1` is not the signal), a 30 s timeout — dispatches the adversary as before.
 
-It counts as the one Gate 5 FAIL retry, never writes `09`, and never lets a task reach `reviewing`: only a real adversary run does. Model, endpoint and threshold are env vars (`GATE5_PREFILTER_*`); the default model is pinned, not an alias.
+Only a confident FAIL is acted on. A PASS is never trusted: two real bugs came back PASS at confidence 0.78 and 0.98, because it reads text and never runs code. Measured through the script on 20 cases: 5 of 14 buggy caught, 0 of 6 clean wrongly flagged — a small saving (about a third of bad tasks) that never costs a good one.
+
+It never writes `09` and never lets a task reach `reviewing`: only a real adversary run does. Model, endpoint and threshold are env vars (`GATE5_PREFILTER_*`); the default model is pinned, not an alias.

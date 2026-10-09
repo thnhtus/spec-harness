@@ -1958,6 +1958,11 @@ if (args.has("--self-check")) {
   assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"], "first"), ["AC-1"], "first cell is matched whole, AC-1 ≠ AC-10");
   // Prose, comments and "not covered" notes are not coverage. declaredACsIn is
   // strict about table rows; the reached-side must be exactly as strict.
+  // #109: the pre-filter may only ever say "stop" by exiting 1; every other outcome is "no opinion".
+  assert.deepEqual(prefilterVerdict({ status: PREFILTER_FAIL_EXIT(), stderr: "confident FAIL\n" }), { block: true, why: "confident FAIL" });
+  assert.equal(prefilterVerdict({ status: PREFILTER_FAIL_EXIT(), stderr: "" }).why, "pre-filter says FAIL", "an empty reason still blocks");
+  for (const [name, r] of [["exit 0", { status: 0 }], ["exit 1 = an uncaught throw in node", { status: 1 }], ["exit 2", { status: 2 }], ["crash", { status: 255 }], ["timeout/signal", { status: null, signal: "SIGTERM" }], ["spawn error", { status: null, error: new Error("ENOENT") }], ["undefined", undefined]])
+    assert.equal(prefilterVerdict(r).block, false, `${name} must be fail-open`);
   // #107: values an AC names must appear in the test it points at.
   {
     const rev = "| AC-01 | `discount(t)` trả `t * 0.9` khi `t >= 100` — kể cả `t = 100` → 90 | x | confirmed | TC-01 |\n| AC-02 | works for users | x | confirmed | TC-02 |\n| AC-nn | `5` | x | | |";
@@ -3932,6 +3937,24 @@ export function advanceDecision(data, stage, { stages = STAGE_ORDER, roleStage =
   return { exit: 0, role: last ? null : roleOf(stage), prev, attempt: last ? null : ((data.attempts ?? {})[stage] ?? 0) + 1 };
 }
 
+// #109: an OPTIONAL early FAIL for Gate 5. The kernel knows no vendor, key or
+// endpoint — only that a script named PREFILTER_SCRIPT may exist next to this
+// file and answers with an exit code. PREFILTER_FAIL_EXIT = "confident the
+// change is broken": --advance exits 1 so the adversary dispatch (54k-132k
+// tokens) is skipped. Everything else — no script, exit 0, a crash, a timeout,
+// a signal, a spawn error — means "no opinion" and the gate proceeds as before.
+// NOT exit 1: an uncaught throw in Node exits 1, so a crashing pre-filter would
+// have blocked every task (measured, e2e). 78 = EX_CONFIG-free, never emitted
+// by node itself. The pure part, so the fail-open table is asserted cheaply.
+// Functions, not consts: the self-check runs above this line, and a const would
+// still be in its temporal dead zone there.
+export function PREFILTER_SCRIPT() { return "gate5-prefilter.mjs"; }
+export function PREFILTER_FAIL_EXIT() { return 78; }
+export function prefilterVerdict(result) {
+  if (!result || result.error || result.signal || result.status !== PREFILTER_FAIL_EXIT()) return { block: false };
+  return { block: true, why: String(result.stderr ?? "").trim() || "pre-filter says FAIL" };
+}
+
 // --contract (#62): what the validator will check on a stage's output, printed
 // from the SAME constants the checks read. A real run had roles grep and sed
 // this file 25 times to learn the handoff format, the Q/AC row shapes and 09's
@@ -4404,6 +4427,12 @@ if (args.has("--advance")) {
     : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
   if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
+  // #109: dispatching the adversary only — never on a re-run that is going back.
+  if (stage === "adversarial_review" && d.attempt && existsSync(join(__dirname, PREFILTER_SCRIPT()))) {
+    const base = /\|\s*Target branch\s*\|\s*`?([^`|\s]+)`?\s*\|/.exec(existsSync(join(dir, "00-Metadata.md")) ? readFileSync(join(dir, "00-Metadata.md"), "utf8") : "")?.[1] ?? "main";
+    const pf = prefilterVerdict(spawnSync(process.execPath, [join(__dirname, PREFILTER_SCRIPT()), dir, base], { cwd: REPO_ROOT, encoding: "utf8", timeout: 30000 }));
+    if (pf.block) { console.error(`✖ --advance ${stage}: pre-filter FAIL (#109) — the adversary is not dispatched; send the task back to the implementer\n  ${pf.why.replace(/\n/g, "\n  ")}`); process.exit(1); }
+  }
   if (d.attempt) {
     const lease = spawnSync(process.execPath, [join(__dirname, "lease.mjs"), "renew", dir], { encoding: "utf8" });
     if (lease.status !== 0) { console.error(`✖ --advance: lease renew failed — ${lease.stderr.trim()} (step 0b acquires it)`); process.exit(1); }
