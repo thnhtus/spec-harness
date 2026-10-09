@@ -1579,6 +1579,49 @@ function acsMissingIn(text, acs, cell) {
   return acs.filter((a) => !new RegExp(`\\b${a}\\b`).test(joined));
 }
 
+// #107: an AC that NAMES a value ("`t = 100` → 90") is only guarded if some test
+// asserts that value. Reachable ≠ asserted: the 12-case held-out run lost
+// boundary / threshold / rounding bugs to green tests that never used the number.
+// Literals = numbers in the AC cell (backticks or prose, "vd 99.99" counts); tests = the file part of
+// `path::name` cells of 08's AC coverage table. Warning, not error. ponytail:
+// ceiling = a number in the AC may be an illustration or unit ("within 3 s") rather than a boundary
+// and the test may build it indirectly (`1e2`, a constant); raise to error once
+// false positives are counted on real tasks. Non-numeric ACs are not covered.
+export function acValueGaps(reviewText, evidenceText, readTest) {
+  const cellsOf = (l) => l.split("|").slice(1, -1).map((c) => c.trim());
+  const lit = new Map();
+  for (const l of reviewText.split("\n")) {
+    const m = /^\|\s*(AC-[A-Za-z0-9]+)\s*\|/.exec(l);
+    if (!m || AC_PLACEHOLDERS.has(m[1])) continue;
+    const cells = cellsOf(l);
+    // An arithmetic operand (`t * 0.9`) is a formula constant, not a value to feed in.
+    const cell = cells[1] ?? "";
+    const nums = [...cell.matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g)]
+      .filter((n) => !/[*/+-]\s*$/.test(cell.slice(0, n.index)) && !/^\s*[*/+-]/.test(cell.slice(n.index + n[0].length)))
+      .map((n) => n[0]);
+    if (nums.length) lit.set(m[1], [...new Set(nums)]);
+  }
+  const files = new Map();
+  for (const l of evidenceText.split("\n")) {
+    const c = cellsOf(l);
+    const id = /^AC-[A-Za-z0-9]+$/.exec(c[0] ?? "")?.[0];
+    const f = /`([^`:]+)::/.exec(c[1] ?? "")?.[1];
+    if (id && f) files.set(id, [...(files.get(id) ?? []), f]);
+  }
+  const out = [];
+  for (const [id, nums] of lit) {
+    const fs = files.get(id);
+    if (!fs) continue; // no resolvable test file: the traceability rules above already speak
+    // Test names and comments say "at 100" without testing it: only code counts.
+    const body = fs.map(readTest).filter((x) => x != null).join("\n")
+      .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "").replace(/(["'`])(?:\\.|(?!\1)[^\\\n])*\1/g, "\"\"");
+    if (!body) continue; // unreadable here (other repo / CI checkout): stay silent
+    const miss = nums.filter((n) => !new RegExp(`(?<![\\w.])${n.replace(".", "\\.")}(?![\\w])`).test(body));
+    if (miss.length) out.push(`${id} names value(s) ${miss.join(", ")} but ${fs.join(", ")} never uses them — a green test that skips the boundary the AC states (#107)`);
+  }
+  return out;
+}
+
 // --- path wrappers (missing file = nothing reached) -------------------------
 
 const hasRealEvidence = (f) => existsSync(f) && hasRealEvidenceIn(readFileSync(f, "utf8"));
@@ -1892,6 +1935,18 @@ if (args.has("--self-check")) {
   assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"], "first"), ["AC-1"], "first cell is matched whole, AC-1 ≠ AC-10");
   // Prose, comments and "not covered" notes are not coverage. declaredACsIn is
   // strict about table rows; the reached-side must be exactly as strict.
+  // #107: values an AC names must appear in the test it points at.
+  {
+    const rev = "| AC-01 | `discount(t)` trả `t * 0.9` khi `t >= 100` — kể cả `t = 100` → 90 | x | confirmed | TC-01 |\n| AC-02 | works for users | x | confirmed | TC-02 |\n| AC-nn | `5` | x | | |";
+    const ev = "| AC-01 | `test/a.js::AC-01 x` | PASS |\n| AC-02 | `test/a.js::AC-02 y` | PASS |";
+    assert.equal(acValueGaps(rev, ev, () => "assert.equal(discount(250), 225)").length, 1, "AC names 100, test only uses 250 → gap");
+    assert.match(acValueGaps(rev, ev, () => "discount(250)")[0], /AC-01 names value\(s\) 100, 90 /, "formula operand 0.9 is not a value, but the boundary 100 and its result 90 are");
+    assert.equal(acValueGaps(rev, ev, () => 'test("AC-01 at 100", () => assert.equal(discount(250), 225)); // 100').length, 1, "100 in a test name or comment is not a test of 100");
+    assert.deepEqual(acValueGaps(rev, ev, () => "discount(100) === 90"), [], "values present → silent");
+    assert.deepEqual(acValueGaps(rev, ev, () => "discount(1000)").map((x) => x.slice(0, 5)), ["AC-01"], "100 must not be satisfied by 1000");
+    assert.deepEqual(acValueGaps(rev, ev, () => null), [], "test file unreadable here → silent, never a false alarm");
+    assert.deepEqual(acValueGaps(rev, "| AC-01 | manual | PASS |", () => "x"), [], "no test file in 08 → other rules speak");
+  }
   assert.deepEqual(acsMissingIn("Note: AC-01 to be done later", ["AC-01"]), ["AC-01"], "prose is not coverage");
   assert.deepEqual(acsMissingIn("<!-- TODO AC-01 -->", ["AC-01"]), ["AC-01"], "a comment is not coverage");
 
@@ -5409,6 +5464,12 @@ for (const { sprint, task, path } of folders) {
           `AC not traced into ${doc} (${miss.length}/${declared.length}): ${miss.join(", ")} — SharedRules §9.1`,
         );
     }
+  }
+
+  // #107: values the AC names must be asserted by its test (warning).
+  if (declared.length && GATE4_DONE.has(data.status) && AC_TRACE.declaredIn && existsSync(join(path, GATE4_ARTIFACTS.evidence))) {
+    const rd = (f) => { try { return readFileSync(resolve(REPO_ROOT, f), "utf8"); } catch { return null; } };
+    for (const g of acValueGaps(readFileSync(join(path, AC_TRACE.declaredIn), "utf8"), readFileSync(join(path, GATE4_ARTIFACTS.evidence), "utf8"), rd)) warnings.push(g);
   }
 
   // #86/#87: unfilled template rows, checked from the first stage that READS the
