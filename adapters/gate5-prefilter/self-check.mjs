@@ -17,6 +17,9 @@ assert.deepEqual(Object.keys(QUESTIONS.verdict.criteria), ["PASS", "FAIL"]);
 assert.equal(section("## A\nx\n## B\ny", "## A", "## B"), "## A\nx\n");
 assert.equal(section("nothing here", "## A", "## B"), "", "absent section is empty, not fatal");
 assert.match(buildState({ review: "## Acceptance criteria\n| AC-01 |\n## BA questions", plan: "", notes: "", evidence: "", diff: "d", sources: "s", tests: "t", testRun: "ok 1" }), /AC-01[\s\S]*ok 1/);
+// stale evidence is only visible if the revisions travel with the claim
+assert.match(buildState({ review: "", plan: "", notes: "", evidence: "", diff: "", sources: "", tests: "", testRun: "", evidenceRev: "aaa1111", headRev: "bbb2222", commitsAfterEvidence: "bbb2222 tidy" }), /attested gitRev: aaa1111[\s\S]*HEAD: bbb2222/);
+assert.match(buildState({ review: "", plan: "", notes: "", evidence: "", diff: "", sources: "", tests: "", testRun: "" }), /attested gitRev: unknown/, "missing revisions must not throw");
 
 // 3. fail-open on every bad answer the endpoint can give
 for (const [name, res] of [

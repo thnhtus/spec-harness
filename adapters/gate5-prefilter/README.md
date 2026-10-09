@@ -21,9 +21,10 @@ check; it is not part of the kernel and is never required.
 
 ## Why PASS never blocks
 
-Measured on 20 cases (8 from `kernel/eval/adversary` + 12 held-out, same
-`discount()` fixture): 8/14 buggy cases were caught at confidence ≥ 0.9, 0/6
-clean cases were ever flagged. But two real bugs — an off-by-one threshold and
+Measured through this script on 20 cases (8 from `kernel/eval/adversary` + 12
+held-out, same `discount()` fixture): 5/14 buggy cases blocked (36%), 0/6 clean
+cases flagged. A hand-built state reached 8/14; what the script collects is
+leaner, and the number above is the one callers get. But two real bugs — an off-by-one threshold and
 a rounding error — came back **PASS at confidence 0.78 and 0.98**, because this
 model reads text and never runs the code. A PASS here means "no opinion", not
 "approved": the adversary still owns Gate 5.

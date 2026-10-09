@@ -9,10 +9,11 @@
 //           dispatch can be skipped and the task routed straight back to the
 //           implementer, saving one 54k-132k-token review.
 //
-// WHY ONLY ONE DIRECTION BLOCKS. Measured over 20 cases (8 eval + 12 held-out):
-// 8 of 14 buggy ones were blocked here, 0 of 6 clean ones were — so a confident
-// FAIL is worth acting on, and the 6 it is unsure about just go on to the real
-// adversary. A PASS is different in kind: two real bugs (an off-by-one
+// WHY ONLY ONE DIRECTION BLOCKS. Measured through this CLI over 20 cases (8 eval
+// + 12 held-out): 5 of 14 buggy ones were blocked, 0 of 6 clean ones were — so
+// a confident FAIL is worth acting on, and the 9 it is unsure about just go on
+// to the real adversary. (An earlier 8/14 came from a hand-built state richer
+// than what this script collects; that number was not what callers get.) A PASS is different in kind: two real bugs (an off-by-one
 // threshold, a rounding error) came back PASS at confidence 0.78 and 0.98,
 // because this model reads text and never runs the code. So PASS here means
 // "no opinion", never "approved".
@@ -27,6 +28,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 // Pinned, never an alias: a moving "latest" silently reshapes the probabilities
 // this threshold was tuned against.
@@ -65,7 +67,7 @@ export function section(text, from, to) {
   return text.slice(i, j === -1 ? undefined : j);
 }
 
-export function buildState({ review, plan, notes, evidence, diff, sources, tests, testRun }) {
+export function buildState({ review, plan, notes, evidence, diff, sources, tests, testRun, evidenceRev, headRev, commitsAfterEvidence }) {
   return [
     "## AC", section(review, "## Acceptance criteria", "## BA questions"),
     "## Planned files", section(plan, "## Files to change", "## Test plan"),
@@ -74,8 +76,34 @@ export function buildState({ review, plan, notes, evidence, diff, sources, tests
     "## Source", sources,
     "## Tests", tests,
     "## 08 evidence", section(evidence, "### AC coverage", "### Output"),
+    // Without these three lines "the attested run is older than the code" is
+    // invisible and stale evidence reads as a clean PASS. The AC coverage table
+    // above says which test covers what; only the revisions say whether that
+    // claim was made about the code sitting here now.
+    `attested gitRev: ${evidenceRev || "unknown"}`,
+    `HEAD: ${headRev || "unknown"}`,
+    `commits after the attested run: ${commitsAfterEvidence || "none"}`,
     "## Fresh test run now", testRun,
   ].join("\n");
+}
+
+// Everything the decision model sees, gathered by running real commands in cwd.
+// Exported so a measurement reads exactly the state the CLI sends.
+export function collectState(task, base = "main") {
+  const rd = (f) => (existsSync(join(task, f)) ? readFileSync(join(task, f), "utf8") : "");
+  const sh = (cmd, args) => { try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { return e.stdout ?? ""; } };
+  const files = (dir) => sh("git", ["ls-files", dir]).split("\n").filter(Boolean).map((f) => `### ${f}\n${readFileSync(f, "utf8")}`).join("\n");
+  const ev = rd("08-Test-Evidence.md");
+  return buildState({
+    review: rd("02-FSD-Review.md"), plan: rd("03-Technical-Plan.md"),
+    notes: rd("06-Implementation-Notes.md"), evidence: ev,
+    diff: sh("git", ["diff", "--stat", base, "--", "src", "test"]),
+    sources: files("src"), tests: files("test"),
+    testRun: sh("npm", ["run", "--silent", "test:scope"]),
+    evidenceRev: [...ev.matchAll(/gitRev:\s*(\S+)/g)].at(-1)?.[1],
+    headRev: sh("git", ["rev-parse", "--short", "HEAD"]).trim(),
+    commitsAfterEvidence: sh("git", ["log", "--oneline", "-5"]).trim(),
+  });
 }
 
 export async function decide(state, { fetchImpl = fetch } = {}) {
@@ -97,18 +125,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   if (!task) skip("usage: prefilter.mjs <task-folder> [base-branch]");
   const base = process.argv[3] ?? "main"; // the task's target branch (00-Metadata), not always main
   if (!KEY) skip("no TYPESAFE_API_KEY — the adversary runs as usual");
-  const rd = (f) => (existsSync(join(task, f)) ? readFileSync(join(task, f), "utf8") : "");
-  const { execFileSync } = await import("node:child_process");
-  const sh = (cmd, args) => { try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { return e.stdout ?? ""; } };
-
-  const state = buildState({
-    review: rd("02-FSD-Review.md"), plan: rd("03-Technical-Plan.md"),
-    notes: rd("06-Implementation-Notes.md"), evidence: rd("08-Test-Evidence.md"),
-    diff: sh("git", ["diff", "--stat", base, "--", "src", "test"]),
-    sources: sh("git", ["ls-files", "src"]).split("\n").filter(Boolean).map((f) => `### ${f}\n${readFileSync(f, "utf8")}`).join("\n"),
-    tests: sh("git", ["ls-files", "test"]).split("\n").filter(Boolean).map((f) => `### ${f}\n${readFileSync(f, "utf8")}`).join("\n"),
-    testRun: sh("npm", ["run", "--silent", "test:scope"]),
-  });
+  const state = collectState(task, base);
   if (Buffer.byteLength(state) > MAX_STATE_BYTES) skip(`state ${Buffer.byteLength(state)}B over ${MAX_STATE_BYTES}B`);
 
   let r;
