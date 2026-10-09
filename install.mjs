@@ -1176,6 +1176,10 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       { cwd: T, stdio: "ignore" }).status !== 0) fail("run-evidence.mjs thiếu hoặc self-check đỏ");
   // Không có nó thì telemetry phụ thuộc coordinator nhớ gõ số token vào — và
   // một con số bịa còn tệ hơn không có, vì `--cost` sẽ in nó ra với vẻ mặt tỉnh bơ.
+  // #108: optional Gate 5 pre-filter. Lives in adapters/, is not installed into
+  // the project, and must stay fail-open — so its self-check runs from SRC.
+  if (spawnSync(process.execPath, [join(SRC, "adapters/gate5-prefilter/self-check.mjs")],
+    { encoding: "utf8" }).status !== 0) fail("adapters/gate5-prefilter/self-check.mjs đỏ");
   if (spawnSync(process.execPath, ["scripts/collect-telemetry.mjs", "--self-check"],
       { cwd: T, stdio: "ignore" }).status !== 0) fail("collect-telemetry.mjs thiếu hoặc self-check đỏ");
   if (!existsSync(join(T, ".mcp.json"))) fail("thiếu .mcp.json");
