@@ -204,3 +204,11 @@ git worktree remove <path> && git branch -d <branch>   # -d, NOT -D: -d refuses 
 
 **This** task's worktree is never in the list (not merged yet) — so step 7 never
 touches what you just did.
+
+## K. Optional Gate 5 pre-filter (#108)
+
+`scripts/gate5-prefilter.mjs <task> <target-branch>` is inert without `TYPESAFE_API_KEY`: no key, no network, a bad response, an oversized state or a low-confidence answer all exit `0` and the adversary is dispatched as usual.
+
+Only a confident **FAIL** (exit `1`) is acted on. A PASS is never trusted: over 20 cases it called two real bugs PASS at confidence 0.78 and 0.98, because it reads text and never runs code. A FAIL cost nothing it could not afford — 8 of 14 buggy cases were caught, 0 of 6 clean ones were wrongly flagged — so skipping a 54k–132k-token review on it is a net saving.
+
+It counts as the one Gate 5 FAIL retry, never writes `09`, and never lets a task reach `reviewing`: only a real adversary run does. Model, endpoint and threshold are env vars (`GATE5_PREFILTER_*`); the default model is pinned, not an alias.

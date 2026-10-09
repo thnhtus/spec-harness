@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Gate 5 pre-filter (#108) — OPTIONAL, OFF unless an API key is present.
 //
-//   node adapters/gate5-prefilter/prefilter.mjs <task-folder>
+//   node adapters/gate5-prefilter/prefilter.mjs <task-folder> [base-branch=main]
 //
 //   exit 0  skipped (no key, no endpoint, bad response, low confidence, too
 //           large) OR the decision was PASS. Either way: run the real adversary.
@@ -94,7 +94,8 @@ export async function decide(state, { fetchImpl = fetch } = {}) {
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop())) {
   const task = process.argv[2];
-  if (!task) skip("usage: prefilter.mjs <task-folder>");
+  if (!task) skip("usage: prefilter.mjs <task-folder> [base-branch]");
+  const base = process.argv[3] ?? "main"; // the task's target branch (00-Metadata), not always main
   if (!KEY) skip("no TYPESAFE_API_KEY — the adversary runs as usual");
   const rd = (f) => (existsSync(join(task, f)) ? readFileSync(join(task, f), "utf8") : "");
   const { execFileSync } = await import("node:child_process");
@@ -103,7 +104,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   const state = buildState({
     review: rd("02-FSD-Review.md"), plan: rd("03-Technical-Plan.md"),
     notes: rd("06-Implementation-Notes.md"), evidence: rd("08-Test-Evidence.md"),
-    diff: sh("git", ["diff", "--stat", "main", "--", "src", "test"]),
+    diff: sh("git", ["diff", "--stat", base, "--", "src", "test"]),
     sources: sh("git", ["ls-files", "src"]).split("\n").filter(Boolean).map((f) => `### ${f}\n${readFileSync(f, "utf8")}`).join("\n"),
     tests: sh("git", ["ls-files", "test"]).split("\n").filter(Boolean).map((f) => `### ${f}\n${readFileSync(f, "utf8")}`).join("\n"),
     testRun: sh("npm", ["run", "--silent", "test:scope"]),

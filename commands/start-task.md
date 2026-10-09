@@ -254,6 +254,8 @@ checks it against the config ([appendix §F](../../docs/agents/StartTask-Appendi
 | 6 | adversarial_review → Gate 5 | `adversary` | `docs/agents/Adversary.md` | `docsPath`; remind: default FAIL, **re-run** the ProjectRules §7 commands yourself instead of trusting `08`, do not touch `src/` |
 | 7 | reviewing | — (you) | — | see below |
 
+Before step 6, optionally `node scripts/gate5-prefilter.mjs $TASK <base>` ([§K](../../docs/agents/StartTask-Appendix.md)): exit `1` → skip `adversary`, re-dispatch implementer.
+
 Gate 5 FAIL → re-dispatch implementer (step 5) **once** with the findings from
 `09`; still FAIL the second time → stop, report to the user (Gate-fail handling).
 No infinite loop.

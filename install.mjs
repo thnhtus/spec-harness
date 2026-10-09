@@ -129,6 +129,7 @@ function wouldClobber(P) {
     chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   chk(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
+  chk(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
   return out;
 }
 
@@ -533,6 +534,9 @@ function installInto(P, clis = []) {
   // user — phần user chỉnh là khối `hooks` trong settings.json (giữ bằng keep).
   over(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
   try { chmodSync(join(P, "hooks/prompt-submit"), 0o755); } catch {}
+  // #108: optional Gate 5 pre-filter. Shipped like the kernel scripts so
+  // /start-task can call it, but inert without TYPESAFE_API_KEY (exit 0).
+  over(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
   // skill fsd-writer gọi ở Gate 1 — thiếu nó thì stage fsd_write gọi hụt
   cpSync(join(SRC, "skills"), join(P, ".claude/skills"), { recursive: true });
 
