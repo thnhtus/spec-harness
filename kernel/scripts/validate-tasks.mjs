@@ -1958,6 +1958,19 @@ if (args.has("--self-check")) {
   assert.deepEqual(acsMissingIn("| AC-10 | x |", ["AC-1"], "first"), ["AC-1"], "first cell is matched whole, AC-1 ≠ AC-10");
   // Prose, comments and "not covered" notes are not coverage. declaredACsIn is
   // strict about table rows; the reached-side must be exactly as strict.
+  // #110: a stage claimed in `attempts` with no telemetry entry was never dispatched.
+  {
+    const S = ["bootstrap", "fsd_write", "implementation", "reviewing"];
+    const g = (d) => dispatchGaps(d, { stages: S });
+    const at = (o) => ({ currentStage: "reviewing", ...o });
+    assert.deepEqual(g(at({ attempts: { bootstrap: 1 } })), [], "bootstrap writes no telemetry by design");
+    assert.deepEqual(g(at({ attempts: { fsd_write: 1 }, telemetry: [{ stage: "fsd_write" }] })), [], "dispatched stage is silent");
+    assert.match(g(at({ attempts: { fsd_write: 1, implementation: 1 }, telemetry: [] }))[0], /fsd_write, implementation/, "every skipped stage is named");
+    assert.match(g(at({ attempts: { implementation: 2 }, telemetry: [{ stage: "fsd_write" }] }))[0], /implementation/, "another stage's entry does not cover it");
+    assert.deepEqual(g(at({})), [], "a task that claims nothing is the other rules' business");
+    assert.deepEqual(g({ currentStage: "implementation", attempts: { fsd_write: 1 }, telemetry: [] }), [], "mid-flight is not judged: a fixture or a live task may legitimately look like this");
+  }
+
   // #109: the pre-filter may only ever say "stop" by exiting 1; every other outcome is "no opinion".
   assert.deepEqual(prefilterVerdict({ status: PREFILTER_FAIL_EXIT(), stderr: "confident FAIL\n" }), { block: true, why: "confident FAIL" });
   assert.equal(prefilterVerdict({ status: PREFILTER_FAIL_EXIT(), stderr: "" }).why, "pre-filter says FAIL", "an empty reason still blocks");
@@ -4273,6 +4286,30 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
   return { errors, warnings };
 }
 
+// #110: the hole stampDefects cannot see. It checks the telemetry windows that
+// EXIST; a coordinator that never called `--advance` at all has none, so an
+// empty array passed every signature rule and reached `reviewing` on a warning.
+// Measured: a real 7-stage run did exactly that — 0 `--advance` calls, task.agent.json
+// edited by hand each stage, so the lease was never renewed, no stage was gated,
+// and the Gate 5 pre-filter (#109) never ran. `attempts` is the coordinator's own
+// claim that a stage ran; every claimed stage must have the machine-written
+// entry that goes with it. bootstrap is excluded: it is `--bootstrap`, which
+// writes no telemetry by design.
+export function dispatchGaps(data, { stages = STAGE_ORDER } = {}) {
+  // Judged at the handoff point only. Mid-flight, a stage can legitimately be
+  // between its dispatch and its entry, and a fixture hand-built at some stage
+  // is a valid object. `reviewing` is the last moment anyone looks, and the
+  // moment the claim "all gates ran" is actually made. ponytail: a task
+  // abandoned mid-flight keeps its skipped stages unreported — nobody reads it.
+  if (data?.currentStage !== stages[stages.length - 1]) return [];
+  const ran = Object.keys(data?.attempts ?? {}).filter((st) => st !== stages[0] && stages.includes(st));
+  if (!ran.length) return [];
+  const have = new Set((data.telemetry ?? []).map((e) => e.stage));
+  const miss = ran.filter((st) => !have.has(st));
+  if (!miss.length) return [];
+  return [`attempts claims ${miss.join(", ")} ran, but telemetry has no entry for ${miss.length > 1 ? "them" : "it"} — only \`--advance\` writes telemetry, so ${miss.length > 1 ? "those stages were" : "that stage was"} never dispatched through the gate (no lease renew, no Gate 5 pre-filter, nothing validated between stages)`];
+}
+
 // --restamp (#102): rebuild a lost _stamp.log from telemetry. Re-running every stage is
 // the only other recovery. Refuses while the log exists, so live witnesses are never rewritten.
 // ponytail: whoever deletes the log and runs this launders hand-typed windows; the 7th
@@ -5291,6 +5328,8 @@ for (const { sprint, task, path } of folders) {
     const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
     for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
     warnings.push(...st.warnings);
+    // #110: …and the case with no windows to check at all.
+    for (const g of dispatchGaps(data)) (witnessed ? errors : warnings).push(g);
   }
 
   // Model cascade: a retry that re-ran on a cheaper tier than the attempt it is
