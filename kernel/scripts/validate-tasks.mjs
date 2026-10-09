@@ -1590,8 +1590,9 @@ function acsMissingIn(text, acs, cell) {
 // intermediate step reads exactly like a boundary, so this cannot be an error
 // without a way to tell them apart. ponytail: ceiling = derivation steps and
 // units ("within 3 s") are indistinguishable from boundaries here, and a test
-// may build the value indirectly (`1e2`, a constant). Non-numeric ACs are not
-// covered at all.
+// may build the value indirectly (`1e2`, a constant). Quoted strings in an AC
+// ARE checked (same rule, plain substring); booleans, enum members and "sorted
+// descending"-style ACs have no literal to anchor on and are NOT covered.
 export function acValueGaps(reviewText, evidenceText, readTest) {
   const cellsOf = (l) => l.split("|").slice(1, -1).map((c) => c.trim());
   const lit = new Map();
@@ -1601,11 +1602,18 @@ export function acValueGaps(reviewText, evidenceText, readTest) {
     const cells = cellsOf(l);
     // An arithmetic operand (`t * 0.9`) is a formula constant, not a value to feed in.
     const cell = cells[1] ?? "";
+    // Quoted literals the AC names: "error: invalid", 'N/A'. Found INSIDE each
+    // backtick span (non-greedy so `f("")` does not bridge into the next span),
+    // only a double/single-quoted string within it, not the call around it.
+    // Booleans and enum members are NOT covered (see ceiling).
+    const strs = [...cell.matchAll(/`([^`]*?)`/g)]
+      .flatMap((b) => [...b[1].matchAll(/(["'])((?:\\.|(?!\1)[^\\])+)\1/g)])
+      .map((m) => m[2]).filter((x) => x.length >= 3);
     const nums = [...cell.matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g)]
       // "8%" is a rate the code applies, never a value a test feeds in.
       .filter((n) => !/[*/+-]\s*$/.test(cell.slice(0, n.index)) && !/^\s*[*/+%-]/.test(cell.slice(n.index + n[0].length)))
       .map((n) => n[0]);
-    if (nums.length) lit.set(m[1], [...new Set(nums)]);
+    if (nums.length || strs.length) lit.set(m[1], [...new Set([...nums, ...strs])]);
   }
   const files = new Map();
   for (const l of evidenceText.split("\n")) {
@@ -1629,7 +1637,9 @@ export function acValueGaps(reviewText, evidenceText, readTest) {
       .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")
       .replace(/\b(test|it|describe)(\.\w+)?\(\s*(["'`])(?:\\.|(?!\3)[^\\\n])*\3/g, "$1(");
     if (!body) continue; // unreadable here (other repo / CI checkout): stay silent
-    const miss = nums.filter((n) => !new RegExp(`(?<![\\w.])${n.replace(".", "\\.")}(?![\\w])`).test(body));
+    const miss = nums.filter((n) => /^-?\d+(\.\d+)?$/.test(n)
+      ? !new RegExp(`(?<![\\w.])${n.replace(".", "\\.")}(?![\\w])`).test(body)
+      : !body.includes(n));
     if (miss.length) out.push(`${id} names value(s) ${miss.join(", ")} but ${fs.join(", ")} never uses them — a green test that skips the boundary the AC states (#107)`);
   }
   return out;
@@ -1960,6 +1970,12 @@ if (args.has("--self-check")) {
     assert.deepEqual(acValueGaps(rev, ev, () => "discount(1000)").map((x) => x.slice(0, 5)), ["AC-01"], "100 must not be satisfied by 1000");
     assert.deepEqual(acValueGaps(rev, ev, () => null), [], "test file unreadable here → silent, never a false alarm");
     assert.deepEqual(acValueGaps(rev, ev, () => 'assert.equal(f(100), "$90.00")'), [], "a value inside a string literal (an expected OUTPUT, not a comment) still counts (#108 e2e: AC-04..06 are currency strings)");
+    {
+      const sRev = '| AC-01 | `f("")` trả `"error: invalid"` | x | confirmed | TC |';
+      assert.deepEqual(acValueGaps(sRev, ev, () => 'assert.equal(f(""), "error: invalid")'), [], "quoted string the AC names is asserted → silent");
+      assert.match(acValueGaps(sRev, ev, () => 'assert.equal(f(""), "wrong")')[0] ?? "", /error: invalid/, "quoted string the AC names, never asserted → named");
+      assert.deepEqual(acValueGaps("| AC-01 | trả `true` khi đã đăng nhập | x | confirmed | TC |", ev, () => "false"), [], "booleans are the documented ceiling, not a silent false positive");
+    }
     assert.deepEqual(acValueGaps(rev, "| AC-01 | manual | PASS |", () => "x"), [], "no test file in 08 → other rules speak");
   }
   assert.deepEqual(acsMissingIn("Note: AC-01 to be done later", ["AC-01"]), ["AC-01"], "prose is not coverage");
