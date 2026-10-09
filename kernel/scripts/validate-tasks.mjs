@@ -1583,10 +1583,15 @@ function acsMissingIn(text, acs, cell) {
 // asserts that value. Reachable ≠ asserted: the 12-case held-out run lost
 // boundary / threshold / rounding bugs to green tests that never used the number.
 // Literals = numbers in the AC cell (backticks or prose, "vd 99.99" counts); tests = the file part of
-// `path::name` cells of 08's AC coverage table. Warning, not error. ponytail:
-// ceiling = a number in the AC may be an illustration or unit ("within 3 s") rather than a boundary
-// and the test may build it indirectly (`1e2`, a constant); raise to error once
-// false positives are counted on real tasks. Non-numeric ACs are not covered.
+// `path::name` cells of 08's AC coverage table.
+// STAYS A WARNING. Measured on a real 7-stage run (#108 e2e): of 3 flags on a
+// correct task, 2 were false — the ACs spelled out a derivation ("giảm 10% → 90,
+// thuế 8% → 97.20") and the test rightly asserted only the final "$97.20". An
+// intermediate step reads exactly like a boundary, so this cannot be an error
+// without a way to tell them apart. ponytail: ceiling = derivation steps and
+// units ("within 3 s") are indistinguishable from boundaries here, and a test
+// may build the value indirectly (`1e2`, a constant). Non-numeric ACs are not
+// covered at all.
 export function acValueGaps(reviewText, evidenceText, readTest) {
   const cellsOf = (l) => l.split("|").slice(1, -1).map((c) => c.trim());
   const lit = new Map();
@@ -1597,7 +1602,8 @@ export function acValueGaps(reviewText, evidenceText, readTest) {
     // An arithmetic operand (`t * 0.9`) is a formula constant, not a value to feed in.
     const cell = cells[1] ?? "";
     const nums = [...cell.matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g)]
-      .filter((n) => !/[*/+-]\s*$/.test(cell.slice(0, n.index)) && !/^\s*[*/+-]/.test(cell.slice(n.index + n[0].length)))
+      // "8%" is a rate the code applies, never a value a test feeds in.
+      .filter((n) => !/[*/+-]\s*$/.test(cell.slice(0, n.index)) && !/^\s*[*/+%-]/.test(cell.slice(n.index + n[0].length)))
       .map((n) => n[0]);
     if (nums.length) lit.set(m[1], [...new Set(nums)]);
   }
@@ -1612,9 +1618,16 @@ export function acValueGaps(reviewText, evidenceText, readTest) {
   for (const [id, nums] of lit) {
     const fs = files.get(id);
     if (!fs) continue; // no resolvable test file: the traceability rules above already speak
-    // Test names and comments say "at 100" without testing it: only code counts.
+    // Test names and comments say "at 100" without testing it: only code AND
+    // string literals count — a value the AC names can legitimately be the
+    // expected OUTPUT ("$97.20"), not just an input, so stripping strings
+    // whole (as comments must be) would blind this to every string-returning
+    // function. Only block comments and // comments are stripped.
+    // Test NAMES are stripped too: "AC-06 at 250 gets 10% off" names values it
+    // may never assert (measured: the #108 e2e run hid a missing 10 this way).
     const body = fs.map(readTest).filter((x) => x != null).join("\n")
-      .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "").replace(/(["'`])(?:\\.|(?!\1)[^\\\n])*\1/g, "\"\"");
+      .replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "")
+      .replace(/\b(test|it|describe)(\.\w+)?\(\s*(["'`])(?:\\.|(?!\3)[^\\\n])*\3/g, "$1(");
     if (!body) continue; // unreadable here (other repo / CI checkout): stay silent
     const miss = nums.filter((n) => !new RegExp(`(?<![\\w.])${n.replace(".", "\\.")}(?![\\w])`).test(body));
     if (miss.length) out.push(`${id} names value(s) ${miss.join(", ")} but ${fs.join(", ")} never uses them — a green test that skips the boundary the AC states (#107)`);
@@ -1941,10 +1954,12 @@ if (args.has("--self-check")) {
     const ev = "| AC-01 | `test/a.js::AC-01 x` | PASS |\n| AC-02 | `test/a.js::AC-02 y` | PASS |";
     assert.equal(acValueGaps(rev, ev, () => "assert.equal(discount(250), 225)").length, 1, "AC names 100, test only uses 250 → gap");
     assert.match(acValueGaps(rev, ev, () => "discount(250)")[0], /AC-01 names value\(s\) 100, 90 /, "formula operand 0.9 is not a value, but the boundary 100 and its result 90 are");
-    assert.equal(acValueGaps(rev, ev, () => 'test("AC-01 at 100", () => assert.equal(discount(250), 225)); // 100').length, 1, "100 in a test name or comment is not a test of 100");
+    assert.match(acValueGaps(rev, ev, () => 'test("AC-01 at 100", () => assert.equal(discount(250), 90)); // 100')[0] ?? "", /names value\(s\) 100 /, "100 in a test name or comment is not a test of 100");
+    assert.deepEqual(acValueGaps("| AC-04 | tax 8% → `f(50)` = 54 | x | confirmed | TC |", "| AC-04 | `t.js::a` | PASS |", () => "assert.equal(f(50), 54)"), [], "a rate (8%) is not a value to feed in");
     assert.deepEqual(acValueGaps(rev, ev, () => "discount(100) === 90"), [], "values present → silent");
     assert.deepEqual(acValueGaps(rev, ev, () => "discount(1000)").map((x) => x.slice(0, 5)), ["AC-01"], "100 must not be satisfied by 1000");
     assert.deepEqual(acValueGaps(rev, ev, () => null), [], "test file unreadable here → silent, never a false alarm");
+    assert.deepEqual(acValueGaps(rev, ev, () => 'assert.equal(f(100), "$90.00")'), [], "a value inside a string literal (an expected OUTPUT, not a comment) still counts (#108 e2e: AC-04..06 are currency strings)");
     assert.deepEqual(acValueGaps(rev, "| AC-01 | manual | PASS |", () => "x"), [], "no test file in 08 → other rules speak");
   }
   assert.deepEqual(acsMissingIn("Note: AC-01 to be done later", ["AC-01"]), ["AC-01"], "prose is not coverage");
