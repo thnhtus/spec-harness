@@ -1975,6 +1975,9 @@ if (args.has("--self-check")) {
     assert.deepEqual(g(at({ attempts: { fsd_write: 1 }, telemetry: [{ stage: "fsd_write" }] })), [], "dispatched stage is silent");
     assert.match(g(at({ attempts: { fsd_write: 1, implementation: 1 }, telemetry: [] }))[0], /fsd_write, implementation/, "every skipped stage is named");
     assert.match(g(at({ attempts: { implementation: 2 }, telemetry: [{ stage: "fsd_write" }] }))[0], /implementation/, "another stage's entry does not cover it");
+    assert.deepEqual(g(at({ attempts: { fsd_write: 1, implementation: 1 }, telemetry: [{ stage: "implementation" }] })), [], "late join: first stage inline is not a hard error");
+    assert.match(dispatchGaps(at({ attempts: { fsd_write: 1, implementation: 1 }, telemetry: [{ stage: "implementation" }] }), { stages: S, soft: true })[0], /fsd_write/, "…but it is still a warning");
+    assert.match(g(at({ attempts: { fsd_write: 1, implementation: 1 }, telemetry: [{ stage: "fsd_write" }] }))[0], /implementation/, "a hole AFTER a stamped stage stays an error");
     assert.deepEqual(g(at({})), [], "a task that claims nothing is the other rules' business");
     assert.deepEqual(g({ currentStage: "implementation", attempts: { fsd_write: 1 }, telemetry: [] }), [], "mid-flight is not judged: a fixture or a live task may legitimately look like this");
   }
@@ -4306,7 +4309,8 @@ export function stampDefects(telemetry = [], stampText = "", taskId, now = Date.
 // claim that a stage ran; every claimed stage must have the machine-written
 // entry that goes with it. bootstrap is excluded: it is `--bootstrap`, which
 // writes no telemetry by design.
-export function dispatchGaps(data, { stages = STAGE_ORDER } = {}) {
+export function dispatchGaps(data, { stages = STAGE_ORDER, soft = false } = {}) {
+  const opts = { soft };
   // Judged at the handoff point only. Mid-flight, a stage can legitimately be
   // between its dispatch and its entry, and a fixture hand-built at some stage
   // is a valid object. `reviewing` is the last moment anyone looks, and the
@@ -4318,6 +4322,15 @@ export function dispatchGaps(data, { stages = STAGE_ORDER } = {}) {
   const have = new Set((data.telemetry ?? []).map((e) => e.stage));
   const miss = ran.filter((st) => !have.has(st));
   if (!miss.length) return [];
+  // Measured on 7 real tasks: stages before the FIRST telemetry entry missing
+  // while every later stage is stamped = the coordinator joined --advance late
+  // (first stage done inline). Hard only when nothing is stamped at all or the
+  // hole sits after a stamped stage. ponytail: a coordinator that skips just the
+  // first stage stays a warning; add when a real run shows it matters.
+  const first = Math.min(...[...have].map((st) => stages.indexOf(st)).filter((i) => i >= 0));
+  if (Number.isFinite(first) && miss.every((st) => stages.indexOf(st) < first))
+    return opts.soft ? [`attempts claims ${miss.join(", ")} ran, but telemetry starts later — that stage was not dispatched through \`--advance\``] : [];
+  if (opts.soft) return [];
   return [`attempts claims ${miss.join(", ")} ran, but telemetry has no entry for ${miss.length > 1 ? "them" : "it"} — only \`--advance\` writes telemetry, so ${miss.length > 1 ? "those stages were" : "that stage was"} never dispatched through the gate (no lease renew, no Gate 5 pre-filter, nothing validated between stages)`];
 }
 
@@ -5341,6 +5354,7 @@ for (const { sprint, task, path } of folders) {
     warnings.push(...st.warnings);
     // #110: …and the case with no windows to check at all.
     for (const g of dispatchGaps(data)) (witnessed ? errors : warnings).push(g);
+    warnings.push(...dispatchGaps(data, { soft: true }));
   }
 
   // Model cascade: a retry that re-ran on a cheaper tier than the attempt it is
