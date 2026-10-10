@@ -1588,7 +1588,10 @@ function acsMissingIn(text, acs, cell) {
 // correct task, 2 were false — the ACs spelled out a derivation ("giảm 10% → 90,
 // thuế 8% → 97.20") and the test rightly asserted only the final "$97.20". An
 // intermediate step reads exactly like a boundary, so this cannot be an error
-// without a way to tell them apart. ponytail: ceiling = derivation steps and
+// without a way to tell them apart. A 3rd real run confirmed it from the other
+// side: "t = 100 → 90" (input → expected, BOTH must be tested) and "giảm 10% → 90"
+// (a step on the way to the real answer) are the same syntax, so an arrow cannot
+// be classified without understanding the sentence. ponytail: ceiling = derivation steps and
 // units ("within 3 s") are indistinguishable from boundaries here, and a test
 // may build the value indirectly (`1e2`, a constant). Quoted strings in an AC
 // ARE checked (same rule, plain substring); booleans, enum members and "sorted
@@ -1610,8 +1613,13 @@ export function acValueGaps(reviewText, evidenceText, readTest) {
       .flatMap((b) => [...b[1].matchAll(/(["'])((?:\\.|(?!\1)[^\\])+)\1/g)])
       .map((m) => m[2]).filter((x) => x.length >= 3);
     const nums = [...cell.matchAll(/(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])/g)]
-      // "8%" is a rate the code applies, never a value a test feeds in.
-      .filter((n) => !/[*/+-]\s*$/.test(cell.slice(0, n.index)) && !/^\s*[*/+%-]/.test(cell.slice(n.index + n[0].length)))
+      // "8%" is a rate; "90 × 1.08" is a derivation (× binds both sides, unlike
+      // >=/< where the number right after is the boundary itself, not an
+      // operand). Only *, /, % next to a number are stripped as formula noise.
+      // A strict bound (`< 0`, `> 5`) is OPEN: no value sits at it, the honest
+      // test feeds one past it (-1). `>= 100` / `<= 5` is closed, 100 itself
+      // is in range and must be tested — that is the boundary bug (#107).
+      .filter((n) => !/(?:[*/×]|[<>](?!=))\s*$/.test(cell.slice(0, n.index)) && !/^\s*[*/%×]/.test(cell.slice(n.index + n[0].length)))
       .map((n) => n[0]);
     if (nums.length || strs.length) lit.set(m[1], [...new Set([...nums, ...strs])]);
   }
@@ -1984,6 +1992,9 @@ if (args.has("--self-check")) {
     assert.match(acValueGaps(rev, ev, () => "discount(250)")[0], /AC-01 names value\(s\) 100, 90 /, "formula operand 0.9 is not a value, but the boundary 100 and its result 90 are");
     assert.match(acValueGaps(rev, ev, () => 'test("AC-01 at 100", () => assert.equal(discount(250), 90)); // 100')[0] ?? "", /names value\(s\) 100 /, "100 in a test name or comment is not a test of 100");
     assert.deepEqual(acValueGaps("| AC-04 | tax 8% → `f(50)` = 54 | x | confirmed | TC |", "| AC-04 | `t.js::a` | PASS |", () => "assert.equal(f(50), 54)"), [], "a rate (8%) is not a value to feed in");
+    assert.deepEqual(acValueGaps("| AC-06 | `f(100)` trả `\"$97.20\"` (90 × 1.08) | x | confirmed | TC |", "| AC-06 | `t.js::a` | PASS |", () => 'assert.equal(f(100), "$97.20")'), [], "a derivation (90 × 1.08) is not a boundary (3rd real run)");
+    assert.deepEqual(acValueGaps("| AC-03 | ném lỗi khi `total < 0` | x | confirmed | TC |", "| AC-03 | `t.js::a` | PASS |", () => "assert.throws(() => f(-1))"), [], "the 0 of `< 0` is a threshold, -1 is its honest test");
+    assert.match(acValueGaps("| AC-01 | `t >= 100` → giảm | x | confirmed | TC |", "| AC-01 | `t.js::a` | PASS |", () => "f(250)")[0] ?? "", /100/, "…but a >= boundary still has a value AT it, so 100 stays required");
     assert.deepEqual(acValueGaps(rev, ev, () => "discount(100) === 90"), [], "values present → silent");
     assert.deepEqual(acValueGaps(rev, ev, () => "discount(1000)").map((x) => x.slice(0, 5)), ["AC-01"], "100 must not be satisfied by 1000");
     assert.deepEqual(acValueGaps(rev, ev, () => null), [], "test file unreadable here → silent, never a false alarm");
