@@ -72,6 +72,25 @@ Claude Code dùng `permissions.deny` / `permissions.ask`; các CLI khác dùng h
 
 Guard khớp theo prefix lệnh: nó chặn tai nạn, không chặn người cố ý (`bash -c "git push"` vẫn lọt). Bảo vệ thật cho secret là không để chúng trong repo.
 
+## Tuỳ chọn: Jev pre-filter (tiết kiệm token ở Gate 5)
+
+Jev là decision model của TypeSafe. Nó đọc diff + evidence **trước** adversary; chỉ khi chắc chắn code sai (FAIL, confidence ≥ 0.9) thì `--advance` mới chặn và trả task về implementer, bỏ qua một lượt review 54k–132k token. **Mặc định tắt.** Không có key thì harness chạy y như cũ, lỗi mạng hay key sai cũng không chặn gì.
+
+```bash
+# 1. Lấy API key ở TypeSafe, lưu vào Keychain (key không vào shell history, không vào repo)
+read -s "k?TYPESAFE_API_KEY: " && security add-generic-password -a "$USER" -s TYPESAFE_API_KEY -w "$k" -U && unset k
+echo 'export TYPESAFE_API_KEY="$(security find-generic-password -a "$USER" -s TYPESAFE_API_KEY -w 2>/dev/null)"' >> ~/.zshrc && source ~/.zshrc
+
+# 2. Kiểm: in độ dài, > 0 là đã nạp
+echo ${#TYPESAFE_API_KEY}
+```
+
+Xong, không cần cấu hình gì thêm: `npx spec-harness` đã cài `scripts/gate5-prefilter.mjs`, và `--advance <task> adversarial_review` tự gọi nó. Mở **terminal mới** (hoặc `source ~/.zshrc`) trước khi chạy agent, nếu không agent không thấy key. Linux / CI: xem [`adapters/gate5-prefilter/README.md`](adapters/gate5-prefilter/README.md).
+
+Thấy nó hoạt động: khi chặn, `--advance` in `pre-filter FAIL … tests_fail_now` và exit 1; khi PASS thì im lặng và adversary chạy bình thường. Kiểm tay: `node scripts/gate5-prefilter.mjs <task-folder> main`.
+
+Đừng kỳ vọng quá: đo trên 20 case, nó chặn được 5/14 case lỗi và chặn nhầm 0/6 case sạch. Lỗi tinh vi (lệch biên, làm tròn) nó trả PASS, adversary vẫn lo phần đó. Đây là bộ lọc rẻ chặn lỗi lộ liễu (test đang đỏ, evidence cũ), không thay adversary.
+
 ## Lệnh hay dùng
 
 ```bash
@@ -85,7 +104,7 @@ CI là bắt buộc — `git commit --no-verify` bỏ qua được pre-commit, k
 
 ## Tài liệu
 
-- [`adapters/gate5-prefilter/README.md`](adapters/gate5-prefilter/README.md) — tuỳ chọn: một decision model đọc trước Gate 5 và chặn sớm khi chắc chắn code sai, tiết kiệm một lượt review 54k–132k token. **Mặc định tắt**, không có key thì mọi thứ chạy y như cũ; hướng dẫn gắn `TYPESAFE_API_KEY` nằm ở đó
+- [`adapters/gate5-prefilter/README.md`](adapters/gate5-prefilter/README.md) — pre-filter Jev: cách gắn key, số đo, giới hạn
 - [`docs/advanced.md`](docs/advanced.md) — bảng hỗ trợ từng CLI, đặt harness cạnh nhiều repo (FE + BE), MCP server, độ phức tạp, eval/bench, giới hạn đã biết, ghi chú cài đặt
 - `docs/Instructions.md` — luật toàn cục (cài vào project)
 - `docs/Agents.md` — 7 role, lifecycle, 5 gate (cài vào project)
