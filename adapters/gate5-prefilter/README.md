@@ -7,18 +7,58 @@ Everything else goes to the adversary exactly as before.
 **Off unless `TYPESAFE_API_KEY` is set.** No key, no network, a bad response, a
 context overflow — all exit 0, nothing blocks, nothing is required.
 
-## Use
+## Set the key (once per machine)
+
+Get a key from your TypeSafe account. **Never put it in the repo, in
+`harness.config.json`, or in a `.env` file** — the guard blocks reading `.env`
+(so the agent can't see it) and anything committed leaks it.
+
+**macOS — Keychain** (encrypted; `cat`/`grep` over the repo never finds it):
 
 ```bash
-export TYPESAFE_API_KEY=...   # store outside the repo, e.g. macOS Keychain
-node adapters/gate5-prefilter/prefilter.mjs <task-folder>
-echo $?   # 78 = confident FAIL (never 1: node exits 1 on a crash)
-          # anything else = run the real adversary
+# 1. store it. `read -s` keeps it off the screen and out of shell history
+read -s "k?TYPESAFE_API_KEY: " && security add-generic-password -a "$USER" -s TYPESAFE_API_KEY -w "$k" -U && unset k
+
+# 2. load it into every new shell (this line holds the command, not the key)
+echo 'export TYPESAFE_API_KEY="$(security find-generic-password -a "$USER" -s TYPESAFE_API_KEY -w 2>/dev/null)"' >> ~/.zshrc && source ~/.zshrc
+
+# 3. check — prints the length only, never the key
+echo ${#TYPESAFE_API_KEY}      # > 0 = set
 ```
+
+First use may pop a "security wants to access the Keychain" dialog → **Always Allow**.
+Rotate: re-run step 1 (`-U` overwrites). Remove: `security delete-generic-password -a "$USER" -s TYPESAFE_API_KEY`.
+
+**Linux / other** — a file only you can read, loaded the same way:
+
+```bash
+read -s -p "TYPESAFE_API_KEY: " k && (umask 077; mkdir -p ~/.spec-harness && printf %s "$k" > ~/.spec-harness/typesafe.key) && unset k
+echo 'export TYPESAFE_API_KEY="$(cat ~/.spec-harness/typesafe.key 2>/dev/null)"' >> ~/.bashrc && source ~/.bashrc
+```
+
+**CI** — a repository secret exposed as the `TYPESAFE_API_KEY` env var; nothing else to do.
+
+**Not set / wrong key?** Nothing breaks: the script prints one `skipped` line to
+stderr and the adversary runs as usual. To see whether it is armed:
+
+```bash
+node scripts/gate5-prefilter.mjs <task-folder> main   # "skipped — no TYPESAFE_API_KEY" = not loaded in this shell
+```
+
+An agent run from an already-open terminal needs a **new shell** (or
+`source ~/.zshrc`) to see the key; a GUI-launched CLI may not inherit it.
+
+## Use
 
 Nothing to wire: `install` ships it as `scripts/gate5-prefilter.mjs`, and
 `validate-tasks.mjs --advance <task> adversarial_review` runs it on its own
 (#109). A coordinator that skips prose still cannot skip `--advance`.
+
+```bash
+node scripts/gate5-prefilter.mjs <task-folder> [base-branch]   # manual run
+echo $?   # 78 = confident FAIL (never 1: node exits 1 on a crash)
+          # anything else = run the real adversary
+```
 
 ## Why PASS never blocks
 

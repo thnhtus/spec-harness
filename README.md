@@ -85,6 +85,7 @@ CI là bắt buộc — `git commit --no-verify` bỏ qua được pre-commit, k
 
 ## Tài liệu
 
+- [`adapters/gate5-prefilter/README.md`](adapters/gate5-prefilter/README.md) — tuỳ chọn: một decision model đọc trước Gate 5 và chặn sớm khi chắc chắn code sai, tiết kiệm một lượt review 54k–132k token. **Mặc định tắt**, không có key thì mọi thứ chạy y như cũ; hướng dẫn gắn `TYPESAFE_API_KEY` nằm ở đó
 - [`docs/advanced.md`](docs/advanced.md) — bảng hỗ trợ từng CLI, đặt harness cạnh nhiều repo (FE + BE), MCP server, độ phức tạp, eval/bench, giới hạn đã biết, ghi chú cài đặt
 - `docs/Instructions.md` — luật toàn cục (cài vào project)
 - `docs/Agents.md` — 7 role, lifecycle, 5 gate (cài vào project)

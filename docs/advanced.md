@@ -373,6 +373,14 @@ node scripts/validate-tasks.mjs --pack <task> <stage> [--base <nhánh>]   # gói
 
 ## Vì sao có cái này
 
+### Gate 5 pre-filter (tuỳ chọn, mặc định tắt)
+
+`scripts/gate5-prefilter.mjs` để một decision model đọc trước state của Gate 5. Chỉ khi nó chắc chắn code sai (exit `78`) thì `--advance … adversarial_review` mới exit `1` và bỏ qua lượt adversary — tiết kiệm 54k–132k token. PASS không bao giờ được tin: đo trên 20 case, hai bug thật trả PASS ở confidence 0.78 và 0.98 vì model chỉ đọc chữ, không chạy code. Số thật: chặn 5/14 case lỗi, chặn nhầm 0/6 case sạch.
+
+Không có `TYPESAFE_API_KEY` thì script exit `0` và harness chạy y như cũ — mọi nhánh lỗi (mất mạng, 4xx, crash, timeout 30 s) đều fail-open. Cách gắn key an toàn (Keychain / file 0600 / CI secret, không bao giờ để trong repo hay `.env`): [`adapters/gate5-prefilter/README.md`](../adapters/gate5-prefilter/README.md).
+
+Nó nằm ở `adapters/`, không phải kernel: kernel chỉ biết "một script tên cố định trả exit code", không biết tên vendor, key hay endpoint. Xoá file đi thì mọi gate hoạt động như trước.
+
 Gate viết bằng chữ ("agent phải chạy test trước khi báo xong") thì model có thể chọn không tuân thủ. Gate bằng exit code thì không cho chọn. Harness gốc mất một thời gian mới học được điều đó. Phần đắt nhất ở đây là `validate-tasks.mjs` và chuỗi truy vết AC; mấy file markdown rẻ hơn nhiều.
 
 Những thứ validator bắt mà con người hay bỏ sót:
