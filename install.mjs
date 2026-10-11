@@ -2489,6 +2489,22 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", e.stdout + e.stderr);
   }
 
+  // #16: --dry-run must report accurately and touch nothing in the real target.
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-dry-"));
+    const P = join(root, "p");
+    mkdirSync(P, { recursive: true });
+    writeFileSync(join(P, "a.txt"), "hi");
+    spawnSync("git", ["init", "-q"], { cwd: P });
+    const before = readdirSync(P).sort().join(",");
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), P, "--dry-run"], { encoding: "utf8" });
+    if (r.status !== 0) fail("--dry-run phải exit 0", r.stdout + r.stderr);
+    if (!/tạo mới \(\d+\)/.test(r.stdout) || !/harness\.config\.json/.test(r.stdout))
+      fail("--dry-run phải liệt kê file sẽ tạo (vd harness.config.json)", r.stdout);
+    if (readdirSync(P).sort().join(",") !== before) fail("--dry-run đã ghi vào target thật");
+    rmSync(root, { recursive: true, force: true });
+  }
+
   rmSync(dirname(T), { recursive: true, force: true });
   console.log("✅ install self-test passed");
   process.exit(0);
@@ -2496,12 +2512,13 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
 
 // ── cài thật ───────────────────────────────────────────────────────────────
 const yes = args.includes("--yes") || args.includes("-y");
+const dry = args.includes("--dry-run");
 const cliAt = args.indexOf("--cli");
 const clis = cliAt === -1 ? [] : String(args[cliAt + 1] ?? "").split(",").filter(Boolean);
 if (cliAt !== -1 && (!clis.length || clis.some((c) => !CLIS.includes(c))))
   die(`✖ --cli nhận danh sách phẩy trong: ${CLIS.join(", ")} (vd --cli codex,gemini)`);
-const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)));
-if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--cli ${CLIS.join(",")}]`);
+const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && a !== "--dry-run" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)));
+if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--dry-run] [--cli ${CLIS.join(",")}]`);
 const where = rest[0] ?? ".";
 const target = resolve(where);
 if (!existsSync(target)) die(`✖ không có thư mục: ${where}`);
@@ -2517,6 +2534,28 @@ const clobberHit = existsSync(target) ? wouldClobber(target) : [];
 const dirty = dirtyAgainstGit(target, clobberHit);
 if (dirty.length)
   die(`\n✖ ${dirty.length} file sắp bị đè đang có thay đổi chưa commit — không ghi, không thể khôi phục bằng git:\n${dirty.map((f) => `   ${f}`).join("\n")}\n  Commit hoặc stash trước, rồi chạy lại.`);
+
+// --dry-run: cài thật vào BẢN COPY trong tmp rồi so hai cây — kết quả là đúng
+// những gì lần cài thật sẽ làm, không phải một danh sách viết tay có thể lệch.
+// ponytail: copy cả repo (trừ node_modules); repo hàng GB thì chậm — thêm
+// filter theo kích thước khi có người báo.
+if (dry) {
+  const snap = mkdtempSync(join(tmpdir(), "sh-dry-"));
+  const copy = join(snap, "p");
+  cpSync(target, copy, { recursive: true, filter: (s) => !/[\\/]node_modules$/.test(s) });
+  const tree = (root) => { const m = new Map(); const w = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) {
+    if (e.name === ".git" || e.name === "node_modules") continue; const f = join(d, e.name);
+    if (e.isDirectory()) w(f); else if (e.isFile()) m.set(f.slice(root.length + 1), readFileSync(f)); } }; w(root); return m; };
+  const before = tree(copy);
+  const log = console.log; console.log = () => {};
+  try { installInto(copy, clis); } finally { console.log = log; }
+  const after = tree(copy);
+  const add = [], chg = [];
+  for (const [f, b] of after) { if (!before.has(f)) add.push(f); else if (!before.get(f).equals(b)) chg.push(f); }
+  rmSync(snap, { recursive: true, force: true });
+  console.log(`dry-run → ${target} (không ghi gì)\n\n+ tạo mới (${add.length}):\n${add.map((f) => `   ${f}`).join("\n") || "   —"}\n\n~ sẽ ĐÈ (${chg.length}):\n${chg.map((f) => `   ${f}`).join("\n") || "   —"}`);
+  process.exit(0);
+}
 
 if (!yes && readdirSync(target).filter((n) => n !== ".git").length) {
   console.log(`cài spec-harness vào: ${target}`);

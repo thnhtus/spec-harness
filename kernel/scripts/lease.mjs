@@ -19,10 +19,11 @@
 // NFS/SMB neither holds: mkdir is not reliably atomic, and the server stamps
 // mtime with ITS clock, so a skewed pair of machines reads a fresh lease as
 // expired and takes it. Two sessions then write the same handoff.
-// Not fixed, and deliberately not papered over: making this correct means a
-// different mechanism (lock server, or fsync'd token exchange), and there is no
-// cheap way to even DETECT a network FS reliably enough to warn on it. If
-// docs/tasks/ lives on a share, this lease is decoration.
+// Not fixed: making this correct means a different mechanism (lock server, or
+// fsync'd token exchange). Detected instead (#100): validate-tasks.mjs
+// `netFsVerdict` warns on the Linux statfs magic or server clock skew. Its
+// ceiling (macOS NFS with an in-sync clock passes silently) is noted there.
+// If docs/tasks/ lives on a share, treat this lease as decoration.
 
 import { mkdirSync, writeFileSync, readFileSync, statSync, rmSync } from "node:fs";
 import { join } from "node:path";
