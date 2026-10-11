@@ -1,6 +1,6 @@
-# Gate 5 pre-filter (#108) — optional, off by default
+# Gate 2/3/5 pre-filter (#108, #113) — optional, off by default
 
-Decision-model pre-read before the real `adversary` review. Only acts when it
+Decision-model pre-read before the real role runs: `fsd-reviewer`'s output at Gate 2, `technical-planner`'s at Gate 3, the `adversary` at Gate 5. Only acts when it
 is confident the change is broken, so it can skip a 54k–132k-token LLM review.
 Everything else goes to the adversary exactly as before.
 
@@ -51,11 +51,12 @@ An agent run from an already-open terminal needs a **new shell** (or
 ## Use
 
 Nothing to wire: `install` ships it as `scripts/gate5-prefilter.mjs`, and
-`validate-tasks.mjs --advance <task> adversarial_review` runs it on its own
-(#109). A coordinator that skips prose still cannot skip `--advance`.
+`validate-tasks.mjs --advance <task> <stage>` runs it on its own (#109, #113).
+It has an opinion at `technical_plan`, `implementation`, `adversarial_review`;
+any other stage exits 0. A coordinator that skips prose still cannot skip `--advance`.
 
 ```bash
-node scripts/gate5-prefilter.mjs <task-folder> [base-branch]   # manual run
+node scripts/gate5-prefilter.mjs <task-folder> [base-branch] [stage]   # manual run; stage defaults to adversarial_review
 echo $?   # 78 = confident FAIL (never 1: node exits 1 on a crash)
           # anything else = run the real adversary
 ```
@@ -70,12 +71,28 @@ a rounding error — came back **PASS at confidence 0.78 and 0.98**, because thi
 model reads text and never runs the code. A PASS here means "no opinion", not
 "approved": the adversary still owns Gate 5.
 
+## Gate 2 and 3 (#113)
+
+Same one-way rule, but the state is only `02` (and `03`): two short tables,
+~0.3–0.8k tokens, 0.2–1.8 s — cheaper than the dispatch it can save.
+Measured on the real API, `jev-1.13.0`, 2026-10-11:
+
+| Gate | Blocked | Wrongly blocked | Missed |
+| --- | --- | --- | --- |
+| 2 — AC are testable | 11/14 vague sets | 0/20 measurable sets | a vague AC next to concrete ones ("`total` is computed correctly", "reject large files") |
+| 3 — plan covers AC | 2/6 thin plans (`TBD`, "verify manually") | 0/3 sound plans | a plan that tests the wrong value (150, not the boundary 100) — #107's lane |
+
+Run on the shipped eval task it blocks a dropped AC (0.96–0.98) and a `TBD`
+command (1.00), and passes the clean one (0.92–0.96). Kept for the zero false
+blocks, not because it is strong at Gate 3.
+
 ## Ceiling
 
 - Model: `jev-1.13.0`, pinned on purpose — `jev-latest` moves and would drift
   the confidence threshold silently.
 - Context ~32k tokens; state over ~24KB is skipped rather than truncated.
-- Sample size is small (20 cases, one fixture). Re-measure before trusting this
+- Sample size is small (Gate 5: 20 cases; Gate 2: 34; Gate 3: 9 + 5 on the eval task; one domain). Gate 2/3 numbers were not tuned against a held-out set.
+- Gate 5 sample, one fixture. Re-measure before trusting this
   on a different kind of AC (non-numeric, multi-param).
 - Same-OS-user can still read the key from wherever it is stored; this is an
   accelerator, not a secret boundary.

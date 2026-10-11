@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // node adapters/gate5-prefilter/self-check.mjs — no network, no key, no cost.
 import assert from "node:assert/strict";
-import { section, buildState, decide, QUESTIONS } from "./prefilter.mjs";
+import { section, buildState, decide, QUESTIONS, STAGES } from "./prefilter.mjs";
 
 const reply = (verdict, confidence, noul = {}) => ({
   ok: true, json: async () => ({ answers: { verdict: { type: "choice", choice: verdict, confidence }, ...noul } }),
@@ -12,6 +12,14 @@ const fetchOf = (r) => async () => r;
 assert.equal(Object.keys(QUESTIONS).length, 5);
 assert.equal(QUESTIONS.verdict.type, "choice");
 assert.deepEqual(Object.keys(QUESTIONS.verdict.criteria), ["PASS", "FAIL"]);
+
+// 1b. #113: every stage ends in a typed PASS/FAIL verdict, and Gate 2/3 state is
+// built from 02/03 alone (no git, no npm — they run before any code exists).
+assert.deepEqual(Object.keys(STAGES), ["technical_plan", "implementation", "adversarial_review"]);
+for (const [k, st] of Object.entries(STAGES)) {
+  assert.equal(st.questions.verdict.type, "choice", k);
+  assert.deepEqual(Object.keys(st.questions.verdict.criteria), ["PASS", "FAIL"], k);
+}
 
 // 2. section(): a missing heading is "", never a throw
 assert.equal(section("## A\nx\n## B\ny", "## A", "## B"), "## A\nx\n");
@@ -38,7 +46,7 @@ assert.deepEqual([d.choice, d.confidence], ["FAIL", 0.97]);
 // PASS at 0.78 and 0.98).
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 const CLI = fileURLToPath(new URL("./prefilter.mjs", import.meta.url));
@@ -47,10 +55,15 @@ let answer;
 const srv = createServer((q, r) => { r.setHeader("content-type", "application/json"); r.end(JSON.stringify(answer)); });
 await new Promise((ok) => srv.listen(0, "127.0.0.1", ok));
 const url = `http://127.0.0.1:${srv.address().port}/`;
-const run = (env) => new Promise((ok) => {
+writeFileSync(`${task}/02-FSD-Review.md`, "## Acceptance criteria\n| AC-01 | f() is fast |\n## BA questions\n");
+writeFileSync(`${task}/03-Technical-Plan.md`, "## Test plan\n| unit | TBD | AC-01 |\n## Implementation checklist\n");
+assert.match(STAGES.technical_plan.state(task), /AC-01 \| f\(\) is fast/);
+assert.doesNotMatch(STAGES.technical_plan.state(task), /Test plan/, "Gate 2 must not see the plan");
+assert.match(STAGES.implementation.state(task), /AC-01[\s\S]*TBD/);
+const run = (env, stage) => new Promise((ok) => {
   // async spawn: the fake server lives in this process, a sync spawn would block it
   import("node:child_process").then(({ spawn }) => {
-    const c = spawn(process.execPath, [CLI, task], { cwd: task, env: { PATH: process.env.PATH, GATE5_PREFILTER_URL: url, ...env } });
+    const c = spawn(process.execPath, [CLI, task, "main", ...(stage ? [stage] : [])], { cwd: task, env: { PATH: process.env.PATH, GATE5_PREFILTER_URL: url, ...env } });
     let err = ""; c.stderr.on("data", (b) => (err += b)); c.on("close", (code) => ok({ code, err }));
   });
 });
@@ -68,6 +81,18 @@ answer = { garbage: true }; r = await run({ TYPESAFE_API_KEY: "k" });
 assert.equal(r.code, 0, "schema drift → fail-open");
 r = await run({ TYPESAFE_API_KEY: "k", GATE5_PREFILTER_URL: "http://127.0.0.1:1/" });
 assert.equal(r.code, 0, "endpoint down → fail-open");
+// #113: the same one-way rule at every stage. PASS never blocks, a confident FAIL
+// blocks with 78, an unknown stage is never a block (and never reaches the network).
+for (const stage of ["technical_plan", "implementation", "adversarial_review"]) {
+  answer = v("PASS", 1.0); r = await run({ TYPESAFE_API_KEY: "k" }, stage);
+  assert.equal(r.code, 0, `${stage}: PASS at 1.0 must NOT block`);
+  answer = v("FAIL", 0.97); r = await run({ TYPESAFE_API_KEY: "k" }, stage);
+  assert.equal(r.code, 78, `${stage}: confident FAIL blocks`);
+  answer = v("FAIL", 0.5); r = await run({ TYPESAFE_API_KEY: "k" }, stage);
+  assert.equal(r.code, 0, `${stage}: unsure FAIL → skipped`);
+}
+answer = v("FAIL", 1.0); r = await run({ TYPESAFE_API_KEY: "k" }, "fsd_review");
+assert.equal(r.code, 0, "a stage with no pre-filter is never a block, even if the endpoint would say FAIL"); assert.match(r.err, /no pre-filter for stage/);
 srv.close();
 
 console.log("✅ gate5-prefilter self-check passed");

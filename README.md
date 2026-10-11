@@ -74,9 +74,15 @@ Claude Code dùng `permissions.deny` / `permissions.ask`; các CLI khác dùng h
 
 Guard khớp theo prefix lệnh: nó chặn tai nạn, không chặn người cố ý (`bash -c "git push"` vẫn lọt). Bảo vệ thật cho secret là không để chúng trong repo.
 
-## Tuỳ chọn: Jev pre-filter (tiết kiệm token ở Gate 5)
+## Tuỳ chọn: Jev pre-filter (tiết kiệm token ở Gate 2, 3, 5)
 
-Jev là decision model của TypeSafe. Nó đọc diff + evidence **trước** adversary; chỉ khi chắc chắn code sai (FAIL, confidence ≥ 0.9) thì `--advance` mới chặn và trả task về implementer, bỏ qua một lượt review 54k–132k token. **Mặc định tắt.** Không có key thì harness chạy y như cũ, lỗi mạng hay key sai cũng không chặn gì.
+Jev là decision model của TypeSafe. Nó đọc artifact **trước** khi `--advance` gọi role kế tiếp; chỉ khi chắc chắn sai (FAIL, confidence ≥ 0.9) thì `--advance` mới chặn và trả task về role vừa bàn giao, bỏ qua một lượt dispatch (Gate 5: 54k–132k token).
+
+| Chặn khi `--advance` … | Đọc | Trả về | Bắt được |
+| --- | --- | --- | --- |
+| `technical_plan` (Gate 2) | bảng AC trong `02` | `fsd-reviewer` | AC chủ quan: "nhanh", "hợp lý", "thân thiện" |
+| `implementation` (Gate 3) | AC + test plan trong `03` | `technical-planner` | plan ghi `TBD`/"verify manually", AC rơi khỏi plan |
+| `adversarial_review` (Gate 5) | code + test + evidence | implementer | test đang đỏ, evidence cũ, file ngoài scope | **Mặc định tắt.** Không có key thì harness chạy y như cũ, lỗi mạng hay key sai cũng không chặn gì.
 
 ```bash
 # 1. Lấy API key ở TypeSafe, lưu vào Keychain (key không vào shell history, không vào repo)
@@ -91,7 +97,7 @@ Xong, không cần cấu hình gì thêm: `npx spec-harness` đã cài `scripts/
 
 Thấy nó hoạt động: khi chặn, `--advance` in `pre-filter FAIL … tests_fail_now` và exit 1; khi PASS thì im lặng và adversary chạy bình thường. Kiểm tay: `node scripts/gate5-prefilter.mjs <task-folder> main`.
 
-Đừng kỳ vọng quá: đo trên 20 case, nó chặn được 5/14 case lỗi và chặn nhầm 0/6 case sạch. Lỗi tinh vi (lệch biên, làm tròn) nó trả PASS, adversary vẫn lo phần đó. Đây là bộ lọc rẻ chặn lỗi lộ liễu (test đang đỏ, evidence cũ), không thay adversary.
+Đừng kỳ vọng quá. Gate 5 (20 case): chặn 5/14 case lỗi, nhầm 0/6 case sạch. Gate 2 (34 bộ AC): chặn 11/14 bộ mơ hồ, nhầm 0/20 bộ tốt — trượt khi AC mơ hồ nằm lẫn cạnh AC cụ thể. Gate 3 (9 plan): chặn 2/6 plan thủng, nhầm 0/3 — plan test sai giá trị (150 thay vì biên 100) nó không thấy. Lỗi tinh vi (lệch biên, làm tròn) nó trả PASS, adversary vẫn lo phần đó. Đây là bộ lọc rẻ chặn lỗi lộ liễu (test đang đỏ, evidence cũ), không thay adversary.
 
 ## Lệnh hay dùng
 

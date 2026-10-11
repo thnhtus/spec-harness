@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 // Gate 5 pre-filter (#108) — OPTIONAL, OFF unless an API key is present.
 //
-//   node adapters/gate5-prefilter/prefilter.mjs <task-folder> [base-branch=main]
+//   node adapters/gate5-prefilter/prefilter.mjs <task-folder> [base-branch=main] [stage=adversarial_review]
+//
+// `stage` is the stage being DISPATCHED (what --advance was asked for), so the
+// gate it guards is the one just behind it: technical_plan <- Gate 2 (AC),
+// implementation <- Gate 3 (test plan), adversarial_review <- Gate 5. A stage
+// not in STAGES exits 0 — an unknown stage is never a block (#113).
 //
 //   exit 0  skipped (no key, no endpoint, bad response, low confidence, too
 //           large) OR the decision was PASS. Either way: run the real adversary.
@@ -58,6 +63,34 @@ export const QUESTIONS = {
   },
 };
 
+// #113: Gates 2 and 3 read only 02/03, so the state is two short tables
+// (~0.3-0.8k tokens, 0.2-1.8 s) and the whole call costs less than one dispatch
+// of the role it would save. Measured on the real API (jev-1.13.0, 2026-10-11):
+//   Gate 2: 11/14 vague-AC sets blocked, 0/20 measurable sets blocked.
+//   Gate 3:  2/6 thin plans blocked ("TBD", "verify manually"), 0/3 sound plans.
+// Misses are real: a vague AC next to concrete ones ("`total` is computed
+// correctly") reads PASS-ish, and a plan that tests the WRONG value (150, not the
+// boundary 100) is not seen at all — that is #107's lane. Same one-way rule as
+// Gate 5: FAIL >= MIN_CONFIDENCE blocks, PASS never does.
+const AC_VAGUE = { type: "noul", instructions: "Is there an acceptance criterion whose pass/fail cannot be decided by a test with a concrete input and an expected value (it uses subjective words like fast, good, friendly, reasonable, appropriate, sufficient)?" };
+const PLAN_GAP = { type: "noul", instructions: "Is there an AC in the AC table that appears in neither the Covers AC column of the test plan nor the table of ACs that cannot be automated?" };
+const PLAN_PLACEHOLDER = { type: "noul", instructions: "Does any test-plan row have a placeholder instead of a runnable command (TBD, TODO, '...', 'verify manually', 'covered by existing tests')?" };
+const verdict = (gate, PASS, FAIL) => ({ type: "choice", instructions: `${gate} verdict.`, criteria: { PASS, FAIL } });
+
+export const STAGES = {
+  technical_plan: {
+    questions: { ac_vague: AC_VAGUE, verdict: verdict("Gate 2 on these acceptance criteria", "Every AC names a concrete input and an exact expected output or observable state.", "At least one AC is subjective or untestable as written.") },
+    state: (task) => ["## AC", section(rd(task, "02-FSD-Review.md"), "## Acceptance criteria", "## BA questions")].join("\n"),
+  },
+  implementation: {
+    questions: { plan_gap: PLAN_GAP, placeholder: PLAN_PLACEHOLDER, verdict: verdict("Gate 3 on this test plan", "Every AC is covered by a runnable one-shot command or is listed as not automatable with an alternative.", "An AC is uncovered, or a covering row is a placeholder rather than a runnable command.") },
+    state: (task) => ["## AC", section(rd(task, "02-FSD-Review.md"), "## Acceptance criteria", "## BA questions"), section(rd(task, "03-Technical-Plan.md"), "## Test plan", "## Implementation checklist")].join("\n"),
+  },
+  adversarial_review: { questions: QUESTIONS, state: (task, base) => collectState(task, base) },
+};
+
+const rd = (task, f) => (existsSync(join(task, f)) ? readFileSync(join(task, f), "utf8") : "");
+
 // Section of a markdown file between two headings. Absent section = "", never a
 // throw: a task missing an artifact is the gate's business, not this script's.
 export function section(text, from, to) {
@@ -90,13 +123,13 @@ export function buildState({ review, plan, notes, evidence, diff, sources, tests
 // Everything the decision model sees, gathered by running real commands in cwd.
 // Exported so a measurement reads exactly the state the CLI sends.
 export function collectState(task, base = "main") {
-  const rd = (f) => (existsSync(join(task, f)) ? readFileSync(join(task, f), "utf8") : "");
+  const rd1 = (f) => rd(task, f);
   const sh = (cmd, args) => { try { return execFileSync(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); } catch (e) { return e.stdout ?? ""; } };
   const files = (dir) => sh("git", ["ls-files", dir]).split("\n").filter(Boolean).map((f) => `### ${f}\n${readFileSync(f, "utf8")}`).join("\n");
-  const ev = rd("08-Test-Evidence.md");
+  const ev = rd1("08-Test-Evidence.md");
   return buildState({
-    review: rd("02-FSD-Review.md"), plan: rd("03-Technical-Plan.md"),
-    notes: rd("06-Implementation-Notes.md"), evidence: ev,
+    review: rd1("02-FSD-Review.md"), plan: rd1("03-Technical-Plan.md"),
+    notes: rd1("06-Implementation-Notes.md"), evidence: ev,
     diff: sh("git", ["diff", "--stat", base, "--", "src", "test"]),
     sources: files("src"), tests: files("test"),
     testRun: sh("npm", ["run", "--silent", "test:scope"]),
@@ -106,11 +139,11 @@ export function collectState(task, base = "main") {
   });
 }
 
-export async function decide(state, { fetchImpl = fetch } = {}) {
+export async function decide(state, { fetchImpl = fetch, questions = QUESTIONS } = {}) {
   const res = await fetchImpl(ENDPOINT, {
     method: "POST",
     headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, state, questions: QUESTIONS }),
+    body: JSON.stringify({ model: MODEL, state, questions }),
     signal: AbortSignal.timeout(20000),
   });
   if (!res.ok) return { skip: `decision endpoint returned ${res.status}` };
@@ -124,18 +157,20 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   const task = process.argv[2];
   if (!task) skip("usage: prefilter.mjs <task-folder> [base-branch]");
   const base = process.argv[3] ?? "main"; // the task's target branch (00-Metadata), not always main
-  if (!KEY) skip("no TYPESAFE_API_KEY — the adversary runs as usual");
-  const state = collectState(task, base);
+  const stage = STAGES[process.argv[4] ?? "adversarial_review"];
+  if (!stage) skip(`no pre-filter for stage "${process.argv[4]}"`);
+  if (!KEY) skip("no TYPESAFE_API_KEY — the real role runs as usual");
+  const state = stage.state(task, base);
   if (Buffer.byteLength(state) > MAX_STATE_BYTES) skip(`state ${Buffer.byteLength(state)}B over ${MAX_STATE_BYTES}B`);
 
   let r;
-  try { r = await decide(state); } catch (e) { skip(`decision call failed: ${e.message}`); }
+  try { r = await decide(state, { questions: stage.questions }); } catch (e) { skip(`decision call failed: ${e.message}`); }
   if (r.skip) skip(r.skip);
   if (r.choice !== "FAIL") skip(`verdict ${r.choice} is not actionable on its own — a PASS here has been measured wrong at confidence 0.98`);
   if (r.confidence < MIN_CONFIDENCE) skip(`FAIL at confidence ${r.confidence.toFixed(2)} < ${MIN_CONFIDENCE}`);
   const why = Object.entries(r.answers).filter(([k, a]) => a.type === "noul" && a.noul >= 0.7).map(([k]) => k);
   console.error(`gate5-prefilter: FAIL (confidence ${r.confidence.toFixed(2)})${why.length ? ` — ${why.join(", ")}` : ""}`);
-  console.error("This is a cheap pre-read, not the Gate 5 record: the adversary still owns 09.");
+  console.error("This is a cheap pre-read, not a gate record: the real role still owns the artifact.");
   // 78, not 1: node exits 1 on an uncaught throw, and a crash must never block (#109).
   process.exit(78);
 }

@@ -4488,11 +4488,13 @@ if (args.has("--advance")) {
     : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
   if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
-  // #109: dispatching the adversary only — never on a re-run that is going back.
-  if (stage === "adversarial_review" && d.attempt && existsSync(join(__dirname, PREFILTER_SCRIPT()))) {
+  // #109/#113: any dispatch, never a re-run that is going back. The script decides
+  // per stage whether it has an opinion (unknown stage = exit 0); the kernel only
+  // names the stage and reads the exit code.
+  if (d.attempt && existsSync(join(__dirname, PREFILTER_SCRIPT()))) {
     const base = /\|\s*Target branch\s*\|\s*`?([^`|\s]+)`?\s*\|/.exec(existsSync(join(dir, "00-Metadata.md")) ? readFileSync(join(dir, "00-Metadata.md"), "utf8") : "")?.[1] ?? "main";
-    const pf = prefilterVerdict(spawnSync(process.execPath, [join(__dirname, PREFILTER_SCRIPT()), dir, base], { cwd: REPO_ROOT, encoding: "utf8", timeout: 30000 }));
-    if (pf.block) { console.error(`✖ --advance ${stage}: pre-filter FAIL (#109) — the adversary is not dispatched; send the task back to the implementer\n  ${pf.why.replace(/\n/g, "\n  ")}`); process.exit(1); }
+    const pf = prefilterVerdict(spawnSync(process.execPath, [join(__dirname, PREFILTER_SCRIPT()), dir, base, stage], { cwd: REPO_ROOT, encoding: "utf8", timeout: 30000 }));
+    if (pf.block) { console.error(`✖ --advance ${stage}: pre-filter FAIL (#109/#113) — ${stage} is not dispatched; send the task back to ${d.prev ?? "the previous role"}\n  ${pf.why.replace(/\n/g, "\n  ")}`); process.exit(1); }
   }
   if (d.attempt) {
     const lease = spawnSync(process.execPath, [join(__dirname, "lease.mjs"), "renew", dir], { encoding: "utf8" });

@@ -205,11 +205,13 @@ git worktree remove <path> && git branch -d <branch>   # -d, NOT -D: -d refuses 
 **This** task's worktree is never in the list (not merged yet) — so step 7 never
 touches what you just did.
 
-## K. Optional Gate 5 pre-filter (#108, #109)
+## K. Optional Gate 2/3/5 pre-filter (#108, #109, #113)
 
-`--advance <task> adversarial_review` runs `scripts/gate5-prefilter.mjs` itself when that file exists. It used to be a line in this command for the coordinator to run; a real 7-stage run read that line and never ran it, so it moved to the one command a coordinator cannot skip.
+`--advance <task> <stage>` runs `scripts/gate5-prefilter.mjs` itself when that file exists. It used to be a line in this command for the coordinator to run; a real 7-stage run read that line and never ran it, so it moved to the one command a coordinator cannot skip.
 
-Exit `78` from the script → `--advance` exits `1` with `pre-filter FAIL`, the adversary is not dispatched, and that counts as the one Gate 5 FAIL retry. Any other outcome — no script, no `TYPESAFE_API_KEY`, exit `0`, a crash (node exits `1` on a throw, which is why `1` is not the signal), a 30 s timeout — dispatches the adversary as before.
+The script decides per stage whether it has an opinion: `technical_plan` (Gate 2: are the AC testable), `implementation` (Gate 3: does the plan cover every AC with a runnable command), `adversarial_review` (Gate 5). Any other stage exits `0`.
+
+Exit `78` from the script → `--advance` exits `1` with `pre-filter FAIL`, the stage is not dispatched, and the task goes back to the role that just handed over (`fsd-reviewer`, `technical-planner`, implementer). That counts as the one gate FAIL retry. Any other outcome — no script, no `TYPESAFE_API_KEY`, exit `0`, a crash (node exits `1` on a throw, which is why `1` is not the signal), a 30 s timeout — dispatches the adversary as before.
 
 Only a confident FAIL is acted on. A PASS is never trusted: two real bugs came back PASS at confidence 0.78 and 0.98, because it reads text and never runs code. Measured through the script on 20 cases: 5 of 14 buggy caught, 0 of 6 clean wrongly flagged — a small saving (about a third of bad tasks) that never costs a good one.
 
