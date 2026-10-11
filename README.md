@@ -17,6 +17,8 @@ npx spec-harness         # Claude Code
 npx spec-harness --cli codex,cursor   # thêm CLI khác (danh sách đầy đủ: docs/advanced.md)
 ```
 
+Xem trước (không ghi gì): `npx spec-harness --dry-run` — liệt kê file sẽ tạo mới và file sẽ bị đè.
+
 Nâng cấp: `npx spec-harness@latest`. Config bạn đã sửa được giữ nguyên.
 
 > [!WARNING]
