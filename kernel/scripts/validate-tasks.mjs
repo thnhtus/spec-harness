@@ -31,7 +31,7 @@
 
 import { readFileSync, readdirSync, existsSync, statSync, statfsSync, writeFileSync, renameSync, rmSync, mkdirSync as mkdirP } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
+import { matchesGlob, join, dirname, relative, resolve, isAbsolute, parse as parsePath, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
@@ -1987,6 +1987,30 @@ if (args.has("--self-check")) {
   assert.equal(prefilterVerdict({ status: PREFILTER_FAIL_EXIT(), stderr: "" }).why, "pre-filter says FAIL", "an empty reason still blocks");
   for (const [name, r] of [["exit 0", { status: 0 }], ["exit 1 = an uncaught throw in node", { status: 1 }], ["exit 2", { status: 2 }], ["crash", { status: 255 }], ["timeout/signal", { status: null, signal: "SIGTERM" }], ["spawn error", { status: null, error: new Error("ENOENT") }], ["undefined", undefined]])
     assert.equal(prefilterVerdict(r).block, false, `${name} must be fail-open`);
+  // #116: the base both --pack and the pre-filter diff against comes from 00, not a guess.
+  assert.equal(targetBranch("| Target branch | `develop` |"), "develop");
+  assert.equal(targetBranch("| Target branch | release/2.0 |"), "release/2.0");
+  assert.equal(targetBranch(""), "main", "no 00-Metadata → main, never a throw");
+
+  // #115: a file changed but in neither 03's Files to change nor 06's Plan Deviations
+  // is the scope-creep finding an adversary round used to be spent on.
+  {
+    const plan = "## Files to change\n\n| File | Type |\n| --- | --- |\n| `src/a.js` | edit |\n\n## Test plan";
+    const un = (changed, notes = "") => undeclaredFiles({ changed, plan, notes });
+    assert.deepEqual(scopeFiles("## 3.1 Files to change\n| `src/n.js` | x |\n## 3.2 x"), ["src/n.js"], "a numbered heading is still the table");
+    assert.deepEqual(scopeFiles("## 1. Files to change\n| `src/m.js` | x |"), ["src/m.js"], "…also with a trailing dot");
+    assert.deepEqual(scopeFiles("## Files to change\n| `tests/f/*.html` (5 files) | new |"), ["tests/f/*.html"], "a note after the path is prose, not part of the row");
+    const g = (changed) => undeclaredFiles({ changed, plan: "## Files to change\n| `tests/fixtures/t/*.html` | new |\n## Test plan" });
+    assert.deepEqual(g(["tests/fixtures/t/a.html", "tests/fixtures/t/b.html"]), [], "a glob row covers the files it names");
+    assert.deepEqual(g(["tests/fixtures/t/sub/a.html", "tests/fixtures/t/a.json"]), ["tests/fixtures/t/a.json", "tests/fixtures/t/sub/a.html"], "…and not a deeper dir or another extension");
+    assert.deepEqual(un(["src/a.js"]), [], "a planned file is in scope");
+    assert.deepEqual(un(["src/a.js", "test/a.test.js"]), ["test/a.test.js"], "an unplanned file is named");
+    assert.deepEqual(un(["test/a.test.js"], "## Plan Deviations\n- added `test/a.test.js` because …\n## Handoff"), [], "declared in 06 → in scope");
+    assert.deepEqual(un(["test/a.test.js"], "## Plan Deviations\n- we changed some tests\n## Handoff"), ["test/a.test.js"], "prose that never names the path does not declare it");
+    assert.deepEqual(un(["docs/tasks/sprint-1/X/09-Adversarial-Review.md"]), [], "the task's own artifacts are not code changes");
+    assert.deepEqual(un([], "## Plan Deviations"), [], "nothing changed → nothing to say");
+  }
+
   // #107: values an AC names must appear in the test it points at.
   {
     const rev = "| AC-01 | `discount(t)` trả `t * 0.9` khi `t >= 100` — kể cả `t = 100` → 90 | x | confirmed | TC-01 |\n| AC-02 | works for users | x | confirmed | TC-02 |\n| AC-nn | `5` | x | | |";
@@ -2435,6 +2459,19 @@ if (args.has("--self-check")) {
     const t = (o) => ({ taskComplexity: "normal", attempts: {}, outcome: { closedAt: "2026-01-01" }, ...o });
     assert.equal(calibrate([]).tasks, 0, "no closed task → nothing to say");
     assert.equal(calibrate([{ taskComplexity: "high" }]).tasks, 0, "unclosed task is not evidence");
+
+    // #114: a 2-second dispatch is bookkeeping, not a retry. It is reported, never
+    // subtracted — attempts is the retry budget and must not be gameable.
+    {
+      const run = (s, e, stage = "fsd_write") => ({ stage, startedAt: `2026-01-01T00:00:${s}Z`, endedAt: `2026-01-01T00:00:${e}Z` });
+      const c0 = calibrate([t({ attempts: { fsd_write: 3 }, telemetry: [run("00", "02"), run("02", "04"), { stage: "fsd_write", startedAt: "2026-01-01T00:00:00Z", endedAt: "2026-01-01T00:09:00Z" }] })]);
+      assert.equal(c0.shortRuns.n, 2, "two sub-30s dispatches are named");
+      assert.deepEqual(c0.shortRuns.byStage, { fsd_write: 2 });
+      assert.match(c0.findings[0], /2 dispatch\(es\) under 30s/, "reported first — it qualifies every stage finding below");
+      assert.equal(c0.byLabel.normal.retries, 2, "attempts is NOT corrected: that would let an agent reset its own budget");
+      assert.equal(calibrate([t({ telemetry: [{ stage: "x", startedAt: "2026-01-01T00:00:00Z" }, { stage: "x" }] })]).shortRuns.n, 0, "an open or stamp-less entry has no duration to judge");
+      assert.equal(calibrate([t({ telemetry: [run("05", "00")] })]).shortRuns.n, 0, "a negative duration is a clock problem, not a short run");
+    }
 
     // One hard task is not a trend. A finding here sends someone to rewrite the
     // §5.1.1 thresholds on a sample of one.
@@ -3975,6 +4012,11 @@ export function advanceDecision(data, stage, { stages = STAGE_ORDER, roleStage =
 // by node itself. The pure part, so the fail-open table is asserted cheaply.
 // Functions, not consts: the self-check runs above this line, and a const would
 // still be in its temporal dead zone there.
+// The task's target branch from 00-Metadata (not always main) — the base both the
+// pre-filter and --pack take their diff against.
+export function targetBranch(text = "") { return /\|\s*Target branch\s*\|\s*`?([^`|\s]+)`?\s*\|/.exec(text)?.[1] ?? "main"; }
+const packBase = (dir) => targetBranch(existsSync(join(dir, "00-Metadata.md")) ? readFileSync(join(dir, "00-Metadata.md"), "utf8") : "");
+
 export function PREFILTER_SCRIPT() { return "gate5-prefilter.mjs"; }
 export function PREFILTER_FAIL_EXIT() { return 78; }
 export function prefilterVerdict(result) {
@@ -4079,8 +4121,31 @@ export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, hand
 
 // The paths in 03's "Files to change" table: first cell of each row, backticks stripped.
 export function scopeFiles(plan = "") {
-  const sec = plan.split(/^## /m).find((s) => /^Files to change/i.test(s)) ?? "";
-  return sec.split("\n").map((l) => /^\|\s*`([^`]+)`\s*\|/.exec(l)?.[1]).filter(Boolean);
+  // `## 3.1 Files to change` / `## 1. Files to change` are real headings in shipped
+  // tasks (7 of 28 in one history); matching only the bare title made every file of
+  // those tasks look unplanned (#115).
+  const sec = plan.split(/^## /m).find((s) => /^[\d.]*\s*Files to change/i.test(s)) ?? "";
+  // The path is the backticked span in the first cell; a note after it ("(5 files)",
+  // "(new)") is prose, not part of the path, and dropping the whole row over it made
+  // every file of that row read as unplanned (#115).
+  return sec.split("\n").map((l) => /^\|[^|`]*`([^`]+)`[^|]*\|/.exec(l)?.[1]).filter(Boolean);
+}
+
+// #115: scope creep, decided by the two files that already answer it — 03's
+// "Files to change" (the plan) and 06's "Plan Deviations" (the declared
+// exceptions). Everything else that changed is a finding. Pure so --self-check
+// owns the rules; the git read is the caller's.
+// ponytail: a deviation "declares" a path by naming it literally (the row/prose
+// contains the path). Prose that waves at a file without naming it does not
+// count — that is the SR-002-D case, where the handoff said "exactly 4 files".
+export function undeclaredFiles({ changed = [], plan = "", notes = "", tasksRel = null }) {
+  const allowed = scopeFiles(plan);
+  const dev = notes.split(/^## /m).filter((x) => /^[\d.]*\s*Plan Deviations/i.test(x)).join("\n");
+  return changed
+    .filter((p) => !(tasksRel && p.startsWith(tasksRel)) && !/(^|\/)docs\/tasks\//.test(p))
+    .filter((p) => !allowed.some((a) => p === a || p.endsWith("/" + a) || (a.includes("*") && matchesGlob(p, a))))
+    .filter((p) => !dev.includes(p))
+    .sort();
 }
 
 if (args.has("--pack")) {
@@ -4491,10 +4556,38 @@ if (args.has("--advance")) {
   // #109/#113: any dispatch, never a re-run that is going back. The script decides
   // per stage whether it has an opinion (unknown stage = exit 0); the kernel only
   // names the stage and reads the exit code.
+  const slicePre = argv.includes("--slice") ? argv[argv.indexOf("--slice") + 1] : null;
   if (d.attempt && existsSync(join(__dirname, PREFILTER_SCRIPT()))) {
-    const base = /\|\s*Target branch\s*\|\s*`?([^`|\s]+)`?\s*\|/.exec(existsSync(join(dir, "00-Metadata.md")) ? readFileSync(join(dir, "00-Metadata.md"), "utf8") : "")?.[1] ?? "main";
-    const pf = prefilterVerdict(spawnSync(process.execPath, [join(__dirname, PREFILTER_SCRIPT()), dir, base, stage], { cwd: REPO_ROOT, encoding: "utf8", timeout: 30000 }));
+    const pf = prefilterVerdict(spawnSync(process.execPath, [join(__dirname, PREFILTER_SCRIPT()), dir, packBase(dir), stage], { cwd: REPO_ROOT, encoding: "utf8", timeout: 30000 }));
     if (pf.block) { console.error(`✖ --advance ${stage}: pre-filter FAIL (#109/#113) — ${stage} is not dispatched; send the task back to ${d.prev ?? "the previous role"}\n  ${pf.why.replace(/\n/g, "\n  ")}`); process.exit(1); }
+  }
+  // #115: Gate 5 is about to spend an adversary on a question a diff answers.
+  // SR-002-D was sent back for a config change that was in neither 03 nor 06 —
+  // finding F-01 was a set difference, not a judgement. Only when it is a first
+  // dispatch of the stage (a re-run that is going back is already past this), and
+  // only with real git: no git → no witness, no finding (fail-open, like #71).
+  if (stage === "adversarial_review" && d.attempt) {
+    const repo0 = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
+    const top = gitAt(repo0, "rev-parse", "--show-toplevel")?.trim();
+    const mb = top && gitAt(repo0, "merge-base", packBase(dir), "HEAD")?.trim();
+    if (top && mb) {
+      const changed = [...new Set([...(gitAt(repo0, "diff", "--name-only", mb) ?? "").split("\n"), ...dirtyPaths(repo0)])].filter(Boolean);
+      const rd0 = (f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : "");
+      const bad = undeclaredFiles({ changed, plan: rd0("03-Technical-Plan.md"), notes: rd0("06-Implementation-Notes.md"), tasksRel: relative(top, TASKS_DIR).split(sep).join("/") + "/" });
+      if (bad.length) { console.error(`✖ --advance adversarial_review: changed but in neither 03 "Files to change" nor 06 "Plan Deviations": ${bad.join(", ")}\n  add each to 03 or declare it in 06 (name the path), or revert it — the adversary is not dispatched (#115)`); process.exit(1); }
+    }
+  }
+  // #116: the pack cap is a gate, and it was only read when a role ran --pack.
+  // Two real Gate 5 FAILs were "rules+prose over the cap", found AFTER a 54k-132k
+  // token adversary round — and the second time the cap was raised to get past it.
+  // Checking it here costs local file reads and fails before anything is written.
+  // Only exit 1 (over the cap) blocks: exit 2 is --pack's own usage error and the
+  // dispatch-shape checks above already own those cases.
+  if (d.attempt) {
+    const pk = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--pack", dir, stage, "--config", CONFIG_PATH,
+      ...(stage === "adversarial_review" ? ["--base", packBase(dir)] : []), ...(slicePre ? ["--slice", slicePre] : [])],
+      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    if (pk.status === 1) { process.stderr.write(pk.stderr); console.error(`✖ --advance ${stage}: the pack is over packCap.${stage} — split the task or trim the artifacts; raising the cap is how this became a Gate 5 FAIL twice (#116)`); process.exit(1); }
   }
   if (d.attempt) {
     const lease = spawnSync(process.execPath, [join(__dirname, "lease.mjs"), "renew", dir], { encoding: "utf8" });
@@ -5009,6 +5102,22 @@ function calibrate(tasks) {
       if (typeof e.inputTokens === "number") (b.tok += e.inputTokens), b.tokRuns++;
   }
 
+  // #114: `attempts` counts dispatches, and not every dispatch is a round of
+  // work. In a real 28-task history 6 of 145 dispatches lasted under 30 s and 7
+  // were handoff-logged as "telemetry backfill" — all of them counted as retries,
+  // which is how "fsd_write retries most" got into a report.
+  // attempts is NOT corrected: lowering it would hand every agent a way to reset
+  // its retry budget by dispatching twice in a second. The count is reported
+  // beside the retry numbers so a reader can see how much of it is real.
+  const SHORT = (CFG.calibrateShortDispatchSeconds ?? 30) * 1000;
+  const shortRuns = { n: 0, byStage: {} };
+  for (const t of closed)
+    for (const e of t.telemetry ?? []) {
+      if (!e.startedAt || !e.endedAt) continue;
+      const ms = Date.parse(e.endedAt) - Date.parse(e.startedAt);
+      if (Number.isFinite(ms) && ms >= 0 && ms < SHORT) (shortRuns.n++, shortRuns.byStage[e.stage] = (shortRuns.byStage[e.stage] ?? 0) + 1);
+    }
+
   // A stage that keeps bouncing points at the dimension that feeds it.
   const STAGE_DIM = {
     fsd_review: "uncertainty",
@@ -5055,7 +5164,15 @@ function calibrate(tasks) {
       `${splits} task(s) ended in status=split — each one exhausted the retry budget before being cut up; that is "scope" scored too low at bootstrap (§5.1.1)`,
     );
 
-  return { tasks: closed.length, coverage, splits, byLabel, retriesByStage, findings };
+  // Loud, and ahead of the stage findings it undermines: a reader who acts on
+  // "stage X retries most" without knowing a third of those runs took 2 seconds
+  // is retuning thresholds against bookkeeping.
+  if (shortRuns.n)
+    findings.unshift(
+      `${shortRuns.n} dispatch(es) under ${SHORT / 1000}s (${Object.entries(shortRuns.byStage).map(([k, v]) => `${k} ${v}`).join(", ")}) — too short to be a round of work (backfill, a re-stamp, an aborted run); they still count in attempts, so treat the stage retry numbers above as an upper bound (#114)`,
+    );
+
+  return { tasks: closed.length, coverage, splits, byLabel, retriesByStage, shortRuns, findings };
 }
 
 // ---------------------------------------------------------------------------
@@ -5684,6 +5801,7 @@ if (CALIBRATE) {
   else {
     console.log(`\n── calibration · ${c.tasks} closed task(s) ──`);
     console.log(`   outcome coverage: ${c.coverage.withOutcome}/${c.coverage.shipped} shipped task(s)`);
+    if (c.shortRuns?.n) console.log(`   short dispatches (<${(CFG.calibrateShortDispatchSeconds ?? 30)}s): ${c.shortRuns.n} — counted in attempts, probably not work (#114)`);
     if (c.note) console.log(`   ${c.note}`);
     for (const [label, b] of Object.entries(c.byLabel ?? {}))
       console.log(

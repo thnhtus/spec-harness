@@ -2352,6 +2352,37 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       const pa = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--pack", T, "adversarial_review", "--base", "main"], { cwd: P, encoding: "utf8" });
       if (pa.status !== 0 || !/src\/discount\.js\s+\[S1\]/.test(pa.stdout) || !/test\/discount\.test\.js\s+\[S2\]/.test(pa.stdout)) fail("#74: --pack adversarial_review trên 03 chia slice phải gắn [S<n>] cho từng file", pa.stdout.slice(-600) + pa.stderr);
       writeFileSync(sF, sK); writeFileSync(tF, tK); }
+    // #115 e2e: a file changed outside 03 and 06 stops --advance adversarial_review before the
+    // adversary is dispatched; declaring it (naming the path) in 06 Plan Deviations lets it through.
+    {
+      const jK = read(jp), nP = join(P, T, "06-Implementation-Notes.md"), nK = read(nP), strayF = join(P, "src/stray.js");
+      const toGate5 = () => writeFileSync(jp, JSON.stringify({ ...JSON.parse(jK), currentStage: "adversarial_review", status: "in_progress", telemetry: [] }));
+      writeFileSync(planP, planKeep); toGate5();
+      writeFileSync(strayF, "export const x = 1;\n");
+      const bad = adv(T, "adversarial_review", "--cli", "claude");
+      if (bad.status !== 1 || !/src\/stray\.js/.test(bad.stderr) || !/#115/.test(bad.stderr)) fail("#115: file ngoài 03 và 06 phải chặn --advance adversarial_review, nêu đường dẫn", bad.stderr);
+      if (J().telemetry.length) fail("#115: bị chặn mà vẫn ghi telemetry (adversary coi như đã dispatch)");
+      toGate5();
+      writeFileSync(nP, nK.replace(/(## Plan Deviations[^\n]*\n)/, "$1\n- added `src/stray.js` — scratch helper for the fixture\n"));
+      const okDev = adv(T, "adversarial_review", "--cli", "claude");
+      if (okDev.status !== 0) fail("#115: file khai trong 06 Plan Deviations (nêu đường dẫn) phải qua", okDev.stderr);
+      writeFileSync(nP, nK); rmSync(strayF, { force: true }); writeFileSync(jp, jK); writeFileSync(planP, slicedPlan);
+    }
+    // #116 e2e: a pack over packCap.<stage> stops --advance before the role runs — the cap used to be read
+    // only when a role called --pack, so two Gate 5 rounds were spent finding "pack over the cap".
+    {
+      const jK = read(jp), cK = read(cfgP), cj = JSON.parse(cK);
+      const toStage = (st) => writeFileSync(jp, JSON.stringify({ ...JSON.parse(jK), currentStage: st, status: "in_progress", telemetry: [] }));
+      writeFileSync(planP, planKeep);
+      writeFileSync(cfgP, JSON.stringify({ ...cj, packCap: { ...cj.packCap, technical_plan: 10 } })); toStage("technical_plan");
+      const attBefore = J().attempts?.technical_plan ?? 0;
+      const over = adv(T, "technical_plan", "--cli", "claude");
+      if (over.status !== 1 || !/packCap\.technical_plan/.test(over.stderr) || !/#116/.test(over.stderr)) fail("#116: pack vượt packCap phải chặn --advance trước dispatch", over.stderr);
+      if (J().telemetry.length || (J().attempts?.technical_plan ?? 0) !== attBefore) fail("#116: bị chặn mà vẫn ghi attempts/telemetry");
+      writeFileSync(cfgP, cK); toStage("technical_plan");
+      if (adv(T, "technical_plan", "--cli", "claude").status !== 0) fail("#116: pack trong cap phải qua");
+      writeFileSync(cfgP, cK); writeFileSync(jp, jK); writeFileSync(planP, slicedPlan);
+    }
     // #71: entry S1 đang mở có snapshot; S1 sửa file của S2 → --advance kế tiếp exit 1, không ghi gì.
     {
       if (!s1[2].scopeSnap?.head) fail("#71: --advance --slice không lưu scopeSnap", JSON.stringify(s1[2]));
