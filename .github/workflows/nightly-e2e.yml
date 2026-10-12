@@ -18,9 +18,9 @@ on:
 
 jobs:
   eval:
-    # Mỗi job tốn tiền thật. timeout-minutes là trần cứng: một agent treo không
+    # Mỗi job tốn tiền thật. Đo local: ~5-9 phút/case x 7 case = 35-65 phút, nên 90. Trần cứng: một agent treo không
     # được phép đốt hết quota runner.
-    timeout-minutes: 45
+    timeout-minutes: 90
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -58,7 +58,7 @@ jobs:
             claude) AGENT='claude -p --agent adversary --permission-mode bypassPermissions --strict-mcp-config' ;;
             codex)  AGENT='codex exec --json --dangerously-bypass-approvals-and-sandbox -' ;;
           esac
-          node install.mjs --eval --agent "$AGENT" --timeout 900 --keep | tee eval.log
+          node install.mjs --eval --agent "$AGENT" --timeout 1200 --keep | tee eval.log
 
       # Log của agent là thứ duy nhất trả lời được "nó trượt ở đâu" sau một đêm.
       - if: always() && steps.gate.outputs.run == 'yes'
