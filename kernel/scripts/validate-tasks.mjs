@@ -24,7 +24,7 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --triage, --calibrate, --lite-check <file>, --config <path>,
+ * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --report, --writeback, --triage, --calibrate, --lite-check <file>, --config <path>,
  *        --staged (only task folders touched by the current git index),
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
@@ -1702,6 +1702,115 @@ export function trackerConfigError(tracker) {
   return null;
 }
 
+// #121: per-task token cap. 0/absent = off. Counts fresh input + output as recorded in
+// telemetry (collect-telemetry); cache reads bill ~1/10 and are priced apart, so excluded.
+// ponytail: only dispatches whose tokens were collected count -- a dispatch with no
+// collect-telemetry run is invisible here. Upgrade path: collect inside --advance.
+export function budgetConfigError(b) {
+  const m = b?.maxTokensPerTask ?? 0;
+  return Number.isInteger(m) && m >= 0 ? null : `config.budget.maxTokensPerTask must be a non-negative integer (0 = off), got ${JSON.stringify(m)}`;
+}
+export function budgetSpent(telemetry = []) {
+  return telemetry.reduce((n, e) => n + (typeof e?.inputTokens === "number" ? e.inputTokens + (e.outputTokens ?? 0) : 0), 0);
+}
+export function budgetDefect(telemetry, max) {
+  if (!max) return null;
+  const spent = budgetSpent(telemetry);
+  return spent >= max ? `task has used ${spent.toLocaleString()} tokens (fresh input + output) ≥ budget.maxTokensPerTask ${max.toLocaleString()}` : null;
+}
+// Per-group rollup for --report. Pure so the self-check can pin the arithmetic.
+export function reportRows(tasks, groupField) {
+  const g = new Map();
+  for (const t of tasks) {
+    const k = String(t[groupField] ?? "-"), r = g.get(k) ?? { group: k, tasks: 0, input: 0, cacheRead: 0, output: 0, retries: 0, uncollected: 0 };
+    r.tasks++;
+    for (const e of t.telemetry ?? []) {
+      if (typeof e.inputTokens === "number") { r.input += e.inputTokens; r.cacheRead += e.cacheReadTokens ?? 0; r.output += e.outputTokens ?? 0; }
+      else r.uncollected++;
+    }
+    for (const n of Object.values(t.attempts ?? {})) r.retries += Math.max(0, n - 1);
+    g.set(k, r);
+  }
+  return [...g.values()].sort((a, b) => a.group.localeCompare(b.group, undefined, { numeric: true }));
+}
+
+// #119: is the validator a REQUIRED check on the integration branch? Without it `--no-verify` + a
+// direct push skips every gate. Pure: takes what the host returned, so the verdicts are assertable.
+// classic = status of GET .../protection/required_status_checks (+ its contexts), rules = names of
+// rule types from GET .../rules/branches/<b> (rulesets). null input = could not ask = no opinion.
+export function protectionVerdict({ classic, rules }) {
+  if (classic == null && rules == null) return { ok: null, why: "could not query the git host" };
+  const names = [...(classic?.contexts ?? []), ...(classic?.checks ?? []).map((c) => c.context)];
+  if (names.some((n) => /validate-tasks|spec-harness/.test(n))) return { ok: true };
+  if ((rules ?? []).includes("required_status_checks")) return { ok: true, note: "ruleset requires status checks (names not verified)" };
+  if (names.length) return { ok: false, why: `required checks are ${names.join(", ")} — none is the validator` };
+  return { ok: false, why: "no required status check on the integration branch" };
+}
+
+// #120: tracker write-back decision. The harness never calls the tracker (the coordinator does,
+// through MCP), so idempotency is two things it CAN own: a marker every comment carries, and a
+// decision the coordinator reads instead of re-deriving. The marker is a visible token on purpose —
+// hidden HTML comments are stripped by some trackers' editors (Jira ADF), a visible one survives all.
+export const writeBackMarker = (taskId) => `[spec-harness:${taskId}]`;
+// `existing` = whatever the tracker's comment-list call returned, any shape: searched as text, so
+// ClickUp / Jira / Linear need no per-vendor parser.
+export const hasWriteBackMarker = (existing, taskId) => JSON.stringify(existing ?? "").includes(writeBackMarker(taskId));
+// #120: does the tracker actually have config.tracker.statusOnReview? Preflight cannot ask (no MCP in
+// CI); the coordinator can, right before moving the ticket. `statuses` = the tracker's status-list
+// response, any shape: every string value is a candidate. Case-insensitive because ClickUp returns
+// "ready for qc" for a status the UI shows as "Ready for QC". null = fine.
+export function statusMissing(statuses, want) {
+  const all = [], walk = (v) => typeof v === "string" ? all.push(v) : v && typeof v === "object" && Object.values(v).forEach(walk);
+  walk(statuses);
+  const norm = (x) => x.trim().toLowerCase();
+  if (all.some((x) => norm(x) === norm(want ?? ""))) return null;
+  const near = [...new Set(all.filter((x) => x.length < 40 && /[a-z]/i.test(x) && !/^https?:|^#?[0-9a-f]{6}$/i.test(x)))].slice(0, 12);
+  return `tracker has no status "${want}" — moving the ticket would fail or land elsewhere. Seen: ${near.join(", ") || "(no strings in the response)"}`;
+}
+
+export function writeBackDecision(data, tracker) {
+  const wb = tracker?.writeBack ?? "off", rec = data?.trackerWriteBack, marker = writeBackMarker(data?.taskId);
+  if (wb === "off") return { do: "nothing", marker };
+  const done = rec && (wb === "comment" || (rec.action === "status" && rec.status === tracker.statusOnReview));
+  if (done) return { do: "skip", why: `already recorded at ${rec.at} (${rec.action}${rec.status ? ` → ${rec.status}` : ""})`, marker };
+  // A recorded comment with status still owed: do NOT post a second comment.
+  return { do: wb, marker, commentAlreadyPosted: rec?.action === "comment", statusOnReview: wb === "status" ? tracker.statusOnReview : undefined };
+}
+// What a record says versus what config asks, at `reviewing`. null = fine.
+export function writeBackRecordDefect(rec, tracker) {
+  const wb = tracker?.writeBack ?? "off";
+  if (wb === "off" || !rec) return null;
+  if (wb === "status" && rec.action !== "status") return `trackerWriteBack.action is "${rec.action}" but config.tracker.writeBack="status" — the ticket was commented, never moved`;
+  if (wb === "status" && rec.status !== tracker.statusOnReview) return `trackerWriteBack.status "${rec.status}" ≠ config.tracker.statusOnReview "${tracker.statusOnReview}" — the ticket sits in a status this project does not call "review"`;
+  return null;
+}
+
+// #126: Gate 5 is only adversarial when the adversary runs in its own context. The installer writes
+// native role files for the CLIs below; for any other CLI the 7 roles are prose in AGENTS.md and the
+// adversary may share the implementer's context. "May": pi dispatches subagents through an extension
+// the installer cannot see, so this says "cannot verify", never "is not isolated".
+export const ROLE_DIRS = { claude: ".claude/agents", codex: ".codex/agents", cursor: ".claude/agents",
+  gemini: ".gemini/agents", qwen: ".qwen/agents", droid: ".factory/droids" };
+export function unisolatedClis(installed, exists) {
+  return [...new Set(installed)].filter((c) => !(ROLE_DIRS[c] && exists(ROLE_DIRS[c])));
+}
+export const isolationWarning = (c) =>
+  `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126)`;
+
+// #125: the default key lives in a file the agent (same OS user) can read. A keychain is the
+// cheap upgrade, so say so — but only when (a) the key IS a file, and (b) this machine really has
+// a keychain CLI. Telling a Windows box to run `security` teaches something it cannot do.
+// null = nothing to say. `has(cmd)` is injected so the self-check needs no real keychain.
+export function keyStoreAdvice({ env = process.env, platform = process.platform, has, keyFileExists }) {
+  if (env.SPEC_HARNESS_KEY || env.SPEC_HARNESS_KEY_CMD) return null;          // already out of the file
+  if (!keyFileExists) return null;                                           // no key yet: nothing signed with a file key
+  if (platform === "darwin" && has("security"))
+    return "the stamp key is a file the agent can read — move it into the Keychain: `security add-generic-password -a \"$USER\" -s spec-harness-stamp -w \"$(cat ~/.spec-harness/stamp.key)\" && export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'` then delete the file (#125)";
+  if (platform === "linux" && has("secret-tool"))
+    return "the stamp key is a file the agent can read — move it: `secret-tool store --label=spec-harness service spec-harness < ~/.spec-harness/stamp.key && export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'` then delete the file (#125)";
+  return null;
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2177,6 +2286,111 @@ if (args.has("--self-check")) {
   for (const [role, st] of Object.entries(ROLE_STAGE))
     assert.ok(STAGE_ORDER.includes(st), `config.roleStage.${role}: stage "${st}" not in config.stages`);
   assert.ok((CFG.retryBudget ?? 4) >= 2, "config.retryBudget must be at least 2 (one retry)");
+  {
+    const okRun = (o, st = 0) => () => ({ status: st, stdout: o }), nofile = () => { throw new Error("ENOENT"); };
+    assert.equal(keyFrom({ env: { SPEC_HARNESS_KEY: " abc " }, file: () => "file" }), "abc", "CI secret wins over the file");
+    assert.equal(keyFrom({ env: { SPEC_HARNESS_KEY_CMD: "x" }, run: okRun("kc\n"), file: () => "file" }), "kc", "keychain command wins over the file");
+    assert.equal(keyFrom({ env: {}, file: () => "file\n" }), "file", "no env = today's behaviour");
+    assert.equal(keyFrom({ env: {}, file: nofile }), null, "nothing configured = no key (signature checks skipped, not failed)");
+    assert.throws(() => keyFrom({ env: { SPEC_HARNESS_KEY_CMD: "x" }, run: okRun("", 1), file: () => "file" }), /not falling back/, "failing keychain must NOT downgrade to the file key");
+    assert.throws(() => keyFrom({ env: { SPEC_HARNESS_KEY_CMD: "x" }, run: okRun("  \n"), file: () => "file" }), /printed nothing/, "empty keychain output is a failure, not a blank key");
+    const L = (a) => protectionVerdict(a).ok;
+    assert.equal(L({}), null, "no answer from the host = no opinion (warn, never red)");
+    assert.equal(L({ classic: { contexts: ["validate-tasks"] } }), true);
+    assert.equal(L({ classic: { checks: [{ context: "spec-harness / validate-tasks" }] } }), true);
+    assert.equal(L({ classic: { contexts: ["lint"] } }), false, "a required check that is not the validator does not count");
+    assert.equal(L({ classic: null, rules: ["required_status_checks"] }), true, "rulesets count");
+    assert.equal(L({ classic: null, rules: [] }), false, "classic 404 + empty ruleset = unprotected");
+    assert.equal(L({ classic: { contexts: [] }, rules: ["deletion"] }), false);
+  }
+  {
+    // Contract fixtures: the SHAPE each tracker's MCP comment-list returns. One decision, three vendors.
+    const M = writeBackMarker("PRJ-7");
+    const fx = {
+      clickup: { comments: [{ id: "1", comment_text: `Done ${M} doc: docs/tasks/x` }] },
+      jira: { comments: [{ id: "9", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `Done ${M}` }] }] } }] },
+      linear: { data: { issue: { comments: { nodes: [{ body: `Done ${M}\n\nevidence: 08` }] } } } },
+    };
+    for (const [name, r] of Object.entries(fx)) assert.equal(hasWriteBackMarker(r, "PRJ-7"), true, `${name}: marker found in its own response shape`);
+    assert.equal(hasWriteBackMarker(fx.jira, "PRJ-8"), false, "another task's marker must not match");
+    assert.equal(hasWriteBackMarker({ comments: [] }, "PRJ-7"), false);
+    assert.equal(hasWriteBackMarker(undefined, "PRJ-7"), false, "no response = not posted");
+    assert.equal(hasWriteBackMarker({ c: "[spec-harness:PRJ-77]" }, "PRJ-7"), false, "PRJ-77 must not satisfy PRJ-7 (closing bracket is part of the marker)");
+    const t = { writeBack: "status", statusOnReview: "Ready for QC" }, d = { taskId: "PRJ-7" };
+    assert.equal(writeBackDecision(d, { writeBack: "off" }).do, "nothing");
+    assert.equal(writeBackDecision(d, t).do, "status");
+    assert.equal(writeBackDecision(d, t).statusOnReview, "Ready for QC");
+    assert.equal(writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "status", status: "Ready for QC" } }, t).do, "skip", "rerun after a recorded success = no-op");
+    const half = writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "comment" } }, t);
+    assert.deepEqual([half.do, half.commentAlreadyPosted], ["status", true], "comment done, move still owed: say so, so no second comment is posted");
+    assert.equal(writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "status", status: "Done" } }, t).do, "status", "moved to the WRONG status is not done");
+    assert.equal(writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "comment" } }, { writeBack: "comment" }).do, "skip");
+    assert.match(writeBackRecordDefect({ at: "T", action: "comment" }, t), /never moved/);
+    assert.match(writeBackRecordDefect({ at: "T", action: "status", status: "Done" }, t), /≠ config/);
+    assert.equal(writeBackRecordDefect({ at: "T", action: "status", status: "Ready for QC" }, t), null);
+    assert.equal(writeBackRecordDefect(undefined, t), null, "absence is reported elsewhere");
+    // statusOnReview vs the tracker's real list, in each vendor's shape
+    assert.equal(statusMissing({ statuses: [{ status: "to do" }, { status: "ready for qc", color: "#ff0000" }] }, "Ready for QC"), null, "clickup lowercases statuses");
+    assert.equal(statusMissing([{ id: "3", name: "Ready for QC", statusCategory: { key: "indeterminate" } }], "Ready for QC"), null, "jira transitions/statuses");
+    assert.equal(statusMissing({ data: { workflowStates: { nodes: [{ name: "In Review", type: "started" }] } } }, "In Review"), null, "linear workflowStates");
+    const sm = statusMissing({ statuses: [{ status: "to do", color: "#ff0000" }, { status: "qc" }] }, "Ready for QC");
+    assert.match(sm, /no status "Ready for QC"/); assert.match(sm, /to do, qc/); assert.doesNotMatch(sm, /#ff0000/, "colors are not status names");
+    assert.match(statusMissing({}, "X"), /no strings/);
+  }
+  {
+    const has = (...d) => (x) => d.includes(x);
+    assert.deepEqual(unisolatedClis(["claude", "codex"], has(".claude/agents", ".codex/agents")), [], "native role files = isolated, silent");
+    assert.deepEqual(unisolatedClis(["aider", "pi"], () => true), ["aider", "pi"], "no role dir mapped for the CLI = cannot verify, even if some dir exists");
+    assert.deepEqual(unisolatedClis(["gemini"], has(".claude/agents")), ["gemini"], "gemini needs ITS OWN dir, not claude's");
+    assert.deepEqual(unisolatedClis(["claude", "claude"], () => false), ["claude"], "mapped but files gone = warn once, not twice");
+    assert.match(isolationWarning("pi"), /cannot verify/, "wording must stay honest: pi may have extension subagents");
+    assert.doesNotMatch(isolationWarning("pi"), /is not isolated/);
+  }
+  {
+    const yes = (c) => ["security", "secret-tool"].includes(c), no = () => false, A = (o) => keyStoreAdvice({ env: {}, keyFileExists: true, has: yes, ...o });
+    assert.match(A({ platform: "darwin" }), /security add-generic-password/);
+    assert.match(A({ platform: "linux" }), /secret-tool store/);
+    assert.equal(A({ platform: "win32" }), null, "no keychain CLI we can name on Windows: say nothing");
+    assert.equal(A({ platform: "darwin", has: no }), null, "keychain CLI absent: do not teach a command that cannot run");
+    assert.equal(A({ platform: "darwin", env: { SPEC_HARNESS_KEY_CMD: "x" } }), null, "already using a keychain: silent");
+    assert.equal(A({ platform: "darwin", env: { SPEC_HARNESS_KEY: "k" } }), null, "CI secret: silent");
+    assert.equal(A({ platform: "darwin", keyFileExists: false }), null, "no file key exists: nothing to move");
+    assert.equal(A({ platform: "linux", has: (c) => c === "security" }), null, "macOS tool on Linux does not count");
+  }
+  {
+    const K = "k", row = (i) => ["2026-01-01T00:0" + i + ":00Z", "T-1", "impl", "1", "-", i % 2 ? "end" : "start"];
+    const build = (n, legacy = 0) => { let t = "", prev = ""; for (let i = 0; i < n; i++) { const l = i < legacy ? stampLine(K, row(i)) : stampLine(K, row(i), "-", prev); if (i >= legacy) prev = l.trimEnd().split("\t")[8]; t += l; } return t; };
+    const good = build(4);
+    assert.equal(stampChainBreak(good, K), null, "an intact chain passes");
+    assert.equal(lastChain(good), good.trimEnd().split("\n").at(-1).split("\t")[8]);
+    const L = good.split("\n").filter(Boolean);
+    assert.match(stampChainBreak([L[0], L[2], L[3]].join("\n") + "\n", K), /line 2: chain broken/, "deleting a middle line breaks the next link");
+    assert.match(stampChainBreak([L[1], L[0], L[2], L[3]].join("\n") + "\n", K), /chain broken/, "reordering breaks it");
+    assert.match(stampChainBreak(good + row(9).join("\t") + "\t-\tsig\n", K), /no chain column/, "an unchained line after chaining began = inserted by hand");
+    assert.equal(stampChainBreak(build(5, 2), K), null, "pre-#124 lines (no col 9) before the chain are accepted history");
+    assert.equal(stampChainBreak(build(3, 3), K), null, "a fully legacy log is not red");
+    assert.equal(stampChainBreak([L[0], L[2]].join("\n"), null), null, "no key = cannot verify = skip, not fail");
+    assert.equal(stampChainBreak([L[0], L[1]].join("\n") + "\n", K), null, "truncating the TAIL keeps the chain intact — that is what stampHead is for");
+    assert.equal(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }, { stage: "s", attempt: 2, startedAt: "c" }] }], K).join("").split("\n").filter(Boolean).length, 3);
+    assert.equal(stampChainBreak(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }] }], K).join(""), K), null, "--restamp writes a valid chain");
+  }
+  assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
+  assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
+  {
+    const tel = [{ inputTokens: 100, outputTokens: 50 }, { stage: "no-count" }, { inputTokens: 10, cacheReadTokens: 9999 }];
+    assert.equal(budgetSpent(tel), 160, "fresh input + output only; cache reads and uncollected dispatches add nothing");
+    assert.equal(budgetDefect(tel, 160) !== null, true, "at the cap = blocked (>=), the next dispatch would only go past it");
+    assert.equal(budgetDefect(tel, 161), null, "under the cap passes");
+    assert.equal(budgetDefect(tel, 0), null, "0 = off");
+    assert.equal(budgetDefect(tel, undefined), null, "absent = off");
+    const rows = reportRows([
+      { sprintNumber: 1, attempts: { implementation: 3, fsd_write: 1 }, telemetry: [{ inputTokens: 5, cacheReadTokens: 50, outputTokens: 2 }, { stage: "x" }] },
+      { sprintNumber: 1, telemetry: [{ inputTokens: 1, outputTokens: 1 }] },
+      { sprintNumber: 10 }, { sprintNumber: 2 },
+    ], "sprintNumber");
+    assert.deepEqual(rows.map((r) => r.group), ["1", "2", "10"], "numeric group order, not 1,10,2");
+    assert.deepEqual(rows[0], { group: "1", tasks: 2, input: 6, cacheRead: 50, output: 3, retries: 2, uncollected: 1 });
+  }
 
   // handoffBlockCount: the independent measure of rework.
   {
@@ -3772,6 +3986,32 @@ export function ruleFloor({ read, roleDoc, roles, roleStage }) {
   };
 }
 
+if (args.has("--writeback")) {
+  const dir = argv[argv.indexOf("--writeback") + 1];
+  const jp = dir && !dir.startsWith("--") ? join(resolve(dir), "task.agent.json") : null;
+  if (!jp || !existsSync(jp)) { console.error("usage: validate-tasks.mjs --writeback <task-folder>"); process.exit(2); }
+  const dec = writeBackDecision(JSON.parse(readFileSync(jp, "utf8")), CFG.tracker);
+  // --statuses '<tracker status-list JSON>': checked before the coordinator moves anything.
+  if (dec.do === "status" && argv.includes("--statuses")) {
+    let st; try { st = JSON.parse(argv[argv.indexOf("--statuses") + 1]); } catch { console.error("✖ --statuses needs the tracker's status-list response as JSON"); process.exit(2); }
+    const miss = statusMissing(st, dec.statusOnReview);
+    if (miss) { console.error(`✖ --writeback: ${miss}\n  fix config.tracker.statusOnReview, then re-run — do not move the ticket`); process.exit(1); }
+  }
+  console.log(JSON.stringify(dec, null, 2));
+  process.exit(0);
+}
+
+if (args.has("--report")) {
+  const tasks = findTaskFolders(null).map((fo) => { try { return JSON.parse(readFileSync(join(fo.path, "task.agent.json"), "utf8")); } catch { return null; } }).filter(Boolean);
+  const rows = reportRows(tasks, CFG.groupField ?? "sprintNumber");
+  if (AS_JSON) { console.log(JSON.stringify({ tasksScanned: tasks.length, groups: rows }, null, 2)); process.exit(0); }
+  const n = (x) => x.toLocaleString().padStart(11);
+  console.log(`${(CFG.groupField ?? "group").padEnd(10)} ${"tasks".padStart(5)} ${"input".padStart(11)} ${"output".padStart(11)} ${"cache-read".padStart(11)} ${"retries".padStart(7)} ${"no-count".padStart(8)}`);
+  for (const r of rows) console.log(`${r.group.padEnd(10)} ${String(r.tasks).padStart(5)} ${n(r.input)} ${n(r.output)} ${n(r.cacheRead)} ${String(r.retries).padStart(7)} ${String(r.uncollected).padStart(8)}`);
+  console.log(`\n${tasks.length} task(s). input = fresh (input + cache-creation); cache-read priced apart. no-count = dispatches never run through collect-telemetry: their cost is NOT in the totals.`);
+  process.exit(0);
+}
+
 if (args.has("--cost")) {
   // Source repo keeps the kernel under kernel/docs/; an installed project has it
   // at docs/. Same files, two layouts -- reading the wrong one silently reports
@@ -4323,9 +4563,53 @@ export function templateRowsBlock(data) {
 // ponytail: an agent with a shell as the same OS user can still read the key and sign.
 // Upgrade path: key held by a process the agent cannot read (keychain / CI secret).
 function KEY_FILE() { return process.env.SPEC_HARNESS_KEY_FILE || join(homedir(), ".spec-harness", "stamp.key"); }
-export function stampKey() { try { return readFileSync(KEY_FILE(), "utf8").trim() || null; } catch { return null; } }
+// #119: key sources, strongest first. SPEC_HARNESS_KEY (CI secret) and SPEC_HARNESS_KEY_CMD
+// (e.g. `security find-generic-password -s spec-harness-stamp -w`, `secret-tool lookup ...`) keep the
+// key in a store the agent's file tools cannot read; the file stays the fallback so nothing
+// that works today breaks. A CMD that fails or prints nothing is NOT silently downgraded to the
+// file: you asked for a keychain, and signing with a different key would fail every verify later.
+export function keyFrom({ env = process.env, run = (c) => spawnSync(c, { shell: true, encoding: "utf8", timeout: 10000 }), file = () => readFileSync(KEY_FILE(), "utf8") } = {}) {
+  if (env.SPEC_HARNESS_KEY?.trim()) return env.SPEC_HARNESS_KEY.trim();
+  if (env.SPEC_HARNESS_KEY_CMD) {
+    const r = run(env.SPEC_HARNESS_KEY_CMD), k = (r.stdout ?? "").trim();
+    if (r.status !== 0 || !k) throw new Error(`SPEC_HARNESS_KEY_CMD failed (exit ${r.status}) or printed nothing — not falling back to the key file: a different key would fail every signature check`);
+    return k;
+  }
+  try { return file().trim() || null; } catch { return null; }
+}
+export function stampKey() { return keyFrom(); }
+const platformWhich = () => (process.platform === "win32" ? "where" : "which");
 export function stampSig(key, cols) { return createHmac("sha256", key).update(cols.join("\t")).digest("hex"); }
-export function stampLine(key, cols, mark = "-") { const c = [...cols, mark]; return `${c.join("\t")}\t${stampSig(key, c)}\n`; }
+export function stampLine(key, cols, mark = "-", prev) {
+  const c = [...cols, mark], sig = stampSig(key, c);
+  // #124 col 9: chains this line to the previous one, so a deleted/reordered/truncated line breaks
+  // every later link. prev === undefined = no chain (pre-#124 caller); "" = first chained line.
+  return `${c.join("\t")}\t${sig}${prev === undefined ? "" : `\t${stampChain(key, prev, sig)}`}\n`;
+}
+
+export function stampChain(key, prev, sig) { return createHmac("sha256", key).update(`${prev || "genesis"}\t${sig}`).digest("hex"); }
+// The chain value the next appended line must link to: col 9 of the last line, or "" (start a chain).
+export function lastChain(text = "") {
+  const last = text.split("\n").filter(Boolean).at(-1)?.split("\t");
+  return last?.length >= 9 ? last[8] : "";
+}
+// #124: null = intact. Lines before the first chained one are pre-#124 history and are accepted;
+// from there on every line must chain to its predecessor. Truncation of the TAIL is invisible to
+// a chain by itself, so the caller also compares against the head recorded in the task (see below).
+export function stampChainBreak(text = "", key) {
+  if (!key) return null;
+  const lines = text.split("\n").filter(Boolean).map((l) => l.split("\t"));
+  const first = lines.findIndex((c) => c.length >= 9);
+  if (first < 0) return null;
+  let prev = "";
+  for (let i = first; i < lines.length; i++) {
+    const c = lines[i];
+    if (c.length < 9) return `line ${i + 1}: no chain column after chaining began at line ${first + 1} — a line was inserted by something other than --advance`;
+    if (c[8] !== stampChain(key, prev, c[7])) return `line ${i + 1}: chain broken — a line before it was deleted, reordered or edited (chaining began at line ${first + 1})`;
+    prev = c[8];
+  }
+  return null;
+}
 // First use creates the key. Lines written before it existed are signed once, here —
 // otherwise turning signing on would invalidate every witness already in the log.
 function ensureStampKey() {
@@ -4404,16 +4688,17 @@ export function dispatchGaps(data, { stages = STAGE_ORDER, soft = false } = {}) 
 // ponytail: whoever deletes the log and runs this launders hand-typed windows; the 7th
 // column "restamp" keeps the rebuilt lines visible in audit. Same ceiling as _triage.log.
 export function restampLines(tasks = [], key) {
+  let prev = "";
   return tasks.flatMap((j) => (j.telemetry ?? []).flatMap((e) =>
     [["start", e?.startedAt], ["end", e?.endedAt]].filter(([, t]) => t)
-      .map(([k, t]) => stampLine(key, [t, j.taskId, e.stage, e.attempt, e.slice ?? "-", k], "restamp"))));
+      .map(([k, t]) => { const l = stampLine(key, [t, j.taskId, e.stage, e.attempt, e.slice ?? "-", k], "restamp", prev); prev = l.trimEnd().split("\t")[8]; return l; })));
 }
 
 // #103: a done task is shipped history — rebuilding its witness is exactly how a fake window
 // would be laundered after the fact. Skipped unless --include-done says so out loud.
 if (args.has("--restamp")) {
   if (existsSync(STAMP_LOG)) { console.error(`✖ --restamp: ${STAMP_LOG_NAME} exists — refusing to rewrite live witnesses (delete it yourself only if it is corrupt)`); process.exit(1); }
-  const tasks = [], skipped = [];
+  const tasks = [], skipped = [], tasksFiles = [];
   if (existsSync(TASKS_DIR))
     for (const g of readdirSync(TASKS_DIR)) {
       const gd = join(TASKS_DIR, g);
@@ -4423,12 +4708,20 @@ if (args.has("--restamp")) {
         if (!existsSync(jp)) continue;
         try {
           const j = JSON.parse(readFileSync(jp, "utf8"));
-          if (j.status === "done" && !args.has("--include-done")) skipped.push(j.taskId); else tasks.push(j);
+          if (j.status === "done" && !args.has("--include-done")) skipped.push(j.taskId); else { tasks.push(j); tasksFiles.push(jp); }
         } catch {}
       }
     }
   const text = restampLines(tasks, ensureStampKey());
   writeFileSync(STAMP_LOG, text.join(""));
+  // #124: each rebuilt task's head is its LAST rebuilt line — otherwise the old head, which is in
+  // a log that no longer exists, reads as "truncated" on every rebuilt task.
+  for (const [i, jp] of tasksFiles.entries()) {
+    const mine = text.filter((l) => l.split("\t")[1] === tasks[i].taskId);
+    if (!mine.length) continue;
+    const j = JSON.parse(readFileSync(jp, "utf8")); j.stampHead = mine.at(-1).trimEnd().split("\t")[8];
+    writeFileSync(jp, JSON.stringify(j, null, 2) + "\n");
+  }
   console.log(`✔ --restamp: ${text.length} line(s) from ${tasks.length} task(s) → ${rel(STAMP_LOG)} (col 7 "restamp", col 8 HMAC)`);
   if (skipped.length) console.log(`  skipped done task(s): ${skipped.join(", ")} — their windows stay unwitnessed; pass --include-done to rebuild them too`);
   process.exit(0);
@@ -4553,6 +4846,11 @@ if (args.has("--advance")) {
     : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
   if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
+  // #121: budget cap — first, before the pre-filter spends a paid call. Only a dispatch can overspend; a going-back re-run (no attempt) is already counted.
+  const bud = d.attempt ? budgetDefect(data.telemetry, CFG.budget?.maxTokensPerTask) : null;
+  const accept = argv.includes("--accept-over-budget") ? (argv[argv.indexOf("--accept-over-budget") + 1] ?? "") : null;
+  if (bud && accept === null) { console.error(`✖ --advance ${stage}: ${bud}\n  a human decides: raise the cap in config, split the task, or re-run with --accept-over-budget "<reason>" (recorded in task.agent.json, valid for this one dispatch)`); process.exit(1); }
+  if (bud && (!accept.trim() || accept.startsWith("--"))) { console.error("✖ --advance: --accept-over-budget needs a reason — an unexplained overrun is not reviewable"); process.exit(2); }
   // #109/#113: any dispatch, never a re-run that is going back. The script decides
   // per stage whether it has an opinion (unknown stage = exit 0); the kernel only
   // names the stage and reads the exit code.
@@ -4566,6 +4864,7 @@ if (args.has("--advance")) {
   // finding F-01 was a set difference, not a judgement. Only when it is a first
   // dispatch of the stage (a re-run that is going back is already past this), and
   // only with real git: no git → no witness, no finding (fail-open, like #71).
+  if (stage === "adversarial_review" && d.attempt && cli && unisolatedClis([cli], (x) => existsSync(join(REPO_ROOT, x))).length) console.error(`⚠ --advance: ${isolationWarning(cli)}`);
   if (stage === "adversarial_review" && d.attempt) {
     const repo0 = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
     const top = gitAt(repo0, "rev-parse", "--show-toplevel")?.trim();
@@ -4597,8 +4896,13 @@ if (args.has("--advance")) {
   needStampSince("--advance");
   const { appendFileSync } = await import("node:fs");
   const skey = ensureStampKey();
-  const stamp = (e, kind) => appendFileSync(STAMP_LOG, stampLine(skey, [now, data.taskId, e.stage, e.attempt, e.slice ?? "-", kind]));
+  const stamp = (e, kind) => {
+    const line = stampLine(skey, [now, data.taskId, e.stage, e.attempt, e.slice ?? "-", kind], "-", lastChain(existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : ""));
+    appendFileSync(STAMP_LOG, line);
+    data.stampHead = line.trimEnd().split("\t")[8]; // #124: lets truncation of the tail be seen
+  };
   data.telemetry ??= [];
+  if (bud) (data.budgetAccepted ??= []).push({ at: now, stage, spent: budgetSpent(data.telemetry), reason: accept.trim() });
   // #71: closing a slice entry checks what that dispatch changed — before anything is written.
   const repoDir = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
   for (const e of data.telemetry) if (e.startedAt && !e.endedAt && e.slice && e.scopeSnap) {
@@ -4769,6 +5073,12 @@ if (args.has("--preflight")) {
       warns.push(`${c} is installed but harness.config.json has no models.${c} — every role runs the session model on ${c}, no tier cascade on retry (Agents.md §5.3)`);
     // claude: .claude/ is always installed, so it never shows up in guards.json.
     for (const w of unmeasuredSliceBudgets(["claude", ...installed])) warns.push(w);
+    {
+      const has = (c) => spawnSync(platformWhich(), [c], { encoding: "utf8" }).status === 0;
+      const adv = keyStoreAdvice({ has, keyFileExists: existsSync(KEY_FILE()) });
+      if (adv) warns.push(adv);
+    }
+    for (const c of unisolatedClis(installed, (d) => existsSync(join(REPO_ROOT, d)))) warns.push(isolationWarning(c));
     for (const [cli, file] of Object.entries(guards)) {
       if (!file) continue;
       let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}
@@ -4915,6 +5225,25 @@ if (args.has("--preflight")) {
           "    GitHub: cp adapters/ci/validate-tasks.yml .github/workflows/\n" +
           "    GitLab: cp adapters/ci/.gitlab-ci.yml .",
       );
+  }
+
+  // #119: server-side gate. Asked through `gh` when it exists and origin is a GitHub repo; any
+  // failure (no gh, no token, offline, other host) is "no opinion" -> a warning that says what to check.
+  if (!isSourceRepo && !process.env.SPEC_HARNESS_NO_NET) {
+    const url = spawnSync("git", ["remote", "get-url", "origin"], { cwd: REPO_ROOT, encoding: "utf8" }).stdout?.trim() ?? "";
+    const m = /github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/.exec(url);
+    if (m) {
+      const gh = (path) => { const r = spawnSync("gh", ["api", path], { encoding: "utf8", timeout: 10000 }); return r.status === 0 ? r.stdout : r.error ? undefined : (/404/.test(r.stderr) ? null : undefined); };
+      const head = spawnSync("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: REPO_ROOT, encoding: "utf8" }).stdout?.trim().replace(/^origin\//, "") || "main";
+      const c = gh(`repos/${m[1]}/branches/${head}/protection/required_status_checks`);
+      const rl = gh(`repos/${m[1]}/rules/branches/${head}`);
+      const parse = (t) => { try { return JSON.parse(t); } catch { return undefined; } };
+      const classic = c === undefined ? undefined : c === null ? { contexts: [] } : parse(c);
+      const rules = rl === undefined ? undefined : (parse(rl) ?? []).map((x) => x.type);
+      const v = protectionVerdict({ classic: classic === undefined && rules === undefined ? null : classic, rules });
+      if (v.ok === false) warns.push(`${m[1]}@${head}: ${v.why} — \`git commit --no-verify\` + a direct push skips every gate. Settings → Branches → require the validator check before merge (#119)`);
+      else if (v.ok === null) warns.push(`could not verify branch protection on ${m[1]}@${head} (${v.why}) — check by hand that the validator is a required status check (#119)`);
+    }
   }
 
   // docEnums is only a single source of truth if the places a human reads are
@@ -5442,6 +5771,11 @@ for (const { sprint, task, path } of folders) {
         "(/start-task step 7 writes it after calling the tracker MCP)",
     );
 
+  if (data.currentStage === "reviewing" && data.trackerWriteBack) {
+    const wd = writeBackRecordDefect(data.trackerWriteBack, CFG.tracker);
+    if (wd) warnings.push(wd);
+  }
+
   if (data.currentStage === "reviewing" && !(data.telemetry ?? []).length)
     warnings.push(
       'telemetry is empty at stage "reviewing" — the coordinator appends one entry per dispatch ' +
@@ -5467,7 +5801,17 @@ for (const { sprint, task, path } of folders) {
 
   // R5/R5b/R5c (#65): a telemetry window with no _stamp.log witness was typed by hand.
   {
-    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId, Date.now(), stampKey());
+    const stText = existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null;
+    const sk = (() => { try { return stampKey(); } catch (e) { errors.push(e.message); return null; } })();
+    const st = stampDefects(data.telemetry, stText, data.taskId, Date.now(), sk);
+    // #124: the chain is a property of the whole log; reported per task that relies on it.
+    if (stText !== null && sk && data.stampHead) {
+      const br = stampChainBreak(stText, sk);
+      if (br) errors.push(`${STAMP_LOG_NAME} ${br} (#124)`);
+      // A chain alone cannot see the tail cut off; the head this task last wrote must still be in it.
+      else if (!stText.includes(`\t${data.stampHead}\n`) && !stText.endsWith(`\t${data.stampHead}`))
+        errors.push(`${STAMP_LOG_NAME} no longer contains the line this task last wrote (stampHead ${data.stampHead.slice(0, 12)}…) — the log was truncated or replaced (#124)`);
+    }
     const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
     for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
     warnings.push(...st.warnings);

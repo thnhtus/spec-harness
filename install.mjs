@@ -23,6 +23,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir, homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 
 const REPO = process.env.SPEC_HARNESS_REPO || "thnhtus/spec-harness";
@@ -731,6 +732,18 @@ function buildEvalCase(c, root) {
   // step 0 thật: _triage.log là thứ validator đối chiếu vector bootstrap
   const vec = JSON.parse(read(join(EVAL, "task/task.agent.json"))).complexity;
   spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-7"], { cwd: P, stdio: "ignore" });
+  // A deviation that cites ProjectRules §2 is only honest if §2 says it. Filled in for THIS case only:
+  // in the shared base it makes every other case (code in src/discount.js) violate a rule the
+  // adversary then correctly FAILs for. Found twice by live claude runs (#117/#123): first as a
+  // fabricated citation (declared-deviation FAIL), then as a false positive on `clean`.
+  if (/ProjectRules §2/.test(c.deviation ?? "")) {
+    const pr = join(P, "docs/agents/ProjectRules.md");
+    writeFileSync(pr, read(pr)
+      .replace("Stack: `<language + framework + main libraries>`.", "Stack: Node 22, ESM, `node --test`.")
+      .replace("| `<src/…>` | `<what must go through what; what may not be created ad hoc>` |",
+        "| `src/pricing/` | All price/discount logic lives here. No pricing rule may be created ad hoc elsewhere under `src/`. |"));
+    git("commit", "--no-verify", "-qam", "project rules");  // on main: a rule that predates the task, not part of its diff
+  }
   git("switch", "-qc", "feature/SHOP-7-discount");
   cpSync(join(EVAL, "feature"), P, { recursive: true });
   put(c.feature);
@@ -739,6 +752,7 @@ function buildEvalCase(c, root) {
   cpSync(join(EVAL, "task"), t, { recursive: true });
   cpSync(join(P, "docs/tasks/_templates/task.agent.schema.json"), join(t, "task.agent.schema.json"));
   const dev = c.deviation ?? "None — the diff matches the 03 file list.";
+
   writeFileSync(join(t, "06-Implementation-Notes.md"), read(join(t, "06-Implementation-Notes.md")).replace("{deviation}", dev).replace("{base}", base));
   git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-7 discount");
   // 08 do wrapper thật ký trên đúng code đã commit — không dán tay.
@@ -840,6 +854,40 @@ function scoreAdversary(c, nine, srcChanged, status) {
   return out;
 }
 
+// #123: release gate. `--eval` costs real model money, so it cannot run in CI; what CI/publish CAN
+// do is refuse a release whose adversary inputs changed since the last all-green eval. The record is
+// a committed file: it stops forgetting, not a maintainer who types it by hand.
+// ponytail: hash covers the adversary role, its rules and the eval fixtures — NOT install.mjs
+// (buildBase) or --pack logic in validate-tasks.mjs; those change every commit and would make the
+// gate fire constantly. Upgrade path: add them when a regression slips through there.
+const EVAL_RECORD = () => process.env.SPEC_HARNESS_EVAL_RECORD || join(SRC, "kernel/eval/last-pass.json");
+const EVAL_INPUTS = ["agents/adversary.md", "kernel/docs/agents/Adversary.md", "kernel/docs/agents/Adversary-Mutation.md",
+  "kernel/docs/agents/SharedRules.md", "kernel/docs/Instructions.md", "kernel/eval/adversary"];
+export function evalInputHashes(root = SRC) {
+  const files = [];
+  const walk = (rel) => {
+    const abs = join(root, rel);
+    if (!existsSync(abs)) { files.push([rel, null]); return; }
+    if (statSync(abs).isDirectory()) { for (const f of readdirSync(abs).sort()) walk(`${rel}/${f}`); } else files.push([rel, abs]);
+  };
+  EVAL_INPUTS.forEach(walk);
+  return Object.fromEntries(files.map(([rel, abs]) => [rel, abs ? createHash("sha256").update(readFileSync(abs)).digest("hex").slice(0, 16) : "missing"]));
+}
+// null = fine, string = why a release must stop.
+export function evalRecordDefect(rec, now) {
+  if (!rec) return "no eval record — run `node install.mjs --eval --agent '<cmd>'` (all cases, no --case) and commit kernel/eval/last-pass.json";
+  const moved = Object.keys({ ...rec.inputs, ...now }).filter((f) => rec.inputs?.[f] !== now[f]);
+  return moved.length ? `adversary inputs changed since the last green eval (${rec.date}, ${rec.passed}/${rec.total}): ${moved.join(", ")} — re-run --eval and commit the new record` : null;
+}
+
+if (args[0] === "--eval-check") {
+  let rec = null; try { rec = JSON.parse(read(EVAL_RECORD())); } catch {}
+  const d = evalRecordDefect(rec, evalInputHashes());
+  if (d) { console.error(`✖ --eval-check: ${d}`); process.exit(1); }
+  console.log(`✔ eval record current (${rec.date}, ${rec.passed}/${rec.total}, ${rec.agent})`);
+  process.exit(0);
+}
+
 if (args[0] === "--eval") {
   const at = args.indexOf("--agent"), cmd = at === -1 ? null : args[at + 1];
   const only = args.includes("--case") ? args[args.indexOf("--case") + 1] : null;
@@ -866,6 +914,11 @@ if (args[0] === "--eval") {
   }
   const bad = rows.filter((r) => !r.ok).length;
   console.log(`\n${bad ? "✖" : "✅"} eval: ${rows.length - bad}/${rows.length} correct`);
+  // #123: only a FULL green run is a release witness — a single --case proves nothing about the rest.
+  if (!bad && !only) {
+    writeFileSync(EVAL_RECORD(), JSON.stringify({ date: new Date().toISOString().slice(0, 10), agent: cmd, passed: rows.length, total: rows.length, inputs: evalInputHashes() }, null, 2) + "\n");
+    console.log(`  → recorded ${EVAL_RECORD()} (commit it; \`--eval-check\` gates the release on it)`);
+  }
   process.exit(bad ? 1 : 0);
 }
 
@@ -1451,8 +1504,12 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     // không guard mới là chỗ tarball thiếu file thì nổ.
     for (const m of src.matchAll(/(existsSync\(\s*)?join\(SRC,\s*"([^"]+)"/g)) {
       if (m[1]) continue;
-      const top = m[2].split("/")[0];
-      if (!shipped.has(top)) missing.add(top);
+      const rel = m[2], top = rel.split("/")[0];
+      // files[] holds whole folders ("kernel/") AND single files ("docs/runbook.md"): a read is
+      // covered by either. Checking only the top segment calls docs/runbook.md unshipped while
+      // package.json ships it by name.
+      if (shipped.has(top) || shipped.has(rel)) continue;
+      missing.add(shipped.has(top) ? top : rel);
     }
     if (missing.size)
       fail(`install.mjs đọc ${[...missing].join(", ")} nhưng package.json "files" không đóng gói — ` +
@@ -2314,8 +2371,44 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(logP);
     if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp", "--include-done"], { cwd: P }).status !== 0 || !read(logP).includes(jT.taskId)) fail("#103: --include-done phải dựng lại cả task done");
     writeFileSync(logP, logKeep); writeFileSync(jp, jKeep);
+    // #124 e2e: a real --advance chain. Delete a middle line → chain error; cut the tail → stampHead error.
+    {
+      const jC = read(jp), lC = read(logP);
+      if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("#124: --advance để dựng chain không exit 0");
+      if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("#124: --advance lần 2 không exit 0");
+      const errs = () => JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+      if (!JSON.parse(read(jp)).stampHead) fail("#124: --advance không ghi stampHead");
+      if (errs().some((e) => /#124/.test(e))) fail("#124: chain nguyên vẹn mà vẫn báo lỗi", errs().join("\n"));
+      const full = read(logP), ls = full.split("\n").filter(Boolean), chained = ls.map((l, i) => [l, i]).filter(([l]) => l.split("\t").length >= 9);
+      if (chained.length < 3) fail("#124: --advance phải ghi dòng có cột chain", full);
+      writeFileSync(logP, ls.filter((_, i) => i !== chained[1][1]).join("\n") + "\n");
+      if (!errs().some((e) => /chain broken/.test(e))) fail("#124: xoá dòng giữa mà validator không thấy chain đứt", errs().join("\n"));
+      writeFileSync(logP, ls.slice(0, -1).join("\n") + "\n");
+      if (!errs().some((e) => /no longer contains the line this task last wrote/.test(e))) fail("#124: cắt đuôi log mà validator không thấy", errs().join("\n"));
+      writeFileSync(logP, lC); writeFileSync(jp, jC);
+    }
+    // #121 budget: a dispatch at/over maxTokensPerTask is refused, and only an explained
+    // override lets it through — recorded in task.agent.json, not just in the terminal.
+    {
+      const jBtxt = read(jp), cfgBtxt = read(cfgP), jB = JSON.parse(jBtxt), cfgB = JSON.parse(cfgBtxt);
+      // the fixture's config is tracked; editing it would trip #115 (changed, undeclared) — hide it from git for this block
+      spawnSync("git", ["update-index", "--skip-worktree", "harness.config.json"], { cwd: P });
+      writeFileSync(jp, JSON.stringify({ ...jB, telemetry: jB.telemetry.map((e, i) => (i ? e : { ...e, inputTokens: 80, outputTokens: 30 })) }, null, 2));
+      writeFileSync(cfgP, JSON.stringify({ ...cfgB, budget: { maxTokensPerTask: 100 } }));
+      const over = adv(T, "adversarial_review", "--cli", "claude");
+      if (over.status !== 1 || !/maxTokensPerTask/.test(over.stderr)) fail("#121: dispatch vượt budget phải exit 1", over.stdout + over.stderr);
+      if (adv(T, "adversarial_review", "--cli", "claude", "--accept-over-budget").status !== 2) fail("#121: --accept-over-budget thiếu lý do phải exit 2");
+      const okB = adv(T, "adversarial_review", "--cli", "claude", "--accept-over-budget", "khách cần gấp");
+      if (okB.status !== 0) fail("#121: --accept-over-budget có lý do phải đi tiếp", okB.stdout + okB.stderr);
+      if (JSON.parse(read(jp)).budgetAccepted?.at(-1)?.reason !== "khách cần gấp") fail("#121: lý do vượt budget không được ghi vào task.agent.json");
+      writeFileSync(cfgP, JSON.stringify({ ...cfgB, budget: { maxTokensPerTask: 0 } }));
+      if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("#121: budget 0 = tắt, không được chặn");
+      writeFileSync(cfgP, cfgBtxt); writeFileSync(jp, jBtxt);
+      spawnSync("git", ["update-index", "--no-skip-worktree", "harness.config.json"], { cwd: P });
+    }
     // Closing a window is witnessed too: a re-dispatch ends the open entry, and the task still validates.
-    if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("--advance lần 2 cùng stage không exit 0");
+    const again = adv(T, "adversarial_review", "--cli", "claude");
+    if (again.status !== 0) fail("--advance lần 2 cùng stage không exit 0", again.stdout + again.stderr);
     const j2 = J();
     if (!j2.telemetry[0].endedAt || !read(join(P, "docs/tasks/_stamp.log")).includes(`${j2.telemetry[0].endedAt}\t${j2.taskId}\tadversarial_review\t1\t-\tend`)) fail("--advance không đóng entry cũ bằng dòng end trong _stamp.log");
     const v2 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
@@ -2482,6 +2575,10 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
         fail(`eval case ${c.id}: test:scope exit ${tests.status} — chỉ stale-evidence được đỏ khi chạy lại (08 đã attest xanh)`);
       for (const [f, v] of Object.entries(c.feature ?? {}))
         if (v === null && existsSync(join(P, f))) fail(`eval case ${c.id}: ${f} = null nhưng vẫn còn trong sandbox`);
+      // #123: §2 rule only in the case that cites it, and never in the task diff
+      const has2 = read(join(P, "docs/agents/ProjectRules.md")).includes("`src/pricing/`");
+      if (has2 !== /ProjectRules §2/.test(c.deviation ?? "")) fail(`eval case ${c.id}: ProjectRules §2 src/pricing/ rule ${has2 ? "có" : "thiếu"} — sai case (clean sẽ bị FAIL oan / declared-deviation trích dẫn bịa)`);
+      if (spawnSync("git", ["diff", "--name-only", "main", "HEAD"], { cwd: P, encoding: "utf8" }).stdout.includes("ProjectRules.md")) fail(`eval case ${c.id}: ProjectRules.md nằm trong diff của task`);
       // mỗi case phải là một cây code KHÁC: delta không được áp thì mọi case là bản sao của clean
       const tree = spawnSync("git", ["rev-parse", "HEAD:src", "HEAD:test"], { cwd: P, encoding: "utf8" }).stdout.trim();
       if (trees.has(tree)) fail(`eval case ${c.id}: code giống hệt case ${trees.get(tree)} — delta của case không được áp`);
@@ -2518,6 +2615,56 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       { encoding: "utf8" });
     if (e.status !== 1 || !/✔ clean/.test(e.stdout) || !/✖ boundary/.test(e.stdout))
       fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", e.stdout + e.stderr);
+  }
+
+  // #123 --eval-check: stale / missing / current record, and the always-PASS eval must NOT write one.
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-evrec-")), rec = join(root, "r.json"), run = (...a) => spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...a], { encoding: "utf8", env: { ...process.env, SPEC_HARNESS_EVAL_RECORD: rec } });
+    const now = evalInputHashes();
+    if (!/no eval record/.test(evalRecordDefect(null, now))) fail("#123: thiếu record phải là lỗi");
+    if (evalRecordDefect({ date: "d", passed: 7, total: 7, inputs: now }, now) !== null) fail("#123: record khớp hash mà vẫn báo lỗi");
+    const some = Object.keys(now)[0];
+    if (!evalRecordDefect({ date: "d", passed: 7, total: 7, inputs: { ...now, [some]: "deadbeef" } }, now)?.includes(some)) fail("#123: input đổi phải nêu đúng file");
+    if (!evalRecordDefect({ date: "d", passed: 7, total: 7, inputs: { ...now, "x/new.md": "1" } }, now)?.includes("x/new.md")) fail("#123: input bị xoá/thêm cũng phải đỏ");
+    if (Object.values(now).includes("missing")) fail("#123: EVAL_INPUTS trỏ vào file không tồn tại — gate sẽ không bao giờ xanh");
+    if (run("--eval-check").status !== 1) fail("#123: --eval-check không có record phải exit 1");
+    run("--eval", "--agent", `node -e "require('fs').writeFileSync(process.argv[1]+'/09-Adversarial-Review.md','**Result: PASS**')" docs/tasks/sprint-1/SHOP-7-discount`);
+    if (existsSync(rec)) fail("#123: eval có case sai mà vẫn ghi record");
+    writeFileSync(rec, JSON.stringify({ date: "d", agent: "a", passed: 7, total: 7, inputs: now }));
+    if (run("--eval-check").status !== 0) fail("#123: record khớp phải exit 0");
+    writeFileSync(rec, JSON.stringify({ date: "d", agent: "a", passed: 7, total: 7, inputs: { ...now, [some]: "stale" } }));
+    if (run("--eval-check").status !== 1) fail("#123: record cũ phải exit 1");
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // #127: runbook sentences must be real code strings, not prose that drifted. Picked from the
+  // fixed/literal part of each message (no `N`, `<…>`, interpolated values).
+  {
+    // existsSync guard: the shipped tarball has docs/runbook.md, but this pattern is how the
+    // packaging check above knows a read is intentional (see "existsSync(join(SRC, ...))").
+    const rb = read(join(SRC, "docs/runbook.md"));
+    // [in runbook, in code source] — the code side is the literal fragment of the template string.
+    const pairs = [
+      ["is missing entirely (", "is missing entirely ("],
+      ["has no validly signed _stamp.log line", "\"validly signed \""],
+      ["--restamp", "--restamp"], ["--include-done", "--include-done"],
+      ["chain broken — a line before it was deleted, reordered or edited", "chain broken — a line before it was deleted, reordered or edited"],
+      ["no longer contains the line this task last wrote", "no longer contains the line this task last wrote"],
+      ["this task is already running elsewhere. STOP.", "this task is already running elsewhere. STOP."],
+      ["re-run --eval and commit the new record", "re-run --eval and commit the new record"],
+      ["no eval record — run", "no eval record — run"],
+      ["validate-tasks.mjs --guard", "does not run \\`validate-tasks.mjs --guard"],
+      ["no native role files installed — cannot verify Gate 5", "no native role files installed — cannot verify Gate 5"],
+      ["budget.maxTokensPerTask", "budget.maxTokensPerTask"], ["--accept-over-budget", "--accept-over-budget"],
+    ];
+    // install.mjs's own eval-check messages are above this self-test block; the slice before
+    // the marker excludes THIS pairs array so a mutated message can never satisfy itself.
+    const code = [read(join(SRC, "kernel/scripts/validate-tasks.mjs")), read(join(SRC, "kernel/scripts/lease.mjs")),
+      read(join(SRC, "install.mjs")).split("// #127: runbook sentences")[0]].join("\n");
+    for (const [doc, src] of pairs) {
+      if (!rb.includes(doc)) fail(`#127: docs/runbook.md thiếu/trôi khỏi chuỗi lỗi thật: ${JSON.stringify(doc)}`);
+      if (!code.includes(src)) fail(`#127: runbook trích ${JSON.stringify(doc)} nhưng code không còn ${JSON.stringify(src)} — code đã đổi, runbook chưa theo`);
+    }
   }
 
   // #16: --dry-run must report accurately and touch nothing in the real target.

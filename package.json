@@ -18,7 +18,8 @@
     "adapters/",
     "commands/",
     "hooks/",
-    "docs/advanced.md"
+    "docs/advanced.md",
+    "docs/runbook.md"
   ],
   "repository": {
     "type": "git",
@@ -26,7 +27,7 @@
   },
   "scripts": {
     "test": "node install.mjs --self-test",
-    "prepublishOnly": "node install.mjs --self-test",
+    "prepublishOnly": "node install.mjs --self-test && node install.mjs --eval-check",
     "version": "node -e \"const f='.claude-plugin/plugin.json',j=require('fs');const o=JSON.parse(j.readFileSync(f));o.version=require('./package.json').version;j.writeFileSync(f,JSON.stringify(o,null,2)+'\\n')\" && git add .claude-plugin/plugin.json"
   },
   "license": "MIT"

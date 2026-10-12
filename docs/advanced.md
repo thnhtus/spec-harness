@@ -180,7 +180,7 @@ Còn vài việc nó không làm thay được:
 | `acTrace.since` trong `harness.config.json` | Đặt bằng ngày bạn bật harness. Task cũ hơn mốc này chỉ bị warning, không bị chặn; nếu không có mốc thì mọi task có sẵn đều đỏ |
 | `protectedBranches` trong `harness.config.json` | Danh sách regex nhánh mà `--bootstrap` từ chối (ProjectRules §3 ở dạng dữ liệu). Mặc định cài ra `main/master/develop/staging/release/.*`; thiếu key thì exit 2 |
 | `stampSince` trong `harness.config.json` | Giống `acTrace.since`: task tạo từ ngày này phải có mọi khung telemetry khớp một dòng `_stamp.log` (chỉ `--advance` ghi). Thiếu key thì exit 2 |
-| `_stamp.log` / `_triage.log` | Installer tự thêm hai file này vào `.gitignore` (sống qua `git clean -fd`, không commit vì append-only và commit không tăng độ tin cậy). Mỗi dòng `_stamp.log` do `--advance` ghi có HMAC (cột 8) ký bằng key riêng của máy ở `~/.spec-harness/stamp.key` (đổi chỗ bằng `SPEC_HARNESS_KEY_FILE`), nằm NGOÀI repo nên agent chỉ sửa file trong repo không ký được; máy không có key (CI, clone mới) thì bỏ qua phần chữ ký. Mất log thì `node scripts/validate-tasks.mjs --restamp` dựng lại từ telemetry (cột 7 `restamp`), từ chối khi log còn và bỏ qua task `done` trừ khi thêm `--include-done` |
+| `_stamp.log` / `_triage.log` | Installer tự thêm hai file này vào `.gitignore` (sống qua `git clean -fd`, không commit vì append-only và commit không tăng độ tin cậy). Mỗi dòng `_stamp.log` do `--advance` ghi có HMAC (cột 8) ký bằng key riêng của máy ở `~/.spec-harness/stamp.key` (đổi chỗ bằng `SPEC_HARNESS_KEY_FILE`), nằm NGOÀI repo nên agent chỉ sửa file trong repo không ký được; máy không có key (CI, clone mới) thì bỏ qua phần chữ ký. Mất log thì `node scripts/validate-tasks.mjs --restamp` dựng lại từ telemetry (cột 7 `restamp`), từ chối khi log còn và bỏ qua task `done` trừ khi thêm `--include-done` (#124). Mỗi dòng `--advance` ghi thêm cột 9: hash móc vào dòng trước (`sig → sig`, key ở ngoài repo), nên xoá/sắp xếp lại một dòng giữa làm đứt mọi móc nối sau nó — validator báo đúng dòng đứt. Cắt đuôi file thì chain vẫn nguyên (dòng cuối chỉ cần khớp dòng trước nó), nên `task.agent.json.stampHead` giữ hash dòng cuối task đó vừa ghi; log không còn chứa dòng đó nữa = bị cắt/thay. Log cũ chưa có cột 9 được chấp nhận là lịch sử, chỉ kiểm từ dòng đầu tiên có chain. Không có key thì bỏ qua như `--self-check` hiện tại, không báo đỏ giả |
 
 Bản cài ra để `"evidenceMode": "attested"`: Gate 4/5 đòi evidence do `scripts/run-evidence.mjs` sinh, không nhận output dán tay. Hạ xuống `"legacy"` chỉ hợp lý khi di trú một repo đã có evidence viết tay. Trường này bắt buộc khai tường minh, không có mặc định ngầm.
 
@@ -336,6 +336,8 @@ node install.mjs --eval --agent 'claude -p --model sonnet --agent adversary --pe
 # --case <id>  một case · --timeout <giây> (mặc định 1500) · --keep  giữ sandbox + agent.log
 ```
 
+Eval xanh hết (chạy đủ case, không `--case`) thì ghi `kernel/eval/last-pass.json`: ngày, lệnh agent, n/n và hash của những file quyết định hành vi adversary (`agents/adversary.md`, `Adversary.md`, `Adversary-Mutation.md`, `SharedRules.md`, `Instructions.md`, `kernel/eval/adversary/`). Commit file đó. `node install.mjs --eval-check` so hash hiện tại với record: lệch thì exit 1 và in file nào đổi. Gate này chạy ở `prepublishOnly` và trong `publish.yml` trước `npm publish`, nên **không publish được bản adversary chưa eval**. PR không bị chặn — sửa `Adversary.md` giữa chừng là bình thường, chỉ release mới cần eval mới. Record là file commit nên người maintain gõ tay được: nó chặn quên, không chặn cố ý.
+
 Một case được tính đúng khi thoả cả ba điều kiện: verdict khớp (đọc `status` role đã set, không có thì đọc dòng `Result`), 09 nêu đúng chỗ lỗi (`mustMention`), và role không sửa file nào ngoài task folder. Sai bất kỳ case nào thì exit 1. Eval tốn tiền model nên chỉ chạy trước release, không chạy trong CI. CI chạy `--self-test`, kiểm rằng fixture sạch ở điểm bàn giao, tên case không lộ vào sandbox, scorer báo đỏ/xanh đúng, và một agent luôn trả PASS thì bị `--eval` đánh trượt.
 
 ### Đo thời gian/token: `--bench`
@@ -405,7 +407,7 @@ Ngoài validator còn một lớp nữa: `.claude/settings.json` deny sẵn `git
 
 ## Giới hạn đã biết
 
-Guard trên mọi CLI (`--guard <cli>`) chỉ khớp prefix lệnh, giống giới hạn của `permissions.deny` trên Claude. `bash -c "git push"`, `git -C x push`, `python -c "open('.env')"` vẫn lọt. Nó chặn tai nạn, không chặn người cố ý. Trên CLI không có subagent, 7 role chạy tuần tự trong cùng context, nên Gate 5 (adversary) không còn độc lập với implementer; 4 gate chặn bằng exit code thì vẫn giữ nguyên.
+Guard trên mọi CLI (`--guard <cli>`) chỉ khớp prefix lệnh, giống giới hạn của `permissions.deny` trên Claude. `bash -c "git push"`, `git -C x push`, `python -c "open('.env')"` vẫn lọt. Nó chặn tai nạn, không chặn người cố ý. Trên CLI không có subagent, 7 role chạy tuần tự trong cùng context, nên Gate 5 (adversary) không còn độc lập với implementer; 4 gate chặn bằng exit code thì vẫn giữ nguyên. `--preflight` và lần đầu `--advance adversarial_review` cho CLI đó cảnh báo đúng điều này (#126): claude/codex/cursor/gemini/qwen/droid có role file riêng; CLI khác (kể cả pi, có subagent qua extension installer không thấy được) → "cannot verify", không khẳng định "không độc lập" khi thật ra có thể vẫn độc lập.
 
 Lease chỉ đúng trên filesystem cục bộ. `scripts/lease.mjs` chặn hai phiên `/start-task` cùng chạy một task bằng `mkdir` (loại trừ) và `mtime` (TTL 30 phút). Trên NFS/SMB cả hai đều hỏng: `mkdir` không đảm bảo nguyên tử, và server đóng dấu `mtime` bằng đồng hồ của nó. Hai máy lệch giờ sẽ đọc một lease còn sống thành hết hạn rồi chiếm, và hai phiên ghi đè handoff của nhau. Để `docs/tasks/` trên ổ mạng thì lease này không có tác dụng. Không có cách vá rẻ: sửa đúng nghĩa là đổi cơ chế (lock server, hoặc trao token có fsync), và cũng không có cách nào đủ tin cậy để phát hiện mình đang chạy trên FS mạng mà cảnh báo.
 
@@ -434,7 +436,32 @@ Script chỉ mở file có `mtime` sau lần dispatch sớm nhất. Session log 
 
 Tracker write-back mặc định tắt, bật bằng `tracker.writeBack` trong config: `off` (mặc định, chỉ báo cáo), `comment` (đăng comment lên ticket gồm đường dẫn task doc, branch và chỗ chứa evidence), hoặc `status` (comment và chuyển ticket sang `tracker.statusOnReview`). Coordinator gọi qua MCP server `tracker` chứ không qua API vendor. ClickUp, Jira và Linear khác nhau cả mô hình status lẫn auth, nên một client viết ở đây sẽ không ai test được ngoài tracker của chính maintainer.
 
+Idempotent (#120): chạy lại `/start-task` không đăng comment thứ hai. `node scripts/validate-tasks.mjs --writeback <task>` in quyết định (`nothing|skip|comment|status`) và một marker hiển thị `[spec-harness:<taskId>]` mà comment phải chứa. Coordinator liệt kê comment của ticket, thấy marker thì chỉ ghi nhận chứ không đăng lại; comment đã có mà status chưa chuyển thì chỉ chuyển status. Marker là chữ thường chứ không phải HTML comment vì editor của một số tracker (ADF của Jira) xoá thẻ ẩn. Hàm quyết định có contract test với hình dạng response của ClickUp, Jira, Linear (`--self-check`); đó là fixture, **chưa chạy trên instance Jira/Linear thật**. Validator cảnh báo khi `trackerWriteBack.status` khác `statusOnReview`. Trước khi chuyển status, coordinator chạy lại `--writeback <task> --statuses '<JSON danh sách status của tracker>'`: tracker không có status đó (so không phân biệt hoa thường, vì ClickUp trả `ready for qc`) thì exit 1 và liệt kê status thật, ticket không bị đụng tới. Việc này nằm ở coordinator chứ không ở `--preflight` vì preflight chạy cả trong CI, nơi không có MCP.
+
 Khi đã bật, coordinator phải chứng minh đã làm bằng cách ghi `trackerWriteBack` vào `task.agent.json` sau khi MCP trả về. Validator cảnh báo khi `writeBack` bật mà field đó vắng, vì một setting trông như đang bật mà không làm gì chính là kiểu lỗi validator được viết ra để bắt. `writeBack: "status"` mà thiếu `statusOnReview` thì `--self-check`/`--preflight` báo đỏ ngay.
+
+### Enforcement phía server (#119)
+
+Guard ở client chỉ chặn tai nạn. Hai thứ nâng chi phí cho người cố ý:
+
+```bash
+# 1. Key chữ ký ra khỏi tầm đọc file của agent (chọn một; thứ tự ưu tiên từ trên xuống)
+export SPEC_HARNESS_KEY="$SECRET"                                   # CI secret
+export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'   # macOS Keychain
+export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'                   # Linux
+# không đặt gì → ~/.spec-harness/stamp.key như cũ
+
+# 2. --preflight hỏi git host xem validator có là required check không (cần `gh` đã login)
+node scripts/validate-tasks.mjs --preflight     # ⚠ ... no required status check on the integration branch
+```
+
+`--preflight` nhắc chuyển key khi key còn là file mà máy có `security` (macOS) hoặc `secret-tool` (Linux), in sẵn lệnh; đã dùng keychain/CI secret, hoặc máy không có keychain CLI → im lặng (#125). Installer không tự chuyển: ghi vào keychain của bạn mà không hỏi không phải việc của nó.
+
+`SPEC_HARNESS_KEY_CMD` lỗi hoặc in rỗng thì **báo lỗi, không tự rơi về file**: ký bằng key khác thì mọi lần verify sau đó đều trượt. Máy không có nguồn key nào thì vẫn bỏ qua phần chữ ký như cũ. Probe branch protection chỉ là cảnh báo (không có `gh`, offline, host khác GitHub → "could not verify"); đặt `SPEC_HARNESS_NO_NET=1` để tắt.
+
+Ai được sửa luật (#128): `adapters/ci/CODEOWNERS` là template. Copy vào `.github/` (GitLab: root), thay `@your-org/harness-maintainers` bằng team thật, rồi bật "Require review from Code Owners" trong branch protection. Installer không tự cài vì một handle giả làm GitHub báo "unknown owner". Phân quyền dựa hoàn toàn vào git host; harness không tự xây RBAC.
+
+Còn lại (ceiling): người cùng OS user vẫn chạy được lệnh keychain; branch protection mà admin được bypass thì không thấy qua probe này. Bảo vệ cuối cùng là required check + không cho admin bypass, đặt ở server.
 
 ## Ghi chú cài đặt
 

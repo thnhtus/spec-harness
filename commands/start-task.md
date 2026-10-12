@@ -287,22 +287,20 @@ node scripts/collect-telemetry.mjs "$TASK" --write
 It never overwrites a count that is already there, and it writes nothing when
 nothing matches — report what it says rather than filling the gap by hand.
 
-**Then write back to the tracker** — read `harness.config.json` → `tracker.writeBack`:
+**Then write back to the tracker** — ask the script, do not re-derive it:
 
-| value | what you do |
-|---|---|
-| `off` (default) | nothing; the summary below is the only report |
-| `comment` | via the `tracker` MCP server, post **one** comment on the ticket: task doc path, branch, and where the evidence is (`08-Test-Evidence.md`) |
-| `status` | the comment **and** move the ticket to `tracker.statusOnReview` |
-
-Then record what you actually did, so the claim is checkable:
-
-```json
-"trackerWriteBack": { "at": "2026-09-18T09:20:00Z", "action": "status", "status": "Ready for QC" }
+```bash
+node scripts/validate-tasks.mjs --writeback "$TASK"   # → do, marker, …
 ```
 
-Write it **after** the MCP call returns, never before. MCP call failed → leave
-the field out and say so in the summary.
+| `do` | you |
+|---|---|
+| `nothing` / `skip` | nothing (off, or already recorded) |
+| `comment` | a ticket comment (`tracker` MCP) already holds `marker` → just record. Else post **one** with `marker`: task doc path, branch, `08-Test-Evidence.md` |
+| `status` | re-run with `--statuses '<tracker's status list JSON>'` (exit 1 → stop); then the comment (skip if `commentAlreadyPosted`) **and** move to `statusOnReview` |
+
+Then record it: `"trackerWriteBack": { "at": "<iso>", "action": "status", "status": "Ready for QC" }`.
+**After** the MCP call returns; failed → leave it out, say so. `status` = `statusOnReview` exactly.
 
 Finally, post the summary: what changed (from the implementer's handoff), test
 evidence location (`08-Test-Evidence.md`), and the remaining user decisions

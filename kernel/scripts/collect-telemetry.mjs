@@ -16,7 +16,7 @@
 // two files. That is all this does.
 //
 // LIMITS, so nobody mistakes the output for a bill:
-//   * Claude Code only. Other CLIs write no such log; this exits 0 and writes
+//   * Claude Code and Codex (#121). Other CLIs write no such log; this exits 0 and writes
 //     nothing rather than failing a workflow that was never broken.
 //   * The .jsonl shape is Claude Code's private format and can change without
 //     notice. Every parse failure is LOUD — a silent 0 would look like a cheap
@@ -136,7 +136,61 @@ export function skipByMtime(mtimeMs, since) {
   return mtimeMs < since;
 }
 
+// #121: Codex writes ~/.codex/sessions/**/rollout-*.jsonl. session_meta carries cwd + git.branch,
+// each event_msg/token_count carries last_token_usage for ONE model call. Mapped onto the Claude
+// shape so window/cwd/branch matching and the rename check are shared. Codex's input_tokens
+// INCLUDES cached_input_tokens (OpenAI semantics), so fresh = input - cached.
+// A token_count whose last_token_usage has none of the names we read is kept RAW, so
+// unknownUsageShape flags the rename instead of this writing 0.
+export const CODEX_KEYS = ["input_tokens", "cached_input_tokens", "output_tokens"];
+export function codexEntries(text) {
+  const out = []; let cwd, gitBranch;
+  for (const line of text.split("\n")) {
+    if (!line.includes('"session_meta"') && !line.includes('"token_count"')) continue;
+    let e; try { e = JSON.parse(line); } catch { continue; }
+    const p = e?.payload;
+    if (e?.type === "session_meta") { cwd = p?.cwd; gitBranch = p?.git?.branch; continue; }
+    const u = p?.type === "token_count" ? p.info?.last_token_usage : null;
+    if (!u) continue;
+    const known = CODEX_KEYS.some((k) => k in u);
+    const usage = known
+      ? { input_tokens: Math.max(0, (u.input_tokens ?? 0) - (u.cached_input_tokens ?? 0)), cache_read_input_tokens: u.cached_input_tokens ?? 0, output_tokens: u.output_tokens ?? 0 }
+      : u;
+    out.push({ timestamp: e.timestamp, cwd, gitBranch, message: { usage } });
+  }
+  return out;
+}
+
+function walk(dir, acc = []) {
+  for (const f of readdirSync(dir)) {
+    const fp = join(dir, f); let st; try { st = statSync(fp); } catch { continue; }
+    if (st.isDirectory()) walk(fp, acc); else if (f.startsWith("rollout-") && f.endsWith(".jsonl")) acc.push([fp, st]);
+  }
+  return acc;
+}
+
+function loadCodex(since) {
+  const root = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "sessions");
+  if (!existsSync(root)) return null;
+  const out = []; let read = 0, skipped = 0;
+  for (const [fp, st] of walk(root)) {
+    if (skipByMtime(st.mtimeMs, since)) { skipped++; continue; }
+    read++;
+    try { out.push(...codexEntries(readFileSync(fp, "utf8"))); } catch {}
+  }
+  out.stats = { read, skipped };
+  return out;
+}
+
 function loadEntries(root = LOG_ROOT, since = 0) {
+  const a = loadClaude(root, since), b = loadCodex(since);
+  if (a === null && b === null) return null;
+  const out = [...(a ?? []), ...(b ?? [])];
+  out.stats = { read: (a?.stats.read ?? 0) + (b?.stats.read ?? 0), skipped: (a?.stats.skipped ?? 0) + (b?.stats.skipped ?? 0) };
+  return out;
+}
+
+function loadClaude(root, since) {
   if (!existsSync(root)) return null; // not Claude Code — caller decides
   const out = [];
   let read = 0, skipped = 0, bytes = 0;
@@ -274,6 +328,21 @@ if (process.argv.includes("--self-check")) {
     assert.equal(sumTokens([]).dispatches, 0, "no entries = no dispatches");
   }
 
+  // #121 Codex: input INCLUDES cached; a renamed usage block must be flagged, not zeroed.
+  {
+    const meta = JSON.stringify({ type: "session_meta", payload: { cwd: "/r", git: { branch: "b" } } });
+    const tc = (u) => JSON.stringify({ timestamp: "2026-01-01T00:05:00Z", type: "event_msg", payload: { type: "token_count", info: { last_token_usage: u } } });
+    const ok = codexEntries([meta, tc({ input_tokens: 1000, cached_input_tokens: 900, output_tokens: 50 })].join("\n"));
+    assert.equal(ok.length, 1);
+    assert.deepEqual(tokensOf(ok[0].message.usage), { inputTokens: 100, cacheReadTokens: 900, outputTokens: 50 },
+      "codex input includes cached: fresh = 1000-900, not 1000 (would double-bill the cache)");
+    assert.equal(ok[0].cwd, "/r"); assert.equal(ok[0].gitBranch, "b");
+    assert.equal(unknownUsageShape(ok), null);
+    const bad = codexEntries([meta, tc({ prompt_tokens: 5, completion_tokens: 1 })].join("\n"));
+    assert.deepEqual(unknownUsageShape(bad), ["completion_tokens", "prompt_tokens"], "renamed codex fields must be caught, not summed to 0");
+    assert.equal(codexEntries(meta + "\nnot json\n").length, 0, "truncated/garbage lines are skipped");
+  }
+
   console.log("✅ collect-telemetry self-check passed");
   process.exit(0);
 }
@@ -310,15 +379,17 @@ const since = Math.min(
   ...tel.filter((e) => typeof e.inputTokens !== "number" && e.startedAt)
     .map((e) => Date.parse(e.startedAt)).filter(Number.isFinite),
 );
+// Checked before the merged load: "you told us where it is and it is not there" is a
+// broken setup even when a Codex log happens to exist and would hide it.
+if (process.env[LOG_ENV] && !existsSync(LOG_ROOT)) {
+  console.error(`✖ ${LOG_ENV}=${LOG_ROOT} does not exist — you said where the log is and it is not there`);
+  process.exit(1);
+}
 const entries = loadEntries(LOG_ROOT, Number.isFinite(since) ? since : 0);
 if (entries === null) {
-  if (process.env[LOG_ENV]) {
-    console.error(`✖ ${LOG_ENV}=${LOG_ROOT} does not exist — you said where the log is and it is not there`);
-    process.exit(1);
-  }
   // Not Claude Code. Exiting 0: a workflow that never had this data is not
   // broken, and failing here would block every non-Claude CLI from committing.
-  console.log(`ℹ no ${LOG_ROOT} — token counts come from Claude Code's session log; nothing to collect`);
+  console.log(`ℹ no ${LOG_ROOT} and no codex sessions — token counts come from Claude Code / Codex session logs; nothing to collect`);
   console.log(`  (set ${LOG_ENV} if your CLI writes the same JSONL somewhere else)`);
   process.exit(0);
 }
