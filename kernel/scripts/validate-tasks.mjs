@@ -1795,7 +1795,7 @@ export function unisolatedClis(installed, exists) {
   return [...new Set(installed)].filter((c) => !(ROLE_DIRS[c] && exists(ROLE_DIRS[c])));
 }
 export const isolationWarning = (c) =>
-  `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126)`;
+  `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126). Fix: set config.adversary.cmd and run --run-adversary <task> (#131)`;
 
 // #125: the default key lives in a file the agent (same OS user) can read. A keychain is the
 // cheap upgrade, so say so — but only when (a) the key IS a file, and (b) this machine really has
@@ -1809,6 +1809,27 @@ export function keyStoreAdvice({ env = process.env, platform = process.platform,
   if (platform === "linux" && has("secret-tool"))
     return "the stamp key is a file the agent can read — move it: `secret-tool store --label=spec-harness service spec-harness < ~/.spec-harness/stamp.key && export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'` then delete the file (#125)";
   return null;
+}
+
+// #131: Gate 5 in a FRESH process. On a CLI with no subagents the coordinator would otherwise play
+// the adversary in the very context that wrote the code. config.adversary.cmd is any headless
+// agent command that reads a prompt on stdin (e.g. `claude -p`, `codex exec -`, `gemini -p`).
+// The prompt passes PATHS only: the new process reads its own inputs through --pack, so nothing
+// the implementer thought is in its context. Same prompt as the shipped --eval, which measured it.
+export function adversaryPrompt(task, base) {
+  return `You are the \`adversary\` subagent (stage adversarial_review, Gate 5) for the task in \`${task}\`.\n` +
+    `First run \`node scripts/validate-tasks.mjs --pack ${task} adversarial_review --base ${base}\` and read its output once: it bundles \`docs/Instructions.md\`, SharedRules §4 §5 §6 §8 §9, \`docs/agents/Adversary.md\`, ProjectRules, the output contract, the task artifacts, the last handoff and the unfiltered git file list. Do not open those files again. ` +
+    "Obey the artifact size caps in SharedRules §8. Work only inside the task folder. Write `09-Adversarial-Review.md` in the task folder, " +
+    `append your \`## Next Handoff\` block to \`${task}/.agent-memory/adversary.md\`, update \`${task}/task.agent.json\`. ` +
+    "Remind: default FAIL, re-run the ProjectRules §7 commands yourself instead of trusting `08`, do not touch `src/`. " +
+    "End your final message with: gate verdict (PASS/FAIL), status set, and the one-line reason.\n";
+}
+// What the run proved. Pure so the self-check covers every branch without spawning an agent.
+export function adversaryRunVerdict({ status, timedOut, nineBefore, nineAfter, srcChanged }) {
+  if (timedOut) return { exit: 1, why: "adversary process timed out — no verdict; re-run or raise --timeout" };
+  if (srcChanged.length) return { exit: 1, why: `adversary changed files outside the task folder: ${srcChanged.join(", ")} — Gate 5 is read-only; revert them` };
+  if (!nineAfter || nineAfter === nineBefore) return { exit: 1, why: `adversary process exited ${status} without writing 09-Adversarial-Review.md` };
+  return { exit: 0 };
 }
 
 export function denyGaps(settingsText) {
@@ -2373,6 +2394,18 @@ if (args.has("--self-check")) {
     assert.equal(stampChainBreak([L[0], L[1]].join("\n") + "\n", K), null, "truncating the TAIL keeps the chain intact — that is what stampHead is for");
     assert.equal(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }, { stage: "s", attempt: 2, startedAt: "c" }] }], K).join("").split("\n").filter(Boolean).length, 3);
     assert.equal(stampChainBreak(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }] }], K).join(""), K), null, "--restamp writes a valid chain");
+  }
+  {
+    const V = (o) => adversaryRunVerdict({ status: 0, timedOut: false, nineBefore: null, nineAfter: "# 09\nFAIL", srcChanged: [], ...o });
+    assert.equal(V({}).exit, 0, "wrote 09, touched nothing = ran");
+    assert.match(V({ timedOut: true }).why, /timed out/);
+    assert.match(V({ nineAfter: null }).why, /without writing 09/);
+    assert.match(V({ nineBefore: "same", nineAfter: "same" }).why, /without writing 09/, "an unchanged 09 from an earlier round is not a new verdict");
+    assert.match(V({ srcChanged: ["src/a.js"] }).why, /outside the task folder: src\/a\.js/, "Gate 5 is read-only");
+    assert.equal(V({ status: 1 }).exit, 0, "the agent CLI's own exit code is not the verdict; 09 + the validator are");
+    const pr = adversaryPrompt("docs/tasks/s/T", "develop");
+    assert.match(pr, /--pack docs\/tasks\/s\/T adversarial_review --base develop/, "base branch from 00-Metadata, not hardcoded main");
+    assert.doesNotMatch(pr, /06-Implementation-Notes|implementer said/, "paths only — no implementer content in the prompt");
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -4820,6 +4853,30 @@ if (args.has("--bootstrap")) {
 
   console.log(`✔ bootstrapped ${rel} · taskComplexity=${complexity} · next: ${next}`);
   process.exit(0);
+}
+
+if (args.has("--run-adversary")) {
+  const dir0 = argv[argv.indexOf("--run-adversary") + 1];
+  const cmd = CFG.adversary?.cmd;
+  if (!dir0 || dir0.startsWith("--")) { console.error("usage: validate-tasks.mjs --run-adversary <task-folder> [--timeout <s>]"); process.exit(2); }
+  if (!cmd) { console.error('✖ --run-adversary: config.adversary.cmd is not set — e.g. "claude -p --agent adversary --permission-mode bypassPermissions" or "codex exec --dangerously-bypass-approvals-and-sandbox -"'); process.exit(2); }
+  const dir = resolve(dir0), task = relative(REPO_ROOT, dir).split(sep).join("/");
+  if (!existsSync(join(dir, "task.agent.json"))) { console.error(`✖ --run-adversary: no task.agent.json in ${dir0}`); process.exit(2); }
+  const nineP = join(dir, "09-Adversarial-Review.md"), before = existsSync(nineP) ? readFileSync(nineP, "utf8") : null;
+  const repo0 = resolve(REPO_ROOT, (REPOS[0] ?? {}).path ?? ".");
+  const dirtyBefore = new Set(dirtyPaths(repo0));
+  const t = Number(argv.includes("--timeout") ? argv[argv.indexOf("--timeout") + 1] : 1500) * 1000;
+  console.log(`▶ Gate 5 in a fresh process: ${cmd}`);
+  const r = spawnSync(cmd, { cwd: REPO_ROOT, shell: true, input: adversaryPrompt(task, packBase(dir)), encoding: "utf8", timeout: t, maxBuffer: 64 << 20, stdio: ["pipe", "inherit", "inherit"] });
+  const tasksRel = relative(repo0, TASKS_DIR).split(sep).join("/") + "/";
+  const srcChanged = dirtyPaths(repo0).filter((p) => !dirtyBefore.has(p) && !p.startsWith(tasksRel));
+  const v = adversaryRunVerdict({ status: r.status, timedOut: r.error?.code === "ETIMEDOUT", nineBefore: before, nineAfter: existsSync(nineP) ? readFileSync(nineP, "utf8") : null, srcChanged });
+  if (v.exit) { console.error(`✖ --run-adversary: ${v.why}`); process.exit(1); }
+  // The verdict itself is the validator's job, as for every other role: Gate 5 reads 09.
+  const g = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--task", dir, "--config", CONFIG_PATH], { encoding: "utf8" });
+  process.stdout.write(g.stdout); process.stderr.write(g.stderr);
+  console.log(`${g.status === 0 ? "✔" : "✖"} Gate 5 ran isolated (fresh process, paths-only prompt); validator exit ${g.status}`);
+  process.exit(g.status ?? 1);
 }
 
 if (args.has("--advance")) {

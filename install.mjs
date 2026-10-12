@@ -2637,6 +2637,34 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(root, { recursive: true, force: true });
   }
 
+  // #131 --run-adversary: the shipped prompt is the one --eval measured (8/8), and a fake agent run
+  // end-to-end proves the fresh process writes 09, the validator judges it, and a src/ write fails it.
+  {
+    // The prompt --eval measured (8/8) must be the prompt --run-adversary sends, or that measurement
+    // says nothing about isolated Gate 5. Compared as the literal body between the two sources.
+    const body = (src, start) => { const i = src.indexOf(start); return src.slice(i, src.indexOf("\n", src.indexOf("End your final message with", i))); };
+    const norm = (t) => t.replace(/\$\{[^}]*\}/g, "$").replace(/\\`/g, "`").replace(/\s+/g, " ");
+    const a = norm(body(read(join(SRC, "install.mjs")).split("// #131 --run-adversary")[0], "const EVAL_PROMPT"));
+    const b = norm(body(read(join(SRC, "kernel/scripts/validate-tasks.mjs")), "export function adversaryPrompt"));
+    // EVAL_PROMPT hardcodes --base main (the fixture's base); adversaryPrompt takes a real base —
+    // that is an intentional difference, not drift, so the base clause itself is not compared.
+    for (const frag of ["and read its output once: it bundles `docs/Instructions.md`", "default FAIL, re-run the ProjectRules §7 commands yourself", "do not touch `src/`", "End your final message with: gate verdict"])
+      if (!a.includes(frag) || !b.includes(frag)) fail(`#131: prompt --eval và --run-adversary lệch ở đoạn: ${frag}`);
+    const root = mkdtempSync(join(tmpdir(), "sh-runadv-"));
+    const { P, T } = buildEvalCase(evalCases().find((c) => c.id === "clean"), root);
+    const cfgP = join(P, "harness.config.json"), cfg = JSON.parse(read(cfgP));
+    const ra = (cmd) => { writeFileSync(cfgP, JSON.stringify({ ...cfg, adversary: { cmd } })); spawnSync("git", ["update-index", "--skip-worktree", "harness.config.json"], { cwd: P }); return spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--run-adversary", T, "--timeout", "60"], { cwd: P, encoding: "utf8" }); };
+    const silent = ra("cat > /dev/null");
+    if (silent.status !== 1 || !/without writing 09/.test(silent.stderr)) fail("#131: agent không ghi 09 phải exit 1", silent.stdout + silent.stderr);
+    const vandal = ra(`cat > /dev/null; echo x >> src/discount.js; echo '# 09' > ${T}/09-Adversarial-Review.md`);
+    if (vandal.status !== 1 || !/outside the task folder: src\/discount\.js/.test(vandal.stderr)) fail("#131: adversary sửa src/ phải exit 1", vandal.stdout + vandal.stderr);
+    spawnSync("git", ["checkout", "--", "src/discount.js"], { cwd: P });
+    // Reads the prompt it was given and proves it got PATHS: writes 09 only if the prompt names --pack.
+    const honest = ra(`grep -q -- '--pack ${T} adversarial_review --base main' && echo '## Verdict: FAIL' > ${T}/09-Adversarial-Review.md`);
+    if (!/Gate 5 ran isolated/.test(honest.stdout)) fail("#131: agent giả nhận đúng prompt (--pack …) mà không chạy hết luồng", honest.stdout + honest.stderr);
+    rmSync(root, { recursive: true, force: true });
+  }
+
   // #129: --json through a PIPE must not truncate at Node's default pipe highWaterMark. A real
   // multi-task repo's --json easily exceeds one 64 KB pipe buffer; process.exit() after a large
   // console.log drops whatever stdout had not flushed yet when writing to a pipe (not a file).
