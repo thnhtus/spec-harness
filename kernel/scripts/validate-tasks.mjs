@@ -1785,6 +1785,18 @@ export function writeBackRecordDefect(rec, tracker) {
   return null;
 }
 
+// #126: Gate 5 is only adversarial when the adversary runs in its own context. The installer writes
+// native role files for the CLIs below; for any other CLI the 7 roles are prose in AGENTS.md and the
+// adversary may share the implementer's context. "May": pi dispatches subagents through an extension
+// the installer cannot see, so this says "cannot verify", never "is not isolated".
+export const ROLE_DIRS = { claude: ".claude/agents", codex: ".codex/agents", cursor: ".claude/agents",
+  gemini: ".gemini/agents", qwen: ".qwen/agents", droid: ".factory/droids" };
+export function unisolatedClis(installed, exists) {
+  return [...new Set(installed)].filter((c) => !(ROLE_DIRS[c] && exists(ROLE_DIRS[c])));
+}
+export const isolationWarning = (c) =>
+  `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126)`;
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2310,6 +2322,15 @@ if (args.has("--self-check")) {
     const sm = statusMissing({ statuses: [{ status: "to do", color: "#ff0000" }, { status: "qc" }] }, "Ready for QC");
     assert.match(sm, /no status "Ready for QC"/); assert.match(sm, /to do, qc/); assert.doesNotMatch(sm, /#ff0000/, "colors are not status names");
     assert.match(statusMissing({}, "X"), /no strings/);
+  }
+  {
+    const has = (...d) => (x) => d.includes(x);
+    assert.deepEqual(unisolatedClis(["claude", "codex"], has(".claude/agents", ".codex/agents")), [], "native role files = isolated, silent");
+    assert.deepEqual(unisolatedClis(["aider", "pi"], () => true), ["aider", "pi"], "no role dir mapped for the CLI = cannot verify, even if some dir exists");
+    assert.deepEqual(unisolatedClis(["gemini"], has(".claude/agents")), ["gemini"], "gemini needs ITS OWN dir, not claude's");
+    assert.deepEqual(unisolatedClis(["claude", "claude"], () => false), ["claude"], "mapped but files gone = warn once, not twice");
+    assert.match(isolationWarning("pi"), /cannot verify/, "wording must stay honest: pi may have extension subagents");
+    assert.doesNotMatch(isolationWarning("pi"), /is not isolated/);
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -4762,6 +4783,7 @@ if (args.has("--advance")) {
   // finding F-01 was a set difference, not a judgement. Only when it is a first
   // dispatch of the stage (a re-run that is going back is already past this), and
   // only with real git: no git → no witness, no finding (fail-open, like #71).
+  if (stage === "adversarial_review" && d.attempt && cli && unisolatedClis([cli], (x) => existsSync(join(REPO_ROOT, x))).length) console.error(`⚠ --advance: ${isolationWarning(cli)}`);
   if (stage === "adversarial_review" && d.attempt) {
     const repo0 = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
     const top = gitAt(repo0, "rev-parse", "--show-toplevel")?.trim();
@@ -4966,6 +4988,7 @@ if (args.has("--preflight")) {
       warns.push(`${c} is installed but harness.config.json has no models.${c} — every role runs the session model on ${c}, no tier cascade on retry (Agents.md §5.3)`);
     // claude: .claude/ is always installed, so it never shows up in guards.json.
     for (const w of unmeasuredSliceBudgets(["claude", ...installed])) warns.push(w);
+    for (const c of unisolatedClis(installed, (d) => existsSync(join(REPO_ROOT, d)))) warns.push(isolationWarning(c));
     for (const [cli, file] of Object.entries(guards)) {
       if (!file) continue;
       let t = ""; try { t = readFileSync(join(REPO_ROOT, file), "utf8"); } catch {}
