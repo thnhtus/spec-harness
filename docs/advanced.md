@@ -436,6 +436,25 @@ Tracker write-back mặc định tắt, bật bằng `tracker.writeBack` trong c
 
 Khi đã bật, coordinator phải chứng minh đã làm bằng cách ghi `trackerWriteBack` vào `task.agent.json` sau khi MCP trả về. Validator cảnh báo khi `writeBack` bật mà field đó vắng, vì một setting trông như đang bật mà không làm gì chính là kiểu lỗi validator được viết ra để bắt. `writeBack: "status"` mà thiếu `statusOnReview` thì `--self-check`/`--preflight` báo đỏ ngay.
 
+### Enforcement phía server (#119)
+
+Guard ở client chỉ chặn tai nạn. Hai thứ nâng chi phí cho người cố ý:
+
+```bash
+# 1. Key chữ ký ra khỏi tầm đọc file của agent (chọn một; thứ tự ưu tiên từ trên xuống)
+export SPEC_HARNESS_KEY="$SECRET"                                   # CI secret
+export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'   # macOS Keychain
+export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'                   # Linux
+# không đặt gì → ~/.spec-harness/stamp.key như cũ
+
+# 2. --preflight hỏi git host xem validator có là required check không (cần `gh` đã login)
+node scripts/validate-tasks.mjs --preflight     # ⚠ ... no required status check on the integration branch
+```
+
+`SPEC_HARNESS_KEY_CMD` lỗi hoặc in rỗng thì **báo lỗi, không tự rơi về file**: ký bằng key khác thì mọi lần verify sau đó đều trượt. Máy không có nguồn key nào thì vẫn bỏ qua phần chữ ký như cũ. Probe branch protection chỉ là cảnh báo (không có `gh`, offline, host khác GitHub → "could not verify"); đặt `SPEC_HARNESS_NO_NET=1` để tắt.
+
+Còn lại (ceiling): người cùng OS user vẫn chạy được lệnh keychain; branch protection mà admin được bypass thì không thấy qua probe này. Bảo vệ cuối cùng là required check + không cho admin bypass, đặt ở server.
+
 ## Ghi chú cài đặt
 
 <details>

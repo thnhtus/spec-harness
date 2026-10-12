@@ -1734,6 +1734,19 @@ export function reportRows(tasks, groupField) {
   return [...g.values()].sort((a, b) => a.group.localeCompare(b.group, undefined, { numeric: true }));
 }
 
+// #119: is the validator a REQUIRED check on the integration branch? Without it `--no-verify` + a
+// direct push skips every gate. Pure: takes what the host returned, so the verdicts are assertable.
+// classic = status of GET .../protection/required_status_checks (+ its contexts), rules = names of
+// rule types from GET .../rules/branches/<b> (rulesets). null input = could not ask = no opinion.
+export function protectionVerdict({ classic, rules }) {
+  if (classic == null && rules == null) return { ok: null, why: "could not query the git host" };
+  const names = [...(classic?.contexts ?? []), ...(classic?.checks ?? []).map((c) => c.context)];
+  if (names.some((n) => /validate-tasks|spec-harness/.test(n))) return { ok: true };
+  if ((rules ?? []).includes("required_status_checks")) return { ok: true, note: "ruleset requires status checks (names not verified)" };
+  if (names.length) return { ok: false, why: `required checks are ${names.join(", ")} — none is the validator` };
+  return { ok: false, why: "no required status check on the integration branch" };
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2209,6 +2222,23 @@ if (args.has("--self-check")) {
   for (const [role, st] of Object.entries(ROLE_STAGE))
     assert.ok(STAGE_ORDER.includes(st), `config.roleStage.${role}: stage "${st}" not in config.stages`);
   assert.ok((CFG.retryBudget ?? 4) >= 2, "config.retryBudget must be at least 2 (one retry)");
+  {
+    const okRun = (o, st = 0) => () => ({ status: st, stdout: o }), nofile = () => { throw new Error("ENOENT"); };
+    assert.equal(keyFrom({ env: { SPEC_HARNESS_KEY: " abc " }, file: () => "file" }), "abc", "CI secret wins over the file");
+    assert.equal(keyFrom({ env: { SPEC_HARNESS_KEY_CMD: "x" }, run: okRun("kc\n"), file: () => "file" }), "kc", "keychain command wins over the file");
+    assert.equal(keyFrom({ env: {}, file: () => "file\n" }), "file", "no env = today's behaviour");
+    assert.equal(keyFrom({ env: {}, file: nofile }), null, "nothing configured = no key (signature checks skipped, not failed)");
+    assert.throws(() => keyFrom({ env: { SPEC_HARNESS_KEY_CMD: "x" }, run: okRun("", 1), file: () => "file" }), /not falling back/, "failing keychain must NOT downgrade to the file key");
+    assert.throws(() => keyFrom({ env: { SPEC_HARNESS_KEY_CMD: "x" }, run: okRun("  \n"), file: () => "file" }), /printed nothing/, "empty keychain output is a failure, not a blank key");
+    const L = (a) => protectionVerdict(a).ok;
+    assert.equal(L({}), null, "no answer from the host = no opinion (warn, never red)");
+    assert.equal(L({ classic: { contexts: ["validate-tasks"] } }), true);
+    assert.equal(L({ classic: { checks: [{ context: "spec-harness / validate-tasks" }] } }), true);
+    assert.equal(L({ classic: { contexts: ["lint"] } }), false, "a required check that is not the validator does not count");
+    assert.equal(L({ classic: null, rules: ["required_status_checks"] }), true, "rulesets count");
+    assert.equal(L({ classic: null, rules: [] }), false, "classic 404 + empty ruleset = unprotected");
+    assert.equal(L({ classic: { contexts: [] }, rules: ["deletion"] }), false);
+  }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
   {
@@ -4383,7 +4413,21 @@ export function templateRowsBlock(data) {
 // ponytail: an agent with a shell as the same OS user can still read the key and sign.
 // Upgrade path: key held by a process the agent cannot read (keychain / CI secret).
 function KEY_FILE() { return process.env.SPEC_HARNESS_KEY_FILE || join(homedir(), ".spec-harness", "stamp.key"); }
-export function stampKey() { try { return readFileSync(KEY_FILE(), "utf8").trim() || null; } catch { return null; } }
+// #119: key sources, strongest first. SPEC_HARNESS_KEY (CI secret) and SPEC_HARNESS_KEY_CMD
+// (e.g. `security find-generic-password -s spec-harness-stamp -w`, `secret-tool lookup ...`) keep the
+// key in a store the agent's file tools cannot read; the file stays the fallback so nothing
+// that works today breaks. A CMD that fails or prints nothing is NOT silently downgraded to the
+// file: you asked for a keychain, and signing with a different key would fail every verify later.
+export function keyFrom({ env = process.env, run = (c) => spawnSync(c, { shell: true, encoding: "utf8", timeout: 10000 }), file = () => readFileSync(KEY_FILE(), "utf8") } = {}) {
+  if (env.SPEC_HARNESS_KEY?.trim()) return env.SPEC_HARNESS_KEY.trim();
+  if (env.SPEC_HARNESS_KEY_CMD) {
+    const r = run(env.SPEC_HARNESS_KEY_CMD), k = (r.stdout ?? "").trim();
+    if (r.status !== 0 || !k) throw new Error(`SPEC_HARNESS_KEY_CMD failed (exit ${r.status}) or printed nothing — not falling back to the key file: a different key would fail every signature check`);
+    return k;
+  }
+  try { return file().trim() || null; } catch { return null; }
+}
+export function stampKey() { return keyFrom(); }
 export function stampSig(key, cols) { return createHmac("sha256", key).update(cols.join("\t")).digest("hex"); }
 export function stampLine(key, cols, mark = "-") { const c = [...cols, mark]; return `${c.join("\t")}\t${stampSig(key, c)}\n`; }
 // First use creates the key. Lines written before it existed are signed once, here —
@@ -4983,6 +5027,25 @@ if (args.has("--preflight")) {
       );
   }
 
+  // #119: server-side gate. Asked through `gh` when it exists and origin is a GitHub repo; any
+  // failure (no gh, no token, offline, other host) is "no opinion" -> a warning that says what to check.
+  if (!isSourceRepo && !process.env.SPEC_HARNESS_NO_NET) {
+    const url = spawnSync("git", ["remote", "get-url", "origin"], { cwd: REPO_ROOT, encoding: "utf8" }).stdout?.trim() ?? "";
+    const m = /github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/.exec(url);
+    if (m) {
+      const gh = (path) => { const r = spawnSync("gh", ["api", path], { encoding: "utf8", timeout: 10000 }); return r.status === 0 ? r.stdout : r.error ? undefined : (/404/.test(r.stderr) ? null : undefined); };
+      const head = spawnSync("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { cwd: REPO_ROOT, encoding: "utf8" }).stdout?.trim().replace(/^origin\//, "") || "main";
+      const c = gh(`repos/${m[1]}/branches/${head}/protection/required_status_checks`);
+      const rl = gh(`repos/${m[1]}/rules/branches/${head}`);
+      const parse = (t) => { try { return JSON.parse(t); } catch { return undefined; } };
+      const classic = c === undefined ? undefined : c === null ? { contexts: [] } : parse(c);
+      const rules = rl === undefined ? undefined : (parse(rl) ?? []).map((x) => x.type);
+      const v = protectionVerdict({ classic: classic === undefined && rules === undefined ? null : classic, rules });
+      if (v.ok === false) warns.push(`${m[1]}@${head}: ${v.why} — \`git commit --no-verify\` + a direct push skips every gate. Settings → Branches → require the validator check before merge (#119)`);
+      else if (v.ok === null) warns.push(`could not verify branch protection on ${m[1]}@${head} (${v.why}) — check by hand that the validator is a required status check (#119)`);
+    }
+  }
+
   // docEnums is only a single source of truth if the places a human reads are
   // checked against it. They were not, and that is the whole reason the
   // template could teach `clarification / contradiction` for months while Gate 2
@@ -5533,7 +5596,7 @@ for (const { sprint, task, path } of folders) {
 
   // R5/R5b/R5c (#65): a telemetry window with no _stamp.log witness was typed by hand.
   {
-    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId, Date.now(), stampKey());
+    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId, Date.now(), (() => { try { return stampKey(); } catch (e) { errors.push(e.message); return null; } })());
     const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
     for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
     warnings.push(...st.warnings);
