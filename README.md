@@ -123,6 +123,8 @@ CI là bắt buộc — `git commit --no-verify` bỏ qua được pre-commit, k
 
 ## Tài liệu
 
+- [`docs/architecture.md`](docs/architecture.md) — bản đồ code cho người đọc thứ hai: khối nào ở đâu, sửa gate thì sửa ở đâu
+- [`SUPPORT.md`](SUPPORT.md) — hỗ trợ (không SLA), phạm vi đã kiểm chứng và chưa
 - [`docs/runbook.md`](docs/runbook.md) — sự cố thường gặp: log nhân chứng mất, key mất, lease kẹt, vượt budget, release bị chặn
 - [`adapters/gate5-prefilter/README.md`](adapters/gate5-prefilter/README.md) — pre-filter Jev: cách gắn key, số đo, giới hạn
 - [`docs/advanced.md`](docs/advanced.md) — bảng hỗ trợ từng CLI, đặt harness cạnh nhiều repo (FE + BE), MCP server, độ phức tạp, eval/bench, giới hạn đã biết, ghi chú cài đặt

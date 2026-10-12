@@ -2690,6 +2690,18 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(root, { recursive: true, force: true });
   }
 
+  // #134: docs/architecture.md must name real flags, not ones that drifted away, and must stay
+  // packaged (same packaging check as #127's runbook).
+  {
+    const arch = read(join(SRC, "docs/architecture.md"));
+    const real = new Set();
+    for (const src of [read(join(SRC, "kernel/scripts/validate-tasks.mjs")), read(join(SRC, "install.mjs"))])
+      for (const m of src.matchAll(/args(?:\.has\(|\[0\] === )"(--[a-z-]+)"\)?/g)) real.add(m[1]);
+    const named = [...arch.matchAll(/`(--[a-z-]+)`/g)].map((m) => m[1]);
+    if (named.length < 10) fail("#134: docs/architecture.md không còn liệt kê đủ lệnh — đã bị rút gọn quá tay?");
+    for (const f of named) if (!real.has(f)) fail(`#134: docs/architecture.md nhắc "${f}" nhưng flag này không còn trong code — kiến trúc đã trôi khỏi sự thật`);
+  }
+
   // #133 --codeowners: a real owner is written; the shipped placeholder is refused; preflight warns when
   // there is no CODEOWNERS or it misses a gate path; and the installer twin never drifts from the kernel's.
   {
