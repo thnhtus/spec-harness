@@ -106,7 +106,18 @@ node scripts/validate-tasks.mjs              # kiểm toàn bộ task (pre-commi
 node scripts/validate-tasks.mjs --preflight  # setup có đúng không
 node scripts/validate-tasks.mjs --calibrate  # task đã đóng: ngưỡng độ phức tạp nào đang sai
 node scripts/validate-tasks.mjs --cost       # mỗi task tốn bao nhiêu KB luật phải đọc
+node scripts/validate-tasks.mjs --report     # token/retry thật theo sprint (cần collect-telemetry)
 ```
+
+### Trần chi phí mỗi task
+
+```json
+"budget": { "maxTokensPerTask": 400000 }
+```
+
+`--advance` từ chối dispatch khi task đã dùng ≥ ngưỡng (fresh input + output, cache-read tính riêng vì rẻ hơn ~10 lần). Muốn đi tiếp thì phải nói lý do: `--advance <task> <stage> --accept-over-budget "<lý do>"` — lý do được ghi vào `task.agent.json`, không chỉ hiện trên terminal. `0` (mặc định) = tắt.
+
+Chỉ đếm được dispatch nào đã chạy `collect-telemetry.mjs`; dispatch chưa thu thì vô hình với cả `--report` lẫn trần chi phí (cột `no-count`). Token thu được từ Claude Code và Codex; CLI khác chưa có log để đọc.
 
 CI là bắt buộc — `git commit --no-verify` bỏ qua được pre-commit, không bỏ qua được CI.
 

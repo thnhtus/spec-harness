@@ -24,7 +24,7 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --triage, --calibrate, --lite-check <file>, --config <path>,
+ * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --report, --triage, --calibrate, --lite-check <file>, --config <path>,
  *        --staged (only task folders touched by the current git index),
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
@@ -1702,6 +1702,38 @@ export function trackerConfigError(tracker) {
   return null;
 }
 
+// #121: per-task token cap. 0/absent = off. Counts fresh input + output as recorded in
+// telemetry (collect-telemetry); cache reads bill ~1/10 and are priced apart, so excluded.
+// ponytail: only dispatches whose tokens were collected count -- a dispatch with no
+// collect-telemetry run is invisible here. Upgrade path: collect inside --advance.
+export function budgetConfigError(b) {
+  const m = b?.maxTokensPerTask ?? 0;
+  return Number.isInteger(m) && m >= 0 ? null : `config.budget.maxTokensPerTask must be a non-negative integer (0 = off), got ${JSON.stringify(m)}`;
+}
+export function budgetSpent(telemetry = []) {
+  return telemetry.reduce((n, e) => n + (typeof e?.inputTokens === "number" ? e.inputTokens + (e.outputTokens ?? 0) : 0), 0);
+}
+export function budgetDefect(telemetry, max) {
+  if (!max) return null;
+  const spent = budgetSpent(telemetry);
+  return spent >= max ? `task has used ${spent.toLocaleString()} tokens (fresh input + output) ≥ budget.maxTokensPerTask ${max.toLocaleString()}` : null;
+}
+// Per-group rollup for --report. Pure so the self-check can pin the arithmetic.
+export function reportRows(tasks, groupField) {
+  const g = new Map();
+  for (const t of tasks) {
+    const k = String(t[groupField] ?? "-"), r = g.get(k) ?? { group: k, tasks: 0, input: 0, cacheRead: 0, output: 0, retries: 0, uncollected: 0 };
+    r.tasks++;
+    for (const e of t.telemetry ?? []) {
+      if (typeof e.inputTokens === "number") { r.input += e.inputTokens; r.cacheRead += e.cacheReadTokens ?? 0; r.output += e.outputTokens ?? 0; }
+      else r.uncollected++;
+    }
+    for (const n of Object.values(t.attempts ?? {})) r.retries += Math.max(0, n - 1);
+    g.set(k, r);
+  }
+  return [...g.values()].sort((a, b) => a.group.localeCompare(b.group, undefined, { numeric: true }));
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2177,6 +2209,23 @@ if (args.has("--self-check")) {
   for (const [role, st] of Object.entries(ROLE_STAGE))
     assert.ok(STAGE_ORDER.includes(st), `config.roleStage.${role}: stage "${st}" not in config.stages`);
   assert.ok((CFG.retryBudget ?? 4) >= 2, "config.retryBudget must be at least 2 (one retry)");
+  assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
+  assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
+  {
+    const tel = [{ inputTokens: 100, outputTokens: 50 }, { stage: "no-count" }, { inputTokens: 10, cacheReadTokens: 9999 }];
+    assert.equal(budgetSpent(tel), 160, "fresh input + output only; cache reads and uncollected dispatches add nothing");
+    assert.equal(budgetDefect(tel, 160) !== null, true, "at the cap = blocked (>=), the next dispatch would only go past it");
+    assert.equal(budgetDefect(tel, 161), null, "under the cap passes");
+    assert.equal(budgetDefect(tel, 0), null, "0 = off");
+    assert.equal(budgetDefect(tel, undefined), null, "absent = off");
+    const rows = reportRows([
+      { sprintNumber: 1, attempts: { implementation: 3, fsd_write: 1 }, telemetry: [{ inputTokens: 5, cacheReadTokens: 50, outputTokens: 2 }, { stage: "x" }] },
+      { sprintNumber: 1, telemetry: [{ inputTokens: 1, outputTokens: 1 }] },
+      { sprintNumber: 10 }, { sprintNumber: 2 },
+    ], "sprintNumber");
+    assert.deepEqual(rows.map((r) => r.group), ["1", "2", "10"], "numeric group order, not 1,10,2");
+    assert.deepEqual(rows[0], { group: "1", tasks: 2, input: 6, cacheRead: 50, output: 3, retries: 2, uncollected: 1 });
+  }
 
   // handoffBlockCount: the independent measure of rework.
   {
@@ -3772,6 +3821,17 @@ export function ruleFloor({ read, roleDoc, roles, roleStage }) {
   };
 }
 
+if (args.has("--report")) {
+  const tasks = findTaskFolders(null).map((fo) => { try { return JSON.parse(readFileSync(join(fo.path, "task.agent.json"), "utf8")); } catch { return null; } }).filter(Boolean);
+  const rows = reportRows(tasks, CFG.groupField ?? "sprintNumber");
+  if (AS_JSON) { console.log(JSON.stringify({ tasksScanned: tasks.length, groups: rows }, null, 2)); process.exit(0); }
+  const n = (x) => x.toLocaleString().padStart(11);
+  console.log(`${(CFG.groupField ?? "group").padEnd(10)} ${"tasks".padStart(5)} ${"input".padStart(11)} ${"output".padStart(11)} ${"cache-read".padStart(11)} ${"retries".padStart(7)} ${"no-count".padStart(8)}`);
+  for (const r of rows) console.log(`${r.group.padEnd(10)} ${String(r.tasks).padStart(5)} ${n(r.input)} ${n(r.output)} ${n(r.cacheRead)} ${String(r.retries).padStart(7)} ${String(r.uncollected).padStart(8)}`);
+  console.log(`\n${tasks.length} task(s). input = fresh (input + cache-creation); cache-read priced apart. no-count = dispatches never run through collect-telemetry: their cost is NOT in the totals.`);
+  process.exit(0);
+}
+
 if (args.has("--cost")) {
   // Source repo keeps the kernel under kernel/docs/; an installed project has it
   // at docs/. Same files, two layouts -- reading the wrong one silently reports
@@ -4553,6 +4613,11 @@ if (args.has("--advance")) {
     : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
   if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
+  // #121: budget cap — first, before the pre-filter spends a paid call. Only a dispatch can overspend; a going-back re-run (no attempt) is already counted.
+  const bud = d.attempt ? budgetDefect(data.telemetry, CFG.budget?.maxTokensPerTask) : null;
+  const accept = argv.includes("--accept-over-budget") ? (argv[argv.indexOf("--accept-over-budget") + 1] ?? "") : null;
+  if (bud && accept === null) { console.error(`✖ --advance ${stage}: ${bud}\n  a human decides: raise the cap in config, split the task, or re-run with --accept-over-budget "<reason>" (recorded in task.agent.json, valid for this one dispatch)`); process.exit(1); }
+  if (bud && (!accept.trim() || accept.startsWith("--"))) { console.error("✖ --advance: --accept-over-budget needs a reason — an unexplained overrun is not reviewable"); process.exit(2); }
   // #109/#113: any dispatch, never a re-run that is going back. The script decides
   // per stage whether it has an opinion (unknown stage = exit 0); the kernel only
   // names the stage and reads the exit code.
@@ -4599,6 +4664,7 @@ if (args.has("--advance")) {
   const skey = ensureStampKey();
   const stamp = (e, kind) => appendFileSync(STAMP_LOG, stampLine(skey, [now, data.taskId, e.stage, e.attempt, e.slice ?? "-", kind]));
   data.telemetry ??= [];
+  if (bud) (data.budgetAccepted ??= []).push({ at: now, stage, spent: budgetSpent(data.telemetry), reason: accept.trim() });
   // #71: closing a slice entry checks what that dispatch changed — before anything is written.
   const repoDir = resolve(REPO_ROOT, (REPOS.find((x) => x.name === data.repoName) ?? REPOS[0] ?? {}).path ?? ".");
   for (const e of data.telemetry) if (e.startedAt && !e.endedAt && e.slice && e.scopeSnap) {

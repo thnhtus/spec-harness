@@ -167,6 +167,8 @@
     "writeBack": "off",
     "statusOnReview": ""
   },
+  "_budget": "#121: maxTokensPerTask = fresh input + output summed from telemetry; --advance refuses a dispatch at/over it (0 = off). Override one dispatch with --accept-over-budget \"<reason>\".",
+  "budget": { "maxTokensPerTask": 0 },
   "retryBudget": 4,
   "splitEffort": 9,
   "_protectedBranches": "ProjectRules §3 as data: anchored regexes for branches --bootstrap refuses to start a task on. No default — a missing key exits 2.",

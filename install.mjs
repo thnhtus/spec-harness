@@ -2314,8 +2314,28 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(logP);
     if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp", "--include-done"], { cwd: P }).status !== 0 || !read(logP).includes(jT.taskId)) fail("#103: --include-done phải dựng lại cả task done");
     writeFileSync(logP, logKeep); writeFileSync(jp, jKeep);
+    // #121 budget: a dispatch at/over maxTokensPerTask is refused, and only an explained
+    // override lets it through — recorded in task.agent.json, not just in the terminal.
+    {
+      const jBtxt = read(jp), cfgBtxt = read(cfgP), jB = JSON.parse(jBtxt), cfgB = JSON.parse(cfgBtxt);
+      // the fixture's config is tracked; editing it would trip #115 (changed, undeclared) — hide it from git for this block
+      spawnSync("git", ["update-index", "--skip-worktree", "harness.config.json"], { cwd: P });
+      writeFileSync(jp, JSON.stringify({ ...jB, telemetry: jB.telemetry.map((e, i) => (i ? e : { ...e, inputTokens: 80, outputTokens: 30 })) }, null, 2));
+      writeFileSync(cfgP, JSON.stringify({ ...cfgB, budget: { maxTokensPerTask: 100 } }));
+      const over = adv(T, "adversarial_review", "--cli", "claude");
+      if (over.status !== 1 || !/maxTokensPerTask/.test(over.stderr)) fail("#121: dispatch vượt budget phải exit 1", over.stdout + over.stderr);
+      if (adv(T, "adversarial_review", "--cli", "claude", "--accept-over-budget").status !== 2) fail("#121: --accept-over-budget thiếu lý do phải exit 2");
+      const okB = adv(T, "adversarial_review", "--cli", "claude", "--accept-over-budget", "khách cần gấp");
+      if (okB.status !== 0) fail("#121: --accept-over-budget có lý do phải đi tiếp", okB.stdout + okB.stderr);
+      if (JSON.parse(read(jp)).budgetAccepted?.at(-1)?.reason !== "khách cần gấp") fail("#121: lý do vượt budget không được ghi vào task.agent.json");
+      writeFileSync(cfgP, JSON.stringify({ ...cfgB, budget: { maxTokensPerTask: 0 } }));
+      if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("#121: budget 0 = tắt, không được chặn");
+      writeFileSync(cfgP, cfgBtxt); writeFileSync(jp, jBtxt);
+      spawnSync("git", ["update-index", "--no-skip-worktree", "harness.config.json"], { cwd: P });
+    }
     // Closing a window is witnessed too: a re-dispatch ends the open entry, and the task still validates.
-    if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("--advance lần 2 cùng stage không exit 0");
+    const again = adv(T, "adversarial_review", "--cli", "claude");
+    if (again.status !== 0) fail("--advance lần 2 cùng stage không exit 0", again.stdout + again.stderr);
     const j2 = J();
     if (!j2.telemetry[0].endedAt || !read(join(P, "docs/tasks/_stamp.log")).includes(`${j2.telemetry[0].endedAt}\t${j2.taskId}\tadversarial_review\t1\t-\tend`)) fail("--advance không đóng entry cũ bằng dòng end trong _stamp.log");
     const v2 = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" });
