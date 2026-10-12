@@ -1,5 +1,6 @@
 # spec-harness: ai phải duyệt khi luật của harness bị sửa (#128).
-# Cài: cp adapters/ci/CODEOWNERS .github/   (GitLab: cp adapters/ci/CODEOWNERS .)
+# Cài (khuyên dùng): npx spec-harness --codeowners @org/team  — ghi đúng bộ gate path, từ chối handle giả.
+# Thủ công: cp adapters/ci/CODEOWNERS .github/   (GitLab: cp adapters/ci/CODEOWNERS .)
 # Thay @your-org/... bằng team thật. Không có team nào ở đây = không ai bị hỏi.
 #
 # Vì sao chỉ là CODEOWNERS chứ không phải RBAC tự xây: phân quyền là việc git host

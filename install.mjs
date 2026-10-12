@@ -19,7 +19,7 @@ import {
   cpSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync,
   symlinkSync, lstatSync, statSync, unlinkSync, chmodSync, mkdtempSync, realpathSync, appendFileSync,
 } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir, homedir } from "node:os";
@@ -487,7 +487,20 @@ function migrateConfig(f) {
   return done;
 }
 
-function installInto(P, clis = []) {
+// #133: twin of validate-tasks.mjs ownerError/GATE_PATHS (install.mjs cannot import the validator:
+// importing it runs its main against the cwd's config). Self-test asserts the two stay identical.
+// ponytail: duplicated ~10 lines. Upgrade path: a side-effect-free kernel/scripts/lib.mjs both import.
+const CO_GATE_PATHS = ["harness.config.json", "docs/agents/", "docs/Instructions.md", "scripts/validate-tasks.mjs", ".github/workflows/", "hooks/", ".claude/settings.json"];
+function coOwnerError(o) {
+  if (!/^(@[A-Za-z0-9][A-Za-z0-9-]*(\/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(o ?? "")) return `"${o}" is not a CODEOWNERS owner (@user, @org/team, or an email)`;
+  if (/your-org|example\.com|changeme|placeholder/i.test(o)) return `"${o}" is a placeholder — it would make GitHub report an unknown owner and protect nothing`;
+  return null;
+}
+const coCodeownersText = (owner) => "# spec-harness (#133): who must review a change to the rules that decide every gate.\n" +
+  "# Only effective with branch protection \"Require review from Code Owners\" (server-side).\n" +
+  CO_GATE_PATHS.map((p) => `/${p} ${owner}`).join("\n") + "\n";
+
+function installInto(P, clis = [], coOwner = null) {
   // Nguồn thiếu folder = bản phát hành hỏng (package.json `files:` quên khai,
   // hoặc tarball cắt sai). Không bắt sớm thì lỗi rơi ra dưới dạng stack trace
   // ENOENT của cpSync — đúng nguyên nhân nhưng không ai đọc ra là lỗi đóng gói.
@@ -576,6 +589,18 @@ function installInto(P, clis = []) {
     keep(join(SRC, "adapters/ci/validate-tasks.yml"), join(P, ".github/workflows/spec-harness.yml"));
     if (remote.status !== 0)
       console.log("ℹ chưa có remote origin — cài CI cho GitHub. Repo GitLab thì: cp adapters/ci/.gitlab-ci.yml .");
+  }
+
+  // #133: CODEOWNERS only on request, and only with a REAL owner. The shipped template says
+  // @your-org/… which is valid syntax but an unknown owner on GitHub, i.e. a file that looks like
+  // a control and enforces nothing — worse than no file. Needs branch protection to do anything.
+  if (coOwner !== null) {
+    const bad = coOwnerError(coOwner);
+    if (bad) die(`✖ --codeowners: ${bad}`);
+    const dst = join(P, isGitlab ? "CODEOWNERS" : ".github/CODEOWNERS");
+    mkdirSync(dirname(dst), { recursive: true });
+    if (existsSync(dst)) kept.push(dst);
+    else { writeFileSync(dst, coCodeownersText(coOwner)); console.log(`ℹ ${relative(P, dst)} đã ghi — chỉ có hiệu lực khi bật branch protection "Require review from Code Owners"`); }
   }
 
   // Dấu phiên bản. Installer ghi ĐÈ mọi lần, nên nếu không ghi lại số thì sau
@@ -2614,7 +2639,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       `node -e "require('fs').writeFileSync(process.argv[1]+'/09-Adversarial-Review.md','**Result: PASS**')" docs/tasks/sprint-1/SHOP-7-discount`],
       { encoding: "utf8" });
     if (e.status !== 1 || !/✔ clean/.test(e.stdout) || !/✖ boundary/.test(e.stdout))
-      fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", e.stdout + e.stderr);
+      fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", `status=${e.status} signal=${e.signal} err=${e.error?.code}\n--stdout--\n${e.stdout}\n--stderr--\n${e.stderr}`);
   }
 
   // #123 --eval-check: stale / missing / current record, and the always-PASS eval must NOT write one.
@@ -2663,6 +2688,33 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const honest = ra(`grep -q -- '--pack ${T} adversarial_review --base main' && echo '## Verdict: FAIL' > ${T}/09-Adversarial-Review.md`);
     if (!/Gate 5 ran isolated/.test(honest.stdout)) fail("#131: agent giả nhận đúng prompt (--pack …) mà không chạy hết luồng", honest.stdout + honest.stderr);
     rmSync(root, { recursive: true, force: true });
+  }
+
+  // #133 --codeowners: a real owner is written; the shipped placeholder is refused; preflight warns when
+  // there is no CODEOWNERS or it misses a gate path; and the installer twin never drifts from the kernel's.
+  {
+    const vsrc = read(join(SRC, "kernel/scripts/validate-tasks.mjs"));
+    const grab = (src, re) => (re.exec(src) ?? [])[1];
+    const kernelPaths = grab(vsrc, /export const GATE_PATHS = (\[[^\]]*\])/), twinPaths = grab(read(join(SRC, "install.mjs")), /const CO_GATE_PATHS = (\[[^\]]*\])/);
+    if (!kernelPaths || kernelPaths !== twinPaths) fail("#133: GATE_PATHS của install.mjs lệch bản của validate-tasks.mjs — preflight sẽ báo thiếu thứ installer vừa ghi", `${kernelPaths}\nvs\n${twinPaths}`);
+    const inst = (dir, ...a) => spawnSync(process.execPath, [fileURLToPath(import.meta.url), dir, "--yes", ...a], { encoding: "utf8" });
+    const pre = (dir) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight"], { cwd: dir, encoding: "utf8" });
+    const mk = () => { const d = mkdtempSync(join(tmpdir(), "sh-co-")); spawnSync("git", ["init", "-q"], { cwd: d }); return d; };
+    const bad = mk(); const rb = inst(bad, "--codeowners", "@your-org/harness-maintainers");
+    if (rb.status === 0 || existsSync(join(bad, ".github/CODEOWNERS"))) fail("#133: owner placeholder phải bị từ chối, không ghi file", rb.stdout + rb.stderr);
+    const bad2 = mk(); if (inst(bad2, "--codeowners", "alice").status === 0) fail("#133: owner không có @ phải bị từ chối");
+    const none = mk(); inst(none);
+    if (!/no CODEOWNERS/.test(pre(none).stdout + pre(none).stderr)) fail("#133: không có CODEOWNERS thì preflight phải cảnh báo", pre(none).stdout);
+    const ok = mk(); const ri = inst(ok, "--codeowners", "@acme/platform");
+    if (ri.status !== 0) fail("#133: owner hợp lệ phải cài được", ri.stdout + ri.stderr);
+    const co = read(join(ok, ".github/CODEOWNERS"));
+    if (!co.includes("/harness.config.json @acme/platform") || !co.includes("/scripts/validate-tasks.mjs @acme/platform")) fail("#133: CODEOWNERS thiếu luật cho gate path", co);
+    const pok = pre(ok); if (/CODEOWNERS/.test(pok.stdout + pok.stderr)) fail("#133: CODEOWNERS vừa ghi đủ phủ mà preflight vẫn cảnh báo", pok.stdout + pok.stderr);
+    writeFileSync(join(ok, ".github/CODEOWNERS"), "/harness.config.json @acme/platform\n");
+    if (!/does not cover gate paths: .*scripts\/validate-tasks\.mjs/.test(pre(ok).stdout + pre(ok).stderr)) fail("#133: CODEOWNERS thiếu validator mà preflight không nêu", pre(ok).stdout);
+    writeFileSync(join(ok, ".github/CODEOWNERS"), "# edited by hand\n* @acme/platform\n");
+    const again = inst(ok, "--codeowners", "@someone/else"); if (read(join(ok, ".github/CODEOWNERS")).includes("someone")) fail("#133: cài lại không được đè CODEOWNERS đã có (người dùng đã sửa tay)");
+    for (const d of [bad, bad2, none, ok]) rmSync(d, { recursive: true, force: true });
   }
 
   // #132 --key-migrate: a shim keychain CLI on PATH stands in for the real one — never touches the
@@ -2776,12 +2828,14 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
 // ── cài thật ───────────────────────────────────────────────────────────────
 const yes = args.includes("--yes") || args.includes("-y");
 const dry = args.includes("--dry-run");
+const coAt = args.indexOf("--codeowners");
+const coOwner = coAt === -1 ? null : args[coAt + 1] ?? "";
 const cliAt = args.indexOf("--cli");
 const clis = cliAt === -1 ? [] : String(args[cliAt + 1] ?? "").split(",").filter(Boolean);
 if (cliAt !== -1 && (!clis.length || clis.some((c) => !CLIS.includes(c))))
   die(`✖ --cli nhận danh sách phẩy trong: ${CLIS.join(", ")} (vd --cli codex,gemini)`);
-const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && a !== "--dry-run" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)));
-if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--dry-run] [--cli ${CLIS.join(",")}]`);
+const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && a !== "--dry-run" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)) && (coAt === -1 || (i !== coAt && i !== coAt + 1)));
+if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--dry-run] [--cli ${CLIS.join(",")}] [--codeowners @org/team]`);
 const where = rest[0] ?? ".";
 const target = resolve(where);
 if (!existsSync(target)) die(`✖ không có thư mục: ${where}`);
@@ -2835,7 +2889,7 @@ if (!yes && readdirSync(target).filter((n) => n !== ".git").length) {
   if (ans !== "y" && ans !== "yes") die("đã huỷ, không ghi gì.");
 }
 
-const { kept, hookSkipped, signpost, clobbered, clis: done, migrated } = installInto(target, clis);
+const { kept, hookSkipped, signpost, clobbered, clis: done, migrated } = installInto(target, clis, coOwner);
 
 console.log(`\n✅ đã cài vào ${where}`);
 if (kept.length) {

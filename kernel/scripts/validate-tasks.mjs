@@ -1849,6 +1849,36 @@ export function keyMigratePlan(platform) {
   return null;
 }
 
+// #133: who must review a change to the rules that decide every gate. These paths are the gate:
+// whoever can edit them without review can turn any gate off.
+export const GATE_PATHS = ["harness.config.json", "docs/agents/", "docs/Instructions.md", "scripts/validate-tasks.mjs", ".github/workflows/", "hooks/", ".claude/settings.json"];
+// A CODEOWNERS owner: @user, @org/team, or an email. The placeholder "@your-org/…" is a SYNTACTICALLY
+// valid team, which is exactly why the template can't be installed as-is: GitHub then flags
+// "unknown owner" and the file protects nothing.
+export function ownerError(o) {
+  if (!/^(@[A-Za-z0-9][A-Za-z0-9-]*(\/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(o ?? "")) return `"${o}" is not a CODEOWNERS owner (@user, @org/team, or an email)`;
+  if (/your-org|example\.com|changeme|placeholder/i.test(o)) return `"${o}" is a placeholder — it would make GitHub report an unknown owner and protect nothing`;
+  return null;
+}
+export function codeownersText(owner) {
+  return "# spec-harness (#133): who must review a change to the rules that decide every gate.\n" +
+    "# Only effective with branch protection \"Require review from Code Owners\" (server-side).\n" +
+    GATE_PATHS.map((p) => `/${p} ${owner}`).join("\n") + "\n";
+}
+// Gate paths with NO matching CODEOWNERS rule. Last-match-wins like GitHub; only the simple forms we
+// emit and the common hand-written ones (exact path, dir/, *, **) are understood — an unknown
+// pattern counts as "does not cover", so the warning errs toward telling you, never toward silence.
+export function codeownersGaps(text) {
+  const rules = (text ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => l.split(/\s+/)).filter((c) => c.length >= 2);
+  const covers = (pat, path) => {
+    const p = pat.replace(/^\//, "");
+    if (p === "*" || p === "**" || p === "**/*") return true;
+    if (p.endsWith("/")) return path.startsWith(p) || path === p.slice(0, -1);
+    return p === path || (p.endsWith("/**") && path.startsWith(p.slice(0, -2)));
+  };
+  return GATE_PATHS.filter((g) => !rules.some(([pat]) => covers(pat, g)));
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2423,6 +2453,19 @@ if (args.has("--self-check")) {
     const pr = adversaryPrompt("docs/tasks/s/T", "develop");
     assert.match(pr, /--pack docs\/tasks\/s\/T adversarial_review --base develop/, "base branch from 00-Metadata, not hardcoded main");
     assert.doesNotMatch(pr, /06-Implementation-Notes|implementer said/, "paths only — no implementer content in the prompt");
+  }
+  {
+    for (const ok of ["@alice", "@acme/platform", "dev@acme.io"]) assert.equal(ownerError(ok), null, ok);
+    for (const bad of ["alice", "@", "@acme/", "", undefined, "a b"]) assert.ok(ownerError(bad), `rejects ${JSON.stringify(bad)}`);
+    assert.match(ownerError("@your-org/harness-maintainers"), /placeholder/, "the shipped template handle must never be installed");
+    const t = codeownersText("@acme/platform");
+    assert.deepEqual(codeownersGaps(t), [], "what we write covers every gate path");
+    assert.deepEqual(codeownersGaps("# only comments\n"), GATE_PATHS, "no rules = nothing covered");
+    assert.deepEqual(codeownersGaps("/harness.config.json @a\n"), GATE_PATHS.filter((p) => p !== "harness.config.json"), "partial coverage names exactly what is missing");
+    assert.deepEqual(codeownersGaps("* @a\n"), [], "a catch-all covers everything");
+    assert.deepEqual(codeownersGaps("/docs/ @a\n").filter((p) => p.startsWith("docs/")), [], "a directory rule covers files under it");
+    assert.ok(codeownersGaps("/docs/agents/Adversary.md @a\n").includes("docs/agents/"), "one file under docs/agents/ does not cover the directory");
+    assert.deepEqual(codeownersGaps(null), GATE_PATHS, "no file = nothing covered");
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -5168,6 +5211,11 @@ if (args.has("--preflight")) {
       const has = (c) => spawnSync(platformWhich(), [c], { encoding: "utf8" }).status === 0;
       const adv = keyStoreAdvice({ has, keyFileExists: existsSync(KEY_FILE()) });
       if (adv) warns.push(adv);
+    }
+    if (!isSourceRepo) {
+      const cf = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"].map((f) => join(REPO_ROOT, f)).find(existsSync);
+      if (!cf) warns.push("no CODEOWNERS — anyone who can merge can edit harness.config.json / the validator / the CI workflow, i.e. turn any gate off. Install: `npx spec-harness --codeowners @your-team` (#133)");
+      else { const gaps = codeownersGaps(readFileSync(cf, "utf8")); if (gaps.length) warns.push(`CODEOWNERS does not cover gate paths: ${gaps.join(", ")} — a change there needs no review (#133)`); }
     }
     for (const c of unisolatedClis(installed, (d) => existsSync(join(REPO_ROOT, d)))) warns.push(isolationWarning(c));
     for (const [cli, file] of Object.entries(guards)) {
