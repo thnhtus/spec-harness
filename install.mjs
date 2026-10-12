@@ -1504,8 +1504,12 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     // không guard mới là chỗ tarball thiếu file thì nổ.
     for (const m of src.matchAll(/(existsSync\(\s*)?join\(SRC,\s*"([^"]+)"/g)) {
       if (m[1]) continue;
-      const top = m[2].split("/")[0];
-      if (!shipped.has(top)) missing.add(top);
+      const rel = m[2], top = rel.split("/")[0];
+      // files[] holds whole folders ("kernel/") AND single files ("docs/runbook.md"): a read is
+      // covered by either. Checking only the top segment calls docs/runbook.md unshipped while
+      // package.json ships it by name.
+      if (shipped.has(top) || shipped.has(rel)) continue;
+      missing.add(shipped.has(top) ? top : rel);
     }
     if (missing.size)
       fail(`install.mjs đọc ${[...missing].join(", ")} nhưng package.json "files" không đóng gói — ` +
@@ -2631,6 +2635,36 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     writeFileSync(rec, JSON.stringify({ date: "d", agent: "a", passed: 7, total: 7, inputs: { ...now, [some]: "stale" } }));
     if (run("--eval-check").status !== 1) fail("#123: record cũ phải exit 1");
     rmSync(root, { recursive: true, force: true });
+  }
+
+  // #127: runbook sentences must be real code strings, not prose that drifted. Picked from the
+  // fixed/literal part of each message (no `N`, `<…>`, interpolated values).
+  {
+    // existsSync guard: the shipped tarball has docs/runbook.md, but this pattern is how the
+    // packaging check above knows a read is intentional (see "existsSync(join(SRC, ...))").
+    const rb = read(join(SRC, "docs/runbook.md"));
+    // [in runbook, in code source] — the code side is the literal fragment of the template string.
+    const pairs = [
+      ["is missing entirely (", "is missing entirely ("],
+      ["has no validly signed _stamp.log line", "\"validly signed \""],
+      ["--restamp", "--restamp"], ["--include-done", "--include-done"],
+      ["chain broken — a line before it was deleted, reordered or edited", "chain broken — a line before it was deleted, reordered or edited"],
+      ["no longer contains the line this task last wrote", "no longer contains the line this task last wrote"],
+      ["this task is already running elsewhere. STOP.", "this task is already running elsewhere. STOP."],
+      ["re-run --eval and commit the new record", "re-run --eval and commit the new record"],
+      ["no eval record — run", "no eval record — run"],
+      ["validate-tasks.mjs --guard", "does not run \\`validate-tasks.mjs --guard"],
+      ["no native role files installed — cannot verify Gate 5", "no native role files installed — cannot verify Gate 5"],
+      ["budget.maxTokensPerTask", "budget.maxTokensPerTask"], ["--accept-over-budget", "--accept-over-budget"],
+    ];
+    // install.mjs's own eval-check messages are above this self-test block; the slice before
+    // the marker excludes THIS pairs array so a mutated message can never satisfy itself.
+    const code = [read(join(SRC, "kernel/scripts/validate-tasks.mjs")), read(join(SRC, "kernel/scripts/lease.mjs")),
+      read(join(SRC, "install.mjs")).split("// #127: runbook sentences")[0]].join("\n");
+    for (const [doc, src] of pairs) {
+      if (!rb.includes(doc)) fail(`#127: docs/runbook.md thiếu/trôi khỏi chuỗi lỗi thật: ${JSON.stringify(doc)}`);
+      if (!code.includes(src)) fail(`#127: runbook trích ${JSON.stringify(doc)} nhưng code không còn ${JSON.stringify(src)} — code đã đổi, runbook chưa theo`);
+    }
   }
 
   // #16: --dry-run must report accurately and touch nothing in the real target.

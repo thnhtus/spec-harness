@@ -18,7 +18,8 @@
     "adapters/",
     "commands/",
     "hooks/",
-    "docs/advanced.md"
+    "docs/advanced.md",
+    "docs/runbook.md"
   ],
   "repository": {
     "type": "git",

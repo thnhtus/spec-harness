@@ -123,6 +123,7 @@ CI là bắt buộc — `git commit --no-verify` bỏ qua được pre-commit, k
 
 ## Tài liệu
 
+- [`docs/runbook.md`](docs/runbook.md) — sự cố thường gặp: log nhân chứng mất, key mất, lease kẹt, vượt budget, release bị chặn
 - [`adapters/gate5-prefilter/README.md`](adapters/gate5-prefilter/README.md) — pre-filter Jev: cách gắn key, số đo, giới hạn
 - [`docs/advanced.md`](docs/advanced.md) — bảng hỗ trợ từng CLI, đặt harness cạnh nhiều repo (FE + BE), MCP server, độ phức tạp, eval/bench, giới hạn đã biết, ghi chú cài đặt
 - `docs/Instructions.md` — luật toàn cục (cài vào project)
