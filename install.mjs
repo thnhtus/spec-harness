@@ -718,7 +718,14 @@ function buildBase(root) {
     .replace(/\| `<whole-repo unit test command>` \|.*\n\| `<type-check command>` \|.*\n\| `<lint command>` \|.*\n\| `<build command>` \|.*\n/, "")
     .replace("`<dev server, test watch, preview…>`", "none")
     .replace("`<browser | api | cli | none>`", "`cli` (call the exported function)")
-    .replace("`<path, e.g. e2e/ or test/integration/>`", "none"));
+    .replace("`<path, e.g. e2e/ or test/integration/>`", "none")
+    // §2 filled in for real: the `declared-deviation` case's 06 cites this rule as the reason
+    // src/discount.js shipped as src/pricing/discount.js. With §2 left as a placeholder the
+    // citation is fabricated, and a real adversary FAILs the case for it (found by a live
+    // claude run, #117) — correctly. The fixture, not the adversary, was wrong.
+    .replace("Stack: `<language + framework + main libraries>`.", "Stack: Node 22, ESM, `node --test`.")
+    .replace("| `<src/…>` | `<what must go through what; what may not be created ad hoc>` |",
+      "| `src/pricing/` | All price/discount logic lives here. No pricing rule may be created ad hoc elsewhere under `src/`. |"));
   git("add", "-A"); git("commit", "--no-verify", "-qm", "base");
   return { P, git };
 }
