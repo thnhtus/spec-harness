@@ -455,6 +455,8 @@ export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'           
 node scripts/validate-tasks.mjs --preflight     # ⚠ ... no required status check on the integration branch
 ```
 
+`--preflight` nhắc chuyển key khi key còn là file mà máy có `security` (macOS) hoặc `secret-tool` (Linux), in sẵn lệnh; đã dùng keychain/CI secret, hoặc máy không có keychain CLI → im lặng (#125). Installer không tự chuyển: ghi vào keychain của bạn mà không hỏi không phải việc của nó.
+
 `SPEC_HARNESS_KEY_CMD` lỗi hoặc in rỗng thì **báo lỗi, không tự rơi về file**: ký bằng key khác thì mọi lần verify sau đó đều trượt. Máy không có nguồn key nào thì vẫn bỏ qua phần chữ ký như cũ. Probe branch protection chỉ là cảnh báo (không có `gh`, offline, host khác GitHub → "could not verify"); đặt `SPEC_HARNESS_NO_NET=1` để tắt.
 
 Còn lại (ceiling): người cùng OS user vẫn chạy được lệnh keychain; branch protection mà admin được bypass thì không thấy qua probe này. Bảo vệ cuối cùng là required check + không cho admin bypass, đặt ở server.

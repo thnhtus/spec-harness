@@ -1797,6 +1797,20 @@ export function unisolatedClis(installed, exists) {
 export const isolationWarning = (c) =>
   `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126)`;
 
+// #125: the default key lives in a file the agent (same OS user) can read. A keychain is the
+// cheap upgrade, so say so — but only when (a) the key IS a file, and (b) this machine really has
+// a keychain CLI. Telling a Windows box to run `security` teaches something it cannot do.
+// null = nothing to say. `has(cmd)` is injected so the self-check needs no real keychain.
+export function keyStoreAdvice({ env = process.env, platform = process.platform, has, keyFileExists }) {
+  if (env.SPEC_HARNESS_KEY || env.SPEC_HARNESS_KEY_CMD) return null;          // already out of the file
+  if (!keyFileExists) return null;                                           // no key yet: nothing signed with a file key
+  if (platform === "darwin" && has("security"))
+    return "the stamp key is a file the agent can read — move it into the Keychain: `security add-generic-password -a \"$USER\" -s spec-harness-stamp -w \"$(cat ~/.spec-harness/stamp.key)\" && export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'` then delete the file (#125)";
+  if (platform === "linux" && has("secret-tool"))
+    return "the stamp key is a file the agent can read — move it: `secret-tool store --label=spec-harness service spec-harness < ~/.spec-harness/stamp.key && export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'` then delete the file (#125)";
+  return null;
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2331,6 +2345,17 @@ if (args.has("--self-check")) {
     assert.deepEqual(unisolatedClis(["claude", "claude"], () => false), ["claude"], "mapped but files gone = warn once, not twice");
     assert.match(isolationWarning("pi"), /cannot verify/, "wording must stay honest: pi may have extension subagents");
     assert.doesNotMatch(isolationWarning("pi"), /is not isolated/);
+  }
+  {
+    const yes = (c) => ["security", "secret-tool"].includes(c), no = () => false, A = (o) => keyStoreAdvice({ env: {}, keyFileExists: true, has: yes, ...o });
+    assert.match(A({ platform: "darwin" }), /security add-generic-password/);
+    assert.match(A({ platform: "linux" }), /secret-tool store/);
+    assert.equal(A({ platform: "win32" }), null, "no keychain CLI we can name on Windows: say nothing");
+    assert.equal(A({ platform: "darwin", has: no }), null, "keychain CLI absent: do not teach a command that cannot run");
+    assert.equal(A({ platform: "darwin", env: { SPEC_HARNESS_KEY_CMD: "x" } }), null, "already using a keychain: silent");
+    assert.equal(A({ platform: "darwin", env: { SPEC_HARNESS_KEY: "k" } }), null, "CI secret: silent");
+    assert.equal(A({ platform: "darwin", keyFileExists: false }), null, "no file key exists: nothing to move");
+    assert.equal(A({ platform: "linux", has: (c) => c === "security" }), null, "macOS tool on Linux does not count");
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -4536,6 +4561,7 @@ export function keyFrom({ env = process.env, run = (c) => spawnSync(c, { shell: 
   try { return file().trim() || null; } catch { return null; }
 }
 export function stampKey() { return keyFrom(); }
+const platformWhich = () => (process.platform === "win32" ? "where" : "which");
 export function stampSig(key, cols) { return createHmac("sha256", key).update(cols.join("\t")).digest("hex"); }
 export function stampLine(key, cols, mark = "-") { const c = [...cols, mark]; return `${c.join("\t")}\t${stampSig(key, c)}\n`; }
 // First use creates the key. Lines written before it existed are signed once, here —
@@ -4988,6 +5014,11 @@ if (args.has("--preflight")) {
       warns.push(`${c} is installed but harness.config.json has no models.${c} — every role runs the session model on ${c}, no tier cascade on retry (Agents.md §5.3)`);
     // claude: .claude/ is always installed, so it never shows up in guards.json.
     for (const w of unmeasuredSliceBudgets(["claude", ...installed])) warns.push(w);
+    {
+      const has = (c) => spawnSync(platformWhich(), [c], { encoding: "utf8" }).status === 0;
+      const adv = keyStoreAdvice({ has, keyFileExists: existsSync(KEY_FILE()) });
+      if (adv) warns.push(adv);
+    }
     for (const c of unisolatedClis(installed, (d) => existsSync(join(REPO_ROOT, d)))) warns.push(isolationWarning(c));
     for (const [cli, file] of Object.entries(guards)) {
       if (!file) continue;
