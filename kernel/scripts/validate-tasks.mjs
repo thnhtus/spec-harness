@@ -24,7 +24,7 @@
  *  12. Complexity label matches what the vector derives (Agents.md §5.1.1)
  *
  * Exit code: 0 = no errors (warnings allowed), 1 = at least one error.
- * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --report, --triage, --calibrate, --lite-check <file>, --config <path>,
+ * Flags: --json, --no-warn, --quiet, --self-check, --preflight, --report, --writeback, --triage, --calibrate, --lite-check <file>, --config <path>,
  *        --staged (only task folders touched by the current git index),
  *        --task <folder> (only this one task folder — for per-gate use in /start-task)
  */
@@ -1747,6 +1747,31 @@ export function protectionVerdict({ classic, rules }) {
   return { ok: false, why: "no required status check on the integration branch" };
 }
 
+// #120: tracker write-back decision. The harness never calls the tracker (the coordinator does,
+// through MCP), so idempotency is two things it CAN own: a marker every comment carries, and a
+// decision the coordinator reads instead of re-deriving. The marker is a visible token on purpose —
+// hidden HTML comments are stripped by some trackers' editors (Jira ADF), a visible one survives all.
+export const writeBackMarker = (taskId) => `[spec-harness:${taskId}]`;
+// `existing` = whatever the tracker's comment-list call returned, any shape: searched as text, so
+// ClickUp / Jira / Linear need no per-vendor parser.
+export const hasWriteBackMarker = (existing, taskId) => JSON.stringify(existing ?? "").includes(writeBackMarker(taskId));
+export function writeBackDecision(data, tracker) {
+  const wb = tracker?.writeBack ?? "off", rec = data?.trackerWriteBack, marker = writeBackMarker(data?.taskId);
+  if (wb === "off") return { do: "nothing", marker };
+  const done = rec && (wb === "comment" || (rec.action === "status" && rec.status === tracker.statusOnReview));
+  if (done) return { do: "skip", why: `already recorded at ${rec.at} (${rec.action}${rec.status ? ` → ${rec.status}` : ""})`, marker };
+  // A recorded comment with status still owed: do NOT post a second comment.
+  return { do: wb, marker, commentAlreadyPosted: rec?.action === "comment", statusOnReview: wb === "status" ? tracker.statusOnReview : undefined };
+}
+// What a record says versus what config asks, at `reviewing`. null = fine.
+export function writeBackRecordDefect(rec, tracker) {
+  const wb = tracker?.writeBack ?? "off";
+  if (wb === "off" || !rec) return null;
+  if (wb === "status" && rec.action !== "status") return `trackerWriteBack.action is "${rec.action}" but config.tracker.writeBack="status" — the ticket was commented, never moved`;
+  if (wb === "status" && rec.status !== tracker.statusOnReview) return `trackerWriteBack.status "${rec.status}" ≠ config.tracker.statusOnReview "${tracker.statusOnReview}" — the ticket sits in a status this project does not call "review"`;
+  return null;
+}
+
 export function denyGaps(settingsText) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return ["settings.json is not valid JSON \u2014 the CLI ignores it entirely, so every deny rule is gone"]; }
@@ -2238,6 +2263,33 @@ if (args.has("--self-check")) {
     assert.equal(L({ classic: null, rules: ["required_status_checks"] }), true, "rulesets count");
     assert.equal(L({ classic: null, rules: [] }), false, "classic 404 + empty ruleset = unprotected");
     assert.equal(L({ classic: { contexts: [] }, rules: ["deletion"] }), false);
+  }
+  {
+    // Contract fixtures: the SHAPE each tracker's MCP comment-list returns. One decision, three vendors.
+    const M = writeBackMarker("PRJ-7");
+    const fx = {
+      clickup: { comments: [{ id: "1", comment_text: `Done ${M} doc: docs/tasks/x` }] },
+      jira: { comments: [{ id: "9", body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `Done ${M}` }] }] } }] },
+      linear: { data: { issue: { comments: { nodes: [{ body: `Done ${M}\n\nevidence: 08` }] } } } },
+    };
+    for (const [name, r] of Object.entries(fx)) assert.equal(hasWriteBackMarker(r, "PRJ-7"), true, `${name}: marker found in its own response shape`);
+    assert.equal(hasWriteBackMarker(fx.jira, "PRJ-8"), false, "another task's marker must not match");
+    assert.equal(hasWriteBackMarker({ comments: [] }, "PRJ-7"), false);
+    assert.equal(hasWriteBackMarker(undefined, "PRJ-7"), false, "no response = not posted");
+    assert.equal(hasWriteBackMarker({ c: "[spec-harness:PRJ-77]" }, "PRJ-7"), false, "PRJ-77 must not satisfy PRJ-7 (closing bracket is part of the marker)");
+    const t = { writeBack: "status", statusOnReview: "Ready for QC" }, d = { taskId: "PRJ-7" };
+    assert.equal(writeBackDecision(d, { writeBack: "off" }).do, "nothing");
+    assert.equal(writeBackDecision(d, t).do, "status");
+    assert.equal(writeBackDecision(d, t).statusOnReview, "Ready for QC");
+    assert.equal(writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "status", status: "Ready for QC" } }, t).do, "skip", "rerun after a recorded success = no-op");
+    const half = writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "comment" } }, t);
+    assert.deepEqual([half.do, half.commentAlreadyPosted], ["status", true], "comment done, move still owed: say so, so no second comment is posted");
+    assert.equal(writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "status", status: "Done" } }, t).do, "status", "moved to the WRONG status is not done");
+    assert.equal(writeBackDecision({ ...d, trackerWriteBack: { at: "T", action: "comment" } }, { writeBack: "comment" }).do, "skip");
+    assert.match(writeBackRecordDefect({ at: "T", action: "comment" }, t), /never moved/);
+    assert.match(writeBackRecordDefect({ at: "T", action: "status", status: "Done" }, t), /≠ config/);
+    assert.equal(writeBackRecordDefect({ at: "T", action: "status", status: "Ready for QC" }, t), null);
+    assert.equal(writeBackRecordDefect(undefined, t), null, "absence is reported elsewhere");
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -3849,6 +3901,14 @@ export function ruleFloor({ read, roleDoc, roles, roleStage }) {
     perTask: byStage.reduce((n, x) => n + x.total, 0),
     stages: byStage.length,
   };
+}
+
+if (args.has("--writeback")) {
+  const dir = argv[argv.indexOf("--writeback") + 1];
+  const jp = dir && !dir.startsWith("--") ? join(resolve(dir), "task.agent.json") : null;
+  if (!jp || !existsSync(jp)) { console.error("usage: validate-tasks.mjs --writeback <task-folder>"); process.exit(2); }
+  console.log(JSON.stringify(writeBackDecision(JSON.parse(readFileSync(jp, "utf8")), CFG.tracker), null, 2));
+  process.exit(0);
 }
 
 if (args.has("--report")) {
@@ -5570,6 +5630,11 @@ for (const { sprint, task, path } of folders) {
         "the ticket was probably never updated, so the board and this folder disagree " +
         "(/start-task step 7 writes it after calling the tracker MCP)",
     );
+
+  if (data.currentStage === "reviewing" && data.trackerWriteBack) {
+    const wd = writeBackRecordDefect(data.trackerWriteBack, CFG.tracker);
+    if (wd) warnings.push(wd);
+  }
 
   if (data.currentStage === "reviewing" && !(data.telemetry ?? []).length)
     warnings.push(
