@@ -1805,9 +1805,9 @@ export function keyStoreAdvice({ env = process.env, platform = process.platform,
   if (env.SPEC_HARNESS_KEY || env.SPEC_HARNESS_KEY_CMD) return null;          // already out of the file
   if (!keyFileExists) return null;                                           // no key yet: nothing signed with a file key
   if (platform === "darwin" && has("security"))
-    return "the stamp key is a file the agent can read — move it into the Keychain: `security add-generic-password -a \"$USER\" -s spec-harness-stamp -w \"$(cat ~/.spec-harness/stamp.key)\" && export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'` then delete the file (#125)";
+    return "the stamp key is a file the agent can read — run `node scripts/validate-tasks.mjs --key-migrate` (stores it in the Keychain, verifies, then deletes the file) (#125/#132)";
   if (platform === "linux" && has("secret-tool"))
-    return "the stamp key is a file the agent can read — move it: `secret-tool store --label=spec-harness service spec-harness < ~/.spec-harness/stamp.key && export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'` then delete the file (#125)";
+    return "the stamp key is a file the agent can read — run `node scripts/validate-tasks.mjs --key-migrate` (stores it with secret-tool, verifies, then deletes the file) (#125/#132)";
   return null;
 }
 
@@ -1830,6 +1830,23 @@ export function adversaryRunVerdict({ status, timedOut, nineBefore, nineAfter, s
   if (srcChanged.length) return { exit: 1, why: `adversary changed files outside the task folder: ${srcChanged.join(", ")} — Gate 5 is read-only; revert them` };
   if (!nineAfter || nineAfter === nineBefore) return { exit: 1, why: `adversary process exited ${status} without writing 09-Adversarial-Review.md` };
   return { exit: 0 };
+}
+
+// #132: move the stamp key out of the file into the OS keychain, as an explicit command (never at
+// install time). Order is the whole safety story: store → read back → compare → only then delete
+// the file. A failure at any step leaves the file key in place, so no signature is ever orphaned.
+export function keyMigratePlan(platform) {
+  if (platform === "darwin") return {
+    tool: "security",
+    store: (k) => ["security", ["add-generic-password", "-U", "-a", process.env.USER ?? "spec-harness", "-s", "spec-harness-stamp", "-w", k]],
+    readCmd: "security find-generic-password -s spec-harness-stamp -w",
+  };
+  if (platform === "linux") return {
+    tool: "secret-tool",
+    store: (k) => ["secret-tool", ["store", "--label=spec-harness", "service", "spec-harness"], k],
+    readCmd: "secret-tool lookup service spec-harness",
+  };
+  return null;
 }
 
 export function denyGaps(settingsText) {
@@ -2369,8 +2386,8 @@ if (args.has("--self-check")) {
   }
   {
     const yes = (c) => ["security", "secret-tool"].includes(c), no = () => false, A = (o) => keyStoreAdvice({ env: {}, keyFileExists: true, has: yes, ...o });
-    assert.match(A({ platform: "darwin" }), /security add-generic-password/);
-    assert.match(A({ platform: "linux" }), /secret-tool store/);
+    assert.match(A({ platform: "darwin" }), /--key-migrate/);
+    assert.match(A({ platform: "linux" }), /secret-tool/);
     assert.equal(A({ platform: "win32" }), null, "no keychain CLI we can name on Windows: say nothing");
     assert.equal(A({ platform: "darwin", has: no }), null, "keychain CLI absent: do not teach a command that cannot run");
     assert.equal(A({ platform: "darwin", env: { SPEC_HARNESS_KEY_CMD: "x" } }), null, "already using a keychain: silent");
@@ -4017,6 +4034,23 @@ export function ruleFloor({ read, roleDoc, roles, roleStage }) {
     perTask: byStage.reduce((n, x) => n + x.total, 0),
     stages: byStage.length,
   };
+}
+
+if (args.has("--key-migrate")) {
+  const plan = keyMigratePlan(process.platform);
+  if (!plan) { console.error(`✖ --key-migrate: no supported keychain CLI on ${process.platform} — use SPEC_HARNESS_KEY from your CI/secret store instead`); process.exit(2); }
+  if (process.env.SPEC_HARNESS_KEY || process.env.SPEC_HARNESS_KEY_CMD) { console.log("✔ key is already read from SPEC_HARNESS_KEY / SPEC_HARNESS_KEY_CMD — nothing to migrate"); process.exit(0); }
+  let key; try { key = readFileSync(KEY_FILE(), "utf8").trim(); } catch { key = ""; }
+  if (!key) { console.error(`✖ --key-migrate: no key file at ${KEY_FILE()} — nothing to migrate (run --advance once to create one)`); process.exit(1); }
+  const [bin, a, input] = plan.store(key);
+  const st = spawnSync(bin, a, { input, encoding: "utf8" });
+  if (st.status !== 0) { console.error(`✖ --key-migrate: ${bin} failed (exit ${st.status}): ${(st.stderr || st.error?.message || "").trim()}\n  the key file was NOT touched`); process.exit(1); }
+  const back = spawnSync(plan.readCmd, { shell: true, encoding: "utf8" });
+  if (back.status !== 0 || back.stdout.trim() !== key) { console.error(`✖ --key-migrate: stored, but reading it back ${back.status !== 0 ? `failed (exit ${back.status})` : "returned a different value"} — the key file was NOT deleted`); process.exit(1); }
+  if (args.has("--keep-file")) console.log(`✔ key stored in ${plan.tool} and verified; ${KEY_FILE()} kept (--keep-file)`);
+  else { rmSync(KEY_FILE()); console.log(`✔ key stored in ${plan.tool}, read back identical, ${KEY_FILE()} deleted`); }
+  console.log(`  add to your shell profile (and open a new terminal):\n  export SPEC_HARNESS_KEY_CMD='${plan.readCmd}'`);
+  process.exit(0);
 }
 
 if (args.has("--writeback")) {

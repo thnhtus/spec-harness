@@ -2665,6 +2665,39 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(root, { recursive: true, force: true });
   }
 
+  // #132 --key-migrate: a shim keychain CLI on PATH stands in for the real one — never touches the
+  // user's own. Proves the order: store, read back, compare, THEN delete. Shimmed per platform
+  // because the command picks `security` (darwin) or `secret-tool` (linux); CI runs on linux.
+  if (["darwin", "linux"].includes(process.platform)) {
+    const root = mkdtempSync(join(tmpdir(), "sh-keymig-"));
+    const { P } = buildBase(root);
+    const bin = join(root, "bin"); mkdirSync(bin, { recursive: true });
+    const keyFile = join(root, "stamp.key"), stored = join(root, "stored");
+    const env = (extra = {}) => ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, SPEC_HARNESS_KEY_FILE: keyFile, SPEC_HARNESS_KEY_CMD: "", SPEC_HARNESS_KEY: "", ...extra });
+    const mac = process.platform === "darwin", tool = mac ? "security" : "secret-tool";
+    // How each real CLI takes the secret: security in `-w <value>`, secret-tool on stdin.
+    const STORE_OK = mac ? `while [ "$1" != "-w" ]; do shift; done; printf '%s' "$2" > "${stored}"` : `cat > "${stored}"`;
+    const isStore = mac ? `[ "$1" = add-generic-password ]` : `[ "$1" = store ]`;
+    const isRead = mac ? `[ "$1" = find-generic-password ]` : `[ "$1" = lookup ]`;
+    const shim = (store, read) => { const f = join(bin, tool); writeFileSync(f, `#!/bin/sh\nif ${isStore}; then ${store}; exit $?; fi\nif ${isRead}; then ${read}; exit $?; fi\nexit 1\n`); chmodSync(f, 0o755); };
+    const run = (e) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--key-migrate"], { cwd: P, encoding: "utf8", env: env(e) });
+    writeFileSync(keyFile, "cafebabe1234\n");
+    shim(STORE_OK, `cat "${stored}"`);
+    const r1 = run();
+    if (r1.status !== 0 || existsSync(keyFile)) fail("#132: happy path phải exit 0 và xoá key file", r1.stdout + r1.stderr);
+    if (read(stored).trim() !== "cafebabe1234") fail("#132: key lưu vào keychain không khớp key file gốc");
+    writeFileSync(keyFile, "deadbeef0000\n");
+    shim("true", "echo WRONG");
+    const r2 = run();
+    if (r2.status !== 1 || !existsSync(keyFile)) fail("#132: readback lệch phải exit 1 và GIỮ key file", r2.stdout + r2.stderr);
+    shim("false", "false");
+    const r3 = run();
+    if (r3.status !== 1 || !existsSync(keyFile)) fail(`#132: ${tool} lưu lỗi phải exit 1 và GIỮ key file`, r3.stdout + r3.stderr);
+    const r4 = run({ SPEC_HARNESS_KEY_CMD: "echo x" });
+    if (r4.status !== 0 || !existsSync(keyFile) || !/already/.test(r4.stdout)) fail("#132: đã dùng SPEC_HARNESS_KEY_CMD phải no-op, không đụng file", r4.stdout + r4.stderr);
+    rmSync(root, { recursive: true, force: true });
+  }
+
   // #129: --json through a PIPE must not truncate at Node's default pipe highWaterMark. A real
   // multi-task repo's --json easily exceeds one 64 KB pipe buffer; process.exit() after a large
   // console.log drops whatever stdout had not flushed yet when writing to a pipe (not a file).

@@ -455,7 +455,7 @@ export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'           
 node scripts/validate-tasks.mjs --preflight     # ⚠ ... no required status check on the integration branch
 ```
 
-`--preflight` nhắc chuyển key khi key còn là file mà máy có `security` (macOS) hoặc `secret-tool` (Linux), in sẵn lệnh; đã dùng keychain/CI secret, hoặc máy không có keychain CLI → im lặng (#125). Installer không tự chuyển: ghi vào keychain của bạn mà không hỏi không phải việc của nó.
+`--preflight` nhắc chuyển key khi key còn là file mà máy có `security` (macOS) hoặc `secret-tool` (Linux); đã dùng keychain/CI secret, hoặc máy không có keychain CLI → im lặng (#125). Lệnh thật: `node scripts/validate-tasks.mjs --key-migrate` (#132) — lưu vào keychain, đọc lại để so khớp, **chỉ sau đó** mới xoá file; lưu lỗi hoặc đọc lại lệch thì file được giữ nguyên, không có cách nào mất key giữa chừng. `--keep-file` giữ cả file lẫn keychain. Installer không tự gọi lệnh này — chuyển key là quyết định của bạn, không phải việc install time.
 
 `SPEC_HARNESS_KEY_CMD` lỗi hoặc in rỗng thì **báo lỗi, không tự rơi về file**: ký bằng key khác thì mọi lần verify sau đó đều trượt. Máy không có nguồn key nào thì vẫn bỏ qua phần chữ ký như cũ. Probe branch protection chỉ là cảnh báo (không có `gh`, offline, host khác GitHub → "could not verify"); đặt `SPEC_HARNESS_NO_NET=1` để tắt.
 
