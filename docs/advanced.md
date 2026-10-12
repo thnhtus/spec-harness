@@ -459,6 +459,8 @@ node scripts/validate-tasks.mjs --preflight     # ⚠ ... no required status che
 
 `SPEC_HARNESS_KEY_CMD` lỗi hoặc in rỗng thì **báo lỗi, không tự rơi về file**: ký bằng key khác thì mọi lần verify sau đó đều trượt. Máy không có nguồn key nào thì vẫn bỏ qua phần chữ ký như cũ. Probe branch protection chỉ là cảnh báo (không có `gh`, offline, host khác GitHub → "could not verify"); đặt `SPEC_HARNESS_NO_NET=1` để tắt.
 
+Ai được sửa luật (#128): `adapters/ci/CODEOWNERS` là template. Copy vào `.github/` (GitLab: root), thay `@your-org/harness-maintainers` bằng team thật, rồi bật "Require review from Code Owners" trong branch protection. Installer không tự cài vì một handle giả làm GitHub báo "unknown owner". Phân quyền dựa hoàn toàn vào git host; harness không tự xây RBAC.
+
 Còn lại (ceiling): người cùng OS user vẫn chạy được lệnh keychain; branch protection mà admin được bypass thì không thấy qua probe này. Bảo vệ cuối cùng là required check + không cho admin bypass, đặt ở server.
 
 ## Ghi chú cài đặt

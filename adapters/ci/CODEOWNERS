@@ -1,0 +1,19 @@
+# spec-harness: ai phải duyệt khi luật của harness bị sửa (#128).
+# Cài: cp adapters/ci/CODEOWNERS .github/   (GitLab: cp adapters/ci/CODEOWNERS .)
+# Thay @your-org/... bằng team thật. Không có team nào ở đây = không ai bị hỏi.
+#
+# Vì sao chỉ là CODEOWNERS chứ không phải RBAC tự xây: phân quyền là việc git host
+# đã làm tốt hơn, và một lớp quyền thứ hai trong CLI chỉ tạo ra hai nguồn sự thật.
+# CODEOWNERS chỉ có hiệu lực khi branch protection bật "Require review from Code Owners".
+
+# Luật gate: đổi file này là đổi điều kiện mọi task phải thoả.
+/harness.config.json        @your-org/harness-maintainers
+/docs/agents/               @your-org/harness-maintainers
+/docs/Instructions.md       @your-org/harness-maintainers
+/docs/Agents.md             @your-org/harness-maintainers
+
+# Validator và CI: ai sửa được chúng thì sửa được mọi gate.
+/scripts/validate-tasks.mjs @your-org/harness-maintainers
+/.github/workflows/         @your-org/harness-maintainers
+/hooks/                     @your-org/harness-maintainers
+/.claude/settings.json      @your-org/harness-maintainers
