@@ -297,7 +297,7 @@ node scripts/validate-tasks.mjs --writeback "$TASK"   # → do, marker, …
 |---|---|
 | `nothing` / `skip` | nothing (off, or already recorded) |
 | `comment` | a ticket comment (`tracker` MCP) already holds `marker` → just record. Else post **one** with `marker`: task doc path, branch, `08-Test-Evidence.md` |
-| `status` | the comment (skip when `commentAlreadyPosted`) **and** move the ticket to `statusOnReview` |
+| `status` | re-run with `--statuses '<tracker's status list JSON>'` (exit 1 → stop); then the comment (skip if `commentAlreadyPosted`) **and** move to `statusOnReview` |
 
 Then record it: `"trackerWriteBack": { "at": "<iso>", "action": "status", "status": "Ready for QC" }`.
 **After** the MCP call returns; failed → leave it out, say so. `status` = `statusOnReview` exactly.

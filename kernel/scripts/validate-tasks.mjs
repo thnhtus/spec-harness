@@ -1755,6 +1755,19 @@ export const writeBackMarker = (taskId) => `[spec-harness:${taskId}]`;
 // `existing` = whatever the tracker's comment-list call returned, any shape: searched as text, so
 // ClickUp / Jira / Linear need no per-vendor parser.
 export const hasWriteBackMarker = (existing, taskId) => JSON.stringify(existing ?? "").includes(writeBackMarker(taskId));
+// #120: does the tracker actually have config.tracker.statusOnReview? Preflight cannot ask (no MCP in
+// CI); the coordinator can, right before moving the ticket. `statuses` = the tracker's status-list
+// response, any shape: every string value is a candidate. Case-insensitive because ClickUp returns
+// "ready for qc" for a status the UI shows as "Ready for QC". null = fine.
+export function statusMissing(statuses, want) {
+  const all = [], walk = (v) => typeof v === "string" ? all.push(v) : v && typeof v === "object" && Object.values(v).forEach(walk);
+  walk(statuses);
+  const norm = (x) => x.trim().toLowerCase();
+  if (all.some((x) => norm(x) === norm(want ?? ""))) return null;
+  const near = [...new Set(all.filter((x) => x.length < 40 && /[a-z]/i.test(x) && !/^https?:|^#?[0-9a-f]{6}$/i.test(x)))].slice(0, 12);
+  return `tracker has no status "${want}" — moving the ticket would fail or land elsewhere. Seen: ${near.join(", ") || "(no strings in the response)"}`;
+}
+
 export function writeBackDecision(data, tracker) {
   const wb = tracker?.writeBack ?? "off", rec = data?.trackerWriteBack, marker = writeBackMarker(data?.taskId);
   if (wb === "off") return { do: "nothing", marker };
@@ -2290,6 +2303,13 @@ if (args.has("--self-check")) {
     assert.match(writeBackRecordDefect({ at: "T", action: "status", status: "Done" }, t), /≠ config/);
     assert.equal(writeBackRecordDefect({ at: "T", action: "status", status: "Ready for QC" }, t), null);
     assert.equal(writeBackRecordDefect(undefined, t), null, "absence is reported elsewhere");
+    // statusOnReview vs the tracker's real list, in each vendor's shape
+    assert.equal(statusMissing({ statuses: [{ status: "to do" }, { status: "ready for qc", color: "#ff0000" }] }, "Ready for QC"), null, "clickup lowercases statuses");
+    assert.equal(statusMissing([{ id: "3", name: "Ready for QC", statusCategory: { key: "indeterminate" } }], "Ready for QC"), null, "jira transitions/statuses");
+    assert.equal(statusMissing({ data: { workflowStates: { nodes: [{ name: "In Review", type: "started" }] } } }, "In Review"), null, "linear workflowStates");
+    const sm = statusMissing({ statuses: [{ status: "to do", color: "#ff0000" }, { status: "qc" }] }, "Ready for QC");
+    assert.match(sm, /no status "Ready for QC"/); assert.match(sm, /to do, qc/); assert.doesNotMatch(sm, /#ff0000/, "colors are not status names");
+    assert.match(statusMissing({}, "X"), /no strings/);
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -3907,7 +3927,14 @@ if (args.has("--writeback")) {
   const dir = argv[argv.indexOf("--writeback") + 1];
   const jp = dir && !dir.startsWith("--") ? join(resolve(dir), "task.agent.json") : null;
   if (!jp || !existsSync(jp)) { console.error("usage: validate-tasks.mjs --writeback <task-folder>"); process.exit(2); }
-  console.log(JSON.stringify(writeBackDecision(JSON.parse(readFileSync(jp, "utf8")), CFG.tracker), null, 2));
+  const dec = writeBackDecision(JSON.parse(readFileSync(jp, "utf8")), CFG.tracker);
+  // --statuses '<tracker status-list JSON>': checked before the coordinator moves anything.
+  if (dec.do === "status" && argv.includes("--statuses")) {
+    let st; try { st = JSON.parse(argv[argv.indexOf("--statuses") + 1]); } catch { console.error("✖ --statuses needs the tracker's status-list response as JSON"); process.exit(2); }
+    const miss = statusMissing(st, dec.statusOnReview);
+    if (miss) { console.error(`✖ --writeback: ${miss}\n  fix config.tracker.statusOnReview, then re-run — do not move the ticket`); process.exit(1); }
+  }
+  console.log(JSON.stringify(dec, null, 2));
   process.exit(0);
 }
 
