@@ -2357,6 +2357,23 @@ if (args.has("--self-check")) {
     assert.equal(A({ platform: "darwin", keyFileExists: false }), null, "no file key exists: nothing to move");
     assert.equal(A({ platform: "linux", has: (c) => c === "security" }), null, "macOS tool on Linux does not count");
   }
+  {
+    const K = "k", row = (i) => ["2026-01-01T00:0" + i + ":00Z", "T-1", "impl", "1", "-", i % 2 ? "end" : "start"];
+    const build = (n, legacy = 0) => { let t = "", prev = ""; for (let i = 0; i < n; i++) { const l = i < legacy ? stampLine(K, row(i)) : stampLine(K, row(i), "-", prev); if (i >= legacy) prev = l.trimEnd().split("\t")[8]; t += l; } return t; };
+    const good = build(4);
+    assert.equal(stampChainBreak(good, K), null, "an intact chain passes");
+    assert.equal(lastChain(good), good.trimEnd().split("\n").at(-1).split("\t")[8]);
+    const L = good.split("\n").filter(Boolean);
+    assert.match(stampChainBreak([L[0], L[2], L[3]].join("\n") + "\n", K), /line 2: chain broken/, "deleting a middle line breaks the next link");
+    assert.match(stampChainBreak([L[1], L[0], L[2], L[3]].join("\n") + "\n", K), /chain broken/, "reordering breaks it");
+    assert.match(stampChainBreak(good + row(9).join("\t") + "\t-\tsig\n", K), /no chain column/, "an unchained line after chaining began = inserted by hand");
+    assert.equal(stampChainBreak(build(5, 2), K), null, "pre-#124 lines (no col 9) before the chain are accepted history");
+    assert.equal(stampChainBreak(build(3, 3), K), null, "a fully legacy log is not red");
+    assert.equal(stampChainBreak([L[0], L[2]].join("\n"), null), null, "no key = cannot verify = skip, not fail");
+    assert.equal(stampChainBreak([L[0], L[1]].join("\n") + "\n", K), null, "truncating the TAIL keeps the chain intact — that is what stampHead is for");
+    assert.equal(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }, { stage: "s", attempt: 2, startedAt: "c" }] }], K).join("").split("\n").filter(Boolean).length, 3);
+    assert.equal(stampChainBreak(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }] }], K).join(""), K), null, "--restamp writes a valid chain");
+  }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
   {
@@ -4563,7 +4580,36 @@ export function keyFrom({ env = process.env, run = (c) => spawnSync(c, { shell: 
 export function stampKey() { return keyFrom(); }
 const platformWhich = () => (process.platform === "win32" ? "where" : "which");
 export function stampSig(key, cols) { return createHmac("sha256", key).update(cols.join("\t")).digest("hex"); }
-export function stampLine(key, cols, mark = "-") { const c = [...cols, mark]; return `${c.join("\t")}\t${stampSig(key, c)}\n`; }
+export function stampLine(key, cols, mark = "-", prev) {
+  const c = [...cols, mark], sig = stampSig(key, c);
+  // #124 col 9: chains this line to the previous one, so a deleted/reordered/truncated line breaks
+  // every later link. prev === undefined = no chain (pre-#124 caller); "" = first chained line.
+  return `${c.join("\t")}\t${sig}${prev === undefined ? "" : `\t${stampChain(key, prev, sig)}`}\n`;
+}
+
+export function stampChain(key, prev, sig) { return createHmac("sha256", key).update(`${prev || "genesis"}\t${sig}`).digest("hex"); }
+// The chain value the next appended line must link to: col 9 of the last line, or "" (start a chain).
+export function lastChain(text = "") {
+  const last = text.split("\n").filter(Boolean).at(-1)?.split("\t");
+  return last?.length >= 9 ? last[8] : "";
+}
+// #124: null = intact. Lines before the first chained one are pre-#124 history and are accepted;
+// from there on every line must chain to its predecessor. Truncation of the TAIL is invisible to
+// a chain by itself, so the caller also compares against the head recorded in the task (see below).
+export function stampChainBreak(text = "", key) {
+  if (!key) return null;
+  const lines = text.split("\n").filter(Boolean).map((l) => l.split("\t"));
+  const first = lines.findIndex((c) => c.length >= 9);
+  if (first < 0) return null;
+  let prev = "";
+  for (let i = first; i < lines.length; i++) {
+    const c = lines[i];
+    if (c.length < 9) return `line ${i + 1}: no chain column after chaining began at line ${first + 1} — a line was inserted by something other than --advance`;
+    if (c[8] !== stampChain(key, prev, c[7])) return `line ${i + 1}: chain broken — a line before it was deleted, reordered or edited (chaining began at line ${first + 1})`;
+    prev = c[8];
+  }
+  return null;
+}
 // First use creates the key. Lines written before it existed are signed once, here —
 // otherwise turning signing on would invalidate every witness already in the log.
 function ensureStampKey() {
@@ -4642,16 +4688,17 @@ export function dispatchGaps(data, { stages = STAGE_ORDER, soft = false } = {}) 
 // ponytail: whoever deletes the log and runs this launders hand-typed windows; the 7th
 // column "restamp" keeps the rebuilt lines visible in audit. Same ceiling as _triage.log.
 export function restampLines(tasks = [], key) {
+  let prev = "";
   return tasks.flatMap((j) => (j.telemetry ?? []).flatMap((e) =>
     [["start", e?.startedAt], ["end", e?.endedAt]].filter(([, t]) => t)
-      .map(([k, t]) => stampLine(key, [t, j.taskId, e.stage, e.attempt, e.slice ?? "-", k], "restamp"))));
+      .map(([k, t]) => { const l = stampLine(key, [t, j.taskId, e.stage, e.attempt, e.slice ?? "-", k], "restamp", prev); prev = l.trimEnd().split("\t")[8]; return l; })));
 }
 
 // #103: a done task is shipped history — rebuilding its witness is exactly how a fake window
 // would be laundered after the fact. Skipped unless --include-done says so out loud.
 if (args.has("--restamp")) {
   if (existsSync(STAMP_LOG)) { console.error(`✖ --restamp: ${STAMP_LOG_NAME} exists — refusing to rewrite live witnesses (delete it yourself only if it is corrupt)`); process.exit(1); }
-  const tasks = [], skipped = [];
+  const tasks = [], skipped = [], tasksFiles = [];
   if (existsSync(TASKS_DIR))
     for (const g of readdirSync(TASKS_DIR)) {
       const gd = join(TASKS_DIR, g);
@@ -4661,12 +4708,20 @@ if (args.has("--restamp")) {
         if (!existsSync(jp)) continue;
         try {
           const j = JSON.parse(readFileSync(jp, "utf8"));
-          if (j.status === "done" && !args.has("--include-done")) skipped.push(j.taskId); else tasks.push(j);
+          if (j.status === "done" && !args.has("--include-done")) skipped.push(j.taskId); else { tasks.push(j); tasksFiles.push(jp); }
         } catch {}
       }
     }
   const text = restampLines(tasks, ensureStampKey());
   writeFileSync(STAMP_LOG, text.join(""));
+  // #124: each rebuilt task's head is its LAST rebuilt line — otherwise the old head, which is in
+  // a log that no longer exists, reads as "truncated" on every rebuilt task.
+  for (const [i, jp] of tasksFiles.entries()) {
+    const mine = text.filter((l) => l.split("\t")[1] === tasks[i].taskId);
+    if (!mine.length) continue;
+    const j = JSON.parse(readFileSync(jp, "utf8")); j.stampHead = mine.at(-1).trimEnd().split("\t")[8];
+    writeFileSync(jp, JSON.stringify(j, null, 2) + "\n");
+  }
   console.log(`✔ --restamp: ${text.length} line(s) from ${tasks.length} task(s) → ${rel(STAMP_LOG)} (col 7 "restamp", col 8 HMAC)`);
   if (skipped.length) console.log(`  skipped done task(s): ${skipped.join(", ")} — their windows stay unwitnessed; pass --include-done to rebuild them too`);
   process.exit(0);
@@ -4841,7 +4896,11 @@ if (args.has("--advance")) {
   needStampSince("--advance");
   const { appendFileSync } = await import("node:fs");
   const skey = ensureStampKey();
-  const stamp = (e, kind) => appendFileSync(STAMP_LOG, stampLine(skey, [now, data.taskId, e.stage, e.attempt, e.slice ?? "-", kind]));
+  const stamp = (e, kind) => {
+    const line = stampLine(skey, [now, data.taskId, e.stage, e.attempt, e.slice ?? "-", kind], "-", lastChain(existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : ""));
+    appendFileSync(STAMP_LOG, line);
+    data.stampHead = line.trimEnd().split("\t")[8]; // #124: lets truncation of the tail be seen
+  };
   data.telemetry ??= [];
   if (bud) (data.budgetAccepted ??= []).push({ at: now, stage, spent: budgetSpent(data.telemetry), reason: accept.trim() });
   // #71: closing a slice entry checks what that dispatch changed — before anything is written.
@@ -5742,7 +5801,17 @@ for (const { sprint, task, path } of folders) {
 
   // R5/R5b/R5c (#65): a telemetry window with no _stamp.log witness was typed by hand.
   {
-    const st = stampDefects(data.telemetry, existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null, data.taskId, Date.now(), (() => { try { return stampKey(); } catch (e) { errors.push(e.message); return null; } })());
+    const stText = existsSync(STAMP_LOG) ? readFileSync(STAMP_LOG, "utf8") : null;
+    const sk = (() => { try { return stampKey(); } catch (e) { errors.push(e.message); return null; } })();
+    const st = stampDefects(data.telemetry, stText, data.taskId, Date.now(), sk);
+    // #124: the chain is a property of the whole log; reported per task that relies on it.
+    if (stText !== null && sk && data.stampHead) {
+      const br = stampChainBreak(stText, sk);
+      if (br) errors.push(`${STAMP_LOG_NAME} ${br} (#124)`);
+      // A chain alone cannot see the tail cut off; the head this task last wrote must still be in it.
+      else if (!stText.includes(`\t${data.stampHead}\n`) && !stText.endsWith(`\t${data.stampHead}`))
+        errors.push(`${STAMP_LOG_NAME} no longer contains the line this task last wrote (stampHead ${data.stampHead.slice(0, 12)}…) — the log was truncated or replaced (#124)`);
+    }
     const witnessed = (data.createdAt ?? "") >= STAMP_SINCE;
     for (const e of st.errors) (witnessed || !/_stamp\.log/.test(e) ? errors : warnings).push(e);
     warnings.push(...st.warnings);

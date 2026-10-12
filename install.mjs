@@ -2367,6 +2367,22 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(logP);
     if (spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--restamp", "--include-done"], { cwd: P }).status !== 0 || !read(logP).includes(jT.taskId)) fail("#103: --include-done phải dựng lại cả task done");
     writeFileSync(logP, logKeep); writeFileSync(jp, jKeep);
+    // #124 e2e: a real --advance chain. Delete a middle line → chain error; cut the tail → stampHead error.
+    {
+      const jC = read(jp), lC = read(logP);
+      if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("#124: --advance để dựng chain không exit 0");
+      if (adv(T, "adversarial_review", "--cli", "claude").status !== 0) fail("#124: --advance lần 2 không exit 0");
+      const errs = () => JSON.parse(spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--json", "--task", T], { cwd: P, encoding: "utf8" }).stdout).results[0].errors;
+      if (!JSON.parse(read(jp)).stampHead) fail("#124: --advance không ghi stampHead");
+      if (errs().some((e) => /#124/.test(e))) fail("#124: chain nguyên vẹn mà vẫn báo lỗi", errs().join("\n"));
+      const full = read(logP), ls = full.split("\n").filter(Boolean), chained = ls.map((l, i) => [l, i]).filter(([l]) => l.split("\t").length >= 9);
+      if (chained.length < 3) fail("#124: --advance phải ghi dòng có cột chain", full);
+      writeFileSync(logP, ls.filter((_, i) => i !== chained[1][1]).join("\n") + "\n");
+      if (!errs().some((e) => /chain broken/.test(e))) fail("#124: xoá dòng giữa mà validator không thấy chain đứt", errs().join("\n"));
+      writeFileSync(logP, ls.slice(0, -1).join("\n") + "\n");
+      if (!errs().some((e) => /no longer contains the line this task last wrote/.test(e))) fail("#124: cắt đuôi log mà validator không thấy", errs().join("\n"));
+      writeFileSync(logP, lC); writeFileSync(jp, jC);
+    }
     // #121 budget: a dispatch at/over maxTokensPerTask is refused, and only an explained
     // override lets it through — recorded in task.agent.json, not just in the terminal.
     {
