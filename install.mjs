@@ -23,6 +23,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir, homedir } from "node:os";
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 
 const REPO = process.env.SPEC_HARNESS_REPO || "thnhtus/spec-harness";
@@ -718,14 +719,7 @@ function buildBase(root) {
     .replace(/\| `<whole-repo unit test command>` \|.*\n\| `<type-check command>` \|.*\n\| `<lint command>` \|.*\n\| `<build command>` \|.*\n/, "")
     .replace("`<dev server, test watch, preview…>`", "none")
     .replace("`<browser | api | cli | none>`", "`cli` (call the exported function)")
-    .replace("`<path, e.g. e2e/ or test/integration/>`", "none")
-    // §2 filled in for real: the `declared-deviation` case's 06 cites this rule as the reason
-    // src/discount.js shipped as src/pricing/discount.js. With §2 left as a placeholder the
-    // citation is fabricated, and a real adversary FAILs the case for it (found by a live
-    // claude run, #117) — correctly. The fixture, not the adversary, was wrong.
-    .replace("Stack: `<language + framework + main libraries>`.", "Stack: Node 22, ESM, `node --test`.")
-    .replace("| `<src/…>` | `<what must go through what; what may not be created ad hoc>` |",
-      "| `src/pricing/` | All price/discount logic lives here. No pricing rule may be created ad hoc elsewhere under `src/`. |"));
+    .replace("`<path, e.g. e2e/ or test/integration/>`", "none"));
   git("add", "-A"); git("commit", "--no-verify", "-qm", "base");
   return { P, git };
 }
@@ -738,6 +732,18 @@ function buildEvalCase(c, root) {
   // step 0 thật: _triage.log là thứ validator đối chiếu vector bootstrap
   const vec = JSON.parse(read(join(EVAL, "task/task.agent.json"))).complexity;
   spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--triage", JSON.stringify(vec), "--branch-type", "feature", "--task-id", "SHOP-7"], { cwd: P, stdio: "ignore" });
+  // A deviation that cites ProjectRules §2 is only honest if §2 says it. Filled in for THIS case only:
+  // in the shared base it makes every other case (code in src/discount.js) violate a rule the
+  // adversary then correctly FAILs for. Found twice by live claude runs (#117/#123): first as a
+  // fabricated citation (declared-deviation FAIL), then as a false positive on `clean`.
+  if (/ProjectRules §2/.test(c.deviation ?? "")) {
+    const pr = join(P, "docs/agents/ProjectRules.md");
+    writeFileSync(pr, read(pr)
+      .replace("Stack: `<language + framework + main libraries>`.", "Stack: Node 22, ESM, `node --test`.")
+      .replace("| `<src/…>` | `<what must go through what; what may not be created ad hoc>` |",
+        "| `src/pricing/` | All price/discount logic lives here. No pricing rule may be created ad hoc elsewhere under `src/`. |"));
+    git("commit", "--no-verify", "-qam", "project rules");  // on main: a rule that predates the task, not part of its diff
+  }
   git("switch", "-qc", "feature/SHOP-7-discount");
   cpSync(join(EVAL, "feature"), P, { recursive: true });
   put(c.feature);
@@ -746,6 +752,7 @@ function buildEvalCase(c, root) {
   cpSync(join(EVAL, "task"), t, { recursive: true });
   cpSync(join(P, "docs/tasks/_templates/task.agent.schema.json"), join(t, "task.agent.schema.json"));
   const dev = c.deviation ?? "None — the diff matches the 03 file list.";
+
   writeFileSync(join(t, "06-Implementation-Notes.md"), read(join(t, "06-Implementation-Notes.md")).replace("{deviation}", dev).replace("{base}", base));
   git("add", "-A"); git("commit", "--no-verify", "-qm", "SHOP-7 discount");
   // 08 do wrapper thật ký trên đúng code đã commit — không dán tay.
@@ -847,6 +854,40 @@ function scoreAdversary(c, nine, srcChanged, status) {
   return out;
 }
 
+// #123: release gate. `--eval` costs real model money, so it cannot run in CI; what CI/publish CAN
+// do is refuse a release whose adversary inputs changed since the last all-green eval. The record is
+// a committed file: it stops forgetting, not a maintainer who types it by hand.
+// ponytail: hash covers the adversary role, its rules and the eval fixtures — NOT install.mjs
+// (buildBase) or --pack logic in validate-tasks.mjs; those change every commit and would make the
+// gate fire constantly. Upgrade path: add them when a regression slips through there.
+const EVAL_RECORD = () => process.env.SPEC_HARNESS_EVAL_RECORD || join(SRC, "kernel/eval/last-pass.json");
+const EVAL_INPUTS = ["agents/adversary.md", "kernel/docs/agents/Adversary.md", "kernel/docs/agents/Adversary-Mutation.md",
+  "kernel/docs/agents/SharedRules.md", "kernel/docs/Instructions.md", "kernel/eval/adversary"];
+export function evalInputHashes(root = SRC) {
+  const files = [];
+  const walk = (rel) => {
+    const abs = join(root, rel);
+    if (!existsSync(abs)) { files.push([rel, null]); return; }
+    if (statSync(abs).isDirectory()) { for (const f of readdirSync(abs).sort()) walk(`${rel}/${f}`); } else files.push([rel, abs]);
+  };
+  EVAL_INPUTS.forEach(walk);
+  return Object.fromEntries(files.map(([rel, abs]) => [rel, abs ? createHash("sha256").update(readFileSync(abs)).digest("hex").slice(0, 16) : "missing"]));
+}
+// null = fine, string = why a release must stop.
+export function evalRecordDefect(rec, now) {
+  if (!rec) return "no eval record — run `node install.mjs --eval --agent '<cmd>'` (all cases, no --case) and commit kernel/eval/last-pass.json";
+  const moved = Object.keys({ ...rec.inputs, ...now }).filter((f) => rec.inputs?.[f] !== now[f]);
+  return moved.length ? `adversary inputs changed since the last green eval (${rec.date}, ${rec.passed}/${rec.total}): ${moved.join(", ")} — re-run --eval and commit the new record` : null;
+}
+
+if (args[0] === "--eval-check") {
+  let rec = null; try { rec = JSON.parse(read(EVAL_RECORD())); } catch {}
+  const d = evalRecordDefect(rec, evalInputHashes());
+  if (d) { console.error(`✖ --eval-check: ${d}`); process.exit(1); }
+  console.log(`✔ eval record current (${rec.date}, ${rec.passed}/${rec.total}, ${rec.agent})`);
+  process.exit(0);
+}
+
 if (args[0] === "--eval") {
   const at = args.indexOf("--agent"), cmd = at === -1 ? null : args[at + 1];
   const only = args.includes("--case") ? args[args.indexOf("--case") + 1] : null;
@@ -873,6 +914,11 @@ if (args[0] === "--eval") {
   }
   const bad = rows.filter((r) => !r.ok).length;
   console.log(`\n${bad ? "✖" : "✅"} eval: ${rows.length - bad}/${rows.length} correct`);
+  // #123: only a FULL green run is a release witness — a single --case proves nothing about the rest.
+  if (!bad && !only) {
+    writeFileSync(EVAL_RECORD(), JSON.stringify({ date: new Date().toISOString().slice(0, 10), agent: cmd, passed: rows.length, total: rows.length, inputs: evalInputHashes() }, null, 2) + "\n");
+    console.log(`  → recorded ${EVAL_RECORD()} (commit it; \`--eval-check\` gates the release on it)`);
+  }
   process.exit(bad ? 1 : 0);
 }
 
@@ -2509,6 +2555,10 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
         fail(`eval case ${c.id}: test:scope exit ${tests.status} — chỉ stale-evidence được đỏ khi chạy lại (08 đã attest xanh)`);
       for (const [f, v] of Object.entries(c.feature ?? {}))
         if (v === null && existsSync(join(P, f))) fail(`eval case ${c.id}: ${f} = null nhưng vẫn còn trong sandbox`);
+      // #123: §2 rule only in the case that cites it, and never in the task diff
+      const has2 = read(join(P, "docs/agents/ProjectRules.md")).includes("`src/pricing/`");
+      if (has2 !== /ProjectRules §2/.test(c.deviation ?? "")) fail(`eval case ${c.id}: ProjectRules §2 src/pricing/ rule ${has2 ? "có" : "thiếu"} — sai case (clean sẽ bị FAIL oan / declared-deviation trích dẫn bịa)`);
+      if (spawnSync("git", ["diff", "--name-only", "main", "HEAD"], { cwd: P, encoding: "utf8" }).stdout.includes("ProjectRules.md")) fail(`eval case ${c.id}: ProjectRules.md nằm trong diff của task`);
       // mỗi case phải là một cây code KHÁC: delta không được áp thì mọi case là bản sao của clean
       const tree = spawnSync("git", ["rev-parse", "HEAD:src", "HEAD:test"], { cwd: P, encoding: "utf8" }).stdout.trim();
       if (trees.has(tree)) fail(`eval case ${c.id}: code giống hệt case ${trees.get(tree)} — delta của case không được áp`);
@@ -2545,6 +2595,26 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       { encoding: "utf8" });
     if (e.status !== 1 || !/✔ clean/.test(e.stdout) || !/✖ boundary/.test(e.stdout))
       fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", e.stdout + e.stderr);
+  }
+
+  // #123 --eval-check: stale / missing / current record, and the always-PASS eval must NOT write one.
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-evrec-")), rec = join(root, "r.json"), run = (...a) => spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...a], { encoding: "utf8", env: { ...process.env, SPEC_HARNESS_EVAL_RECORD: rec } });
+    const now = evalInputHashes();
+    if (!/no eval record/.test(evalRecordDefect(null, now))) fail("#123: thiếu record phải là lỗi");
+    if (evalRecordDefect({ date: "d", passed: 7, total: 7, inputs: now }, now) !== null) fail("#123: record khớp hash mà vẫn báo lỗi");
+    const some = Object.keys(now)[0];
+    if (!evalRecordDefect({ date: "d", passed: 7, total: 7, inputs: { ...now, [some]: "deadbeef" } }, now)?.includes(some)) fail("#123: input đổi phải nêu đúng file");
+    if (!evalRecordDefect({ date: "d", passed: 7, total: 7, inputs: { ...now, "x/new.md": "1" } }, now)?.includes("x/new.md")) fail("#123: input bị xoá/thêm cũng phải đỏ");
+    if (Object.values(now).includes("missing")) fail("#123: EVAL_INPUTS trỏ vào file không tồn tại — gate sẽ không bao giờ xanh");
+    if (run("--eval-check").status !== 1) fail("#123: --eval-check không có record phải exit 1");
+    run("--eval", "--agent", `node -e "require('fs').writeFileSync(process.argv[1]+'/09-Adversarial-Review.md','**Result: PASS**')" docs/tasks/sprint-1/SHOP-7-discount`);
+    if (existsSync(rec)) fail("#123: eval có case sai mà vẫn ghi record");
+    writeFileSync(rec, JSON.stringify({ date: "d", agent: "a", passed: 7, total: 7, inputs: now }));
+    if (run("--eval-check").status !== 0) fail("#123: record khớp phải exit 0");
+    writeFileSync(rec, JSON.stringify({ date: "d", agent: "a", passed: 7, total: 7, inputs: { ...now, [some]: "stale" } }));
+    if (run("--eval-check").status !== 1) fail("#123: record cũ phải exit 1");
+    rmSync(root, { recursive: true, force: true });
   }
 
   // #16: --dry-run must report accurately and touch nothing in the real target.

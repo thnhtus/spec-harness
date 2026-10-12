@@ -336,6 +336,8 @@ node install.mjs --eval --agent 'claude -p --model sonnet --agent adversary --pe
 # --case <id>  một case · --timeout <giây> (mặc định 1500) · --keep  giữ sandbox + agent.log
 ```
 
+Eval xanh hết (chạy đủ case, không `--case`) thì ghi `kernel/eval/last-pass.json`: ngày, lệnh agent, n/n và hash của những file quyết định hành vi adversary (`agents/adversary.md`, `Adversary.md`, `Adversary-Mutation.md`, `SharedRules.md`, `Instructions.md`, `kernel/eval/adversary/`). Commit file đó. `node install.mjs --eval-check` so hash hiện tại với record: lệch thì exit 1 và in file nào đổi. Gate này chạy ở `prepublishOnly` và trong `publish.yml` trước `npm publish`, nên **không publish được bản adversary chưa eval**. PR không bị chặn — sửa `Adversary.md` giữa chừng là bình thường, chỉ release mới cần eval mới. Record là file commit nên người maintain gõ tay được: nó chặn quên, không chặn cố ý.
+
 Một case được tính đúng khi thoả cả ba điều kiện: verdict khớp (đọc `status` role đã set, không có thì đọc dòng `Result`), 09 nêu đúng chỗ lỗi (`mustMention`), và role không sửa file nào ngoài task folder. Sai bất kỳ case nào thì exit 1. Eval tốn tiền model nên chỉ chạy trước release, không chạy trong CI. CI chạy `--self-test`, kiểm rằng fixture sạch ở điểm bàn giao, tên case không lộ vào sandbox, scorer báo đỏ/xanh đúng, và một agent luôn trả PASS thì bị `--eval` đánh trượt.
 
 ### Đo thời gian/token: `--bench`

@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-12",
+  "agent": "claude -p --agent adversary --permission-mode bypassPermissions --strict-mcp-config",
+  "passed": 8,
+  "total": 8,
+  "inputs": {
+    "agents/adversary.md": "d98d7dea186644ca",
+    "kernel/docs/agents/Adversary.md": "e75fd52f833a4206",
+    "kernel/docs/agents/Adversary-Mutation.md": "ee374ed5486801c9",
+    "kernel/docs/agents/SharedRules.md": "4657c96cba67b76b",
+    "kernel/docs/Instructions.md": "818fd2b67c1ace94",
+    "kernel/eval/adversary/cases.json": "7956bce34e7ec51d",
+    "kernel/eval/adversary/feature/src/discount.js": "f929d93e3b67077b",
+    "kernel/eval/adversary/feature/test/discount.test.js": "71e429e994b07ac8",
+    "kernel/eval/adversary/main/package.json": "ecb1e7878b5a0ba0",
+    "kernel/eval/adversary/main/src/config.js": "950bc0cf08ddc07e",
+    "kernel/eval/adversary/main/src/format.js": "9de753fbde082dfe",
+    "kernel/eval/adversary/task/.agent-memory/fsd-reviewer.md": "500d357e06bcfb62",
+    "kernel/eval/adversary/task/.agent-memory/fsd-writer.md": "b078df27056709ef",
+    "kernel/eval/adversary/task/.agent-memory/implementer.md": "c46162f2cb58aaf1",
+    "kernel/eval/adversary/task/.agent-memory/orchestrator.md": "9a434c3bc8fb0313",
+    "kernel/eval/adversary/task/.agent-memory/technical-planner.md": "0e37c91a828207cb",
+    "kernel/eval/adversary/task/00-Metadata.md": "ff095ecaaa6cd093",
+    "kernel/eval/adversary/task/01-FSD.md": "9991ee9ad586ab8f",
+    "kernel/eval/adversary/task/02-FSD-Review.md": "3bc487f031f85b88",
+    "kernel/eval/adversary/task/03-Technical-Plan.md": "e2e0adce3a7cb412",
+    "kernel/eval/adversary/task/06-Implementation-Notes.md": "391b26f9c364fd8f",
+    "kernel/eval/adversary/task/08-Test-Evidence.md": "dbd922e24051aa60",
+    "kernel/eval/adversary/task/task.agent.json": "121423d7f71b0a48"
+  }
+}
