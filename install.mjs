@@ -2637,6 +2637,30 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(root, { recursive: true, force: true });
   }
 
+  // #129: --json through a PIPE must not truncate at Node's default pipe highWaterMark. A real
+  // multi-task repo's --json easily exceeds one 64 KB pipe buffer; process.exit() after a large
+  // console.log drops whatever stdout had not flushed yet when writing to a pipe (not a file).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-pipesize-"));
+    const { P } = buildBase(root);
+    for (let i = 0; i < 120; i++) {
+      const d = join(P, "docs/tasks/sprint-1", `T-${i}`);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "task.agent.json"), JSON.stringify({ taskId: `T-${i}`, currentStage: "bootstrap", status: "in_progress" }));
+    }
+    // spawnSync, not execFileSync: this fixture has errors on purpose, so exit 1 is the right answer
+    // and must not throw.
+    const run = (sink) => spawnSync("sh", ["-c", `node scripts/validate-tasks.mjs --json --no-warn ${sink}`], { cwd: P, encoding: "utf8", maxBuffer: 16 << 20 }).stdout;
+    // The file write is the control: it never truncates, so it says how big the real output is.
+    // Comparing the two tells "pipe dropped bytes" apart from "fixture too small", which a bare
+    // length check cannot — a truncated run looks exactly like a short one.
+    const full = (run("> out.json"), read(join(P, "out.json"))), piped = run("| cat");
+    if (full.length < 65536) fail(`#129: fixture không đủ lớn để tái hiện cắt pipe (${full.length} B < 64 KB) — tăng số task`);
+    if (piped.length !== full.length) fail(`#129: --json qua pipe bị cắt: ${piped.length} B qua pipe vs ${full.length} B ra file — process.exit() bỏ phần stdout chưa flush`);
+    try { JSON.parse(piped); } catch (e) { fail(`#129: --json qua pipe không parse được (${piped.length} B)`, e.message); }
+    rmSync(root, { recursive: true, force: true });
+  }
+
   // #127: runbook sentences must be real code strings, not prose that drifted. Picked from the
   // fixed/literal part of each message (no `N`, `<…>`, interpolated values).
   {

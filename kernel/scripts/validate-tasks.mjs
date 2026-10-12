@@ -6202,4 +6202,7 @@ if (AS_JSON) {
   );
 }
 
-process.exit(totalErr > 0 ? 1 : 0);
+// #129: NOT process.exit() — on a pipe stdout is async, and exit() drops whatever is still
+// buffered. Measured at 500 tasks: `--json | …` arrived truncated at 65536 bytes (one pipe
+// buffer) while `> file` wrote all 1.7 MB. exitCode lets Node flush, then leave.
+process.exitCode = totalErr > 0 ? 1 : 0;
