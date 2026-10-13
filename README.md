@@ -119,6 +119,52 @@ node scripts/validate-tasks.mjs --report     # token/retry thật theo sprint (c
 
 Chỉ đếm được dispatch nào đã chạy `collect-telemetry.mjs`; dispatch chưa thu thì vô hình với cả `--report` lẫn trần chi phí (cột `no-count`). Token thu được từ Claude Code và Codex; CLI khác chưa có log để đọc.
 
+### Gate 5 độc lập trên CLI không có subagent
+
+Trên CLI chỉ có một context, adversary đọc luôn suy nghĩ của implementer nên Gate 5 không còn đối kháng; `--preflight` cảnh báo đúng điều đó. Sửa thật: chạy adversary ở một tiến trình mới.
+
+```bash
+# harness.config.json → "adversary": { "cmd": "claude -p --permission-mode bypassPermissions" }
+#   (hoặc "codex exec --dangerously-bypass-approvals-and-sandbox -")
+node scripts/validate-tasks.mjs --run-adversary docs/tasks/<sprint>/<task>
+```
+
+Prompt chỉ chứa đường dẫn; adversary tự đọc đầu vào qua `--pack`. Thành công in `✔ Gate 5 ran isolated`. Exit 1 nếu agent không ghi `09-Adversarial-Review.md` hoặc sửa file ngoài thư mục task. Đã chạy thật với Claude; chưa chạy với Codex.
+
+### Chữ ký evidence: đưa key ra khỏi tầm của agent
+
+Mặc định key ký `_stamp.log` là một file (`~/.spec-harness/stamp.key`) mà agent cùng user đọc được. `--preflight` nhắc khi máy có Keychain (macOS) hoặc `secret-tool` (Linux):
+
+```bash
+node scripts/validate-tasks.mjs --key-migrate    # lưu vào keychain → đọc lại → so khớp → mới xoá file
+export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'   # in sẵn sau khi chạy; thêm vào ~/.zshrc, mở terminal mới
+```
+
+Lỗi ở bất kỳ bước nào thì file key được giữ nguyên. `--keep-file` giữ cả hai. Trên CI dùng `SPEC_HARNESS_KEY` (secret của CI). Log cũng được móc chuỗi nên xoá dòng giữa hay cắt đuôi đều bị validator báo.
+
+### Ai được sửa luật của gate
+
+```bash
+npx spec-harness --codeowners @your-org/harness-maintainers   # ghi .github/CODEOWNERS cho 7 đường dẫn quyết định gate
+```
+
+Từ chối handle giả (`@your-org/...`). Chỉ có hiệu lực khi bạn bật "Require review from Code Owners" trong branch protection của repo.
+
+### Ghi ngược lên tracker
+
+Đặt `tracker.writeBack` = `comment` hoặc `status` trong config. Coordinator hỏi script trước khi gọi MCP, nên chạy lại không đăng comment thứ hai:
+
+```bash
+node scripts/validate-tasks.mjs --writeback docs/tasks/<sprint>/<task>                       # → nothing | skip | comment | status
+node scripts/validate-tasks.mjs --writeback <task> --statuses '<JSON danh sách status>'      # exit 1 nếu tracker không có statusOnReview
+```
+
+Đã mô phỏng theo tài liệu của Jira, Linear, ClickUp; **chưa chạy trên tài khoản Jira/Linear thật**.
+
+### Khi bạn phát hành bản của chính mình (fork/maintainer)
+
+`node install.mjs --eval --agent '<lệnh agent>'` chạy 8 case adversary với agent thật và ghi `kernel/eval/last-pass.json`. `npm publish` và `publish.yml` gọi `node install.mjs --eval-check`: đổi role adversary, luật của nó hoặc fixture mà chưa eval lại thì không phát hành được.
+
 CI là bắt buộc — `git commit --no-verify` bỏ qua được pre-commit, không bỏ qua được CI.
 
 ## Tài liệu

@@ -2690,6 +2690,14 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(root, { recursive: true, force: true });
   }
 
+  // README must document the flags a user actually runs. A flag in the code but absent from README is
+  // an undocumented feature (found: five #129-#135 flags shipped in 0.16.0 with no README mention).
+  {
+    const readme = read(join(SRC, "README.md"));
+    for (const f of ["--run-adversary", "--key-migrate", "--codeowners", "--writeback", "--report", "--eval-check", "--preflight", "--accept-over-budget", "--statuses"])
+      if (!readme.includes(f)) fail(`README thiếu ${f} — tính năng đã ship mà người dùng không tìm thấy`);
+  }
+
   // #135 tracker e2e (simulated): a fake coordinator drives --writeback against each vendor's
   // documented response shapes — Jira v2 (comment `body` is a string; v3 is ADF) and transitions,
   // Linear GraphQL connections (`nodes`) and WorkflowState, ClickUp list statuses (lowercased).
