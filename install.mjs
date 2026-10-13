@@ -2690,6 +2690,62 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     rmSync(root, { recursive: true, force: true });
   }
 
+  // #135 tracker e2e (simulated): a fake coordinator drives --writeback against each vendor's
+  // documented response shapes — Jira v2 (comment `body` is a string; v3 is ADF) and transitions,
+  // Linear GraphQL connections (`nodes`) and WorkflowState, ClickUp list statuses (lowercased).
+  // It plays the part the MCP-calling LLM plays: list comments → look for the marker → "post" → record →
+  // run again. Proves the harness decisions hold for each shape. NOT a live instance: the shapes come
+  // from vendor docs (Jira, ClickUp) and the GraphQL schema convention (Linear).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-trk-"));
+    const { P } = buildBase(root), T = "docs/tasks/sprint-1/TRK-1";
+    const taskDir = join(P, T); mkdirSync(taskDir, { recursive: true });
+    const jp = join(taskDir, "task.agent.json"), cfgP = join(P, "harness.config.json"), cfg0 = JSON.parse(read(cfgP));
+    const wb = (...a) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--writeback", T, ...a], { cwd: P, encoding: "utf8" });
+    const trackers = {
+      jira: {
+        comments: (m) => ({ comments: m ? [{ id: "10000", body: `Done ${m} docs/tasks/x`, author: { accountId: "a" } }] : [], startAt: 0, maxResults: 50, total: m ? 1 : 0 }),
+        adf: (m) => ({ comments: [{ id: "10001", body: { version: 1, type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `Done ${m}` }] }] } }] }),
+        statuses: { transitions: [{ id: "11", name: "Start", to: { id: "3", name: "In Progress" } }, { id: "31", name: "Ready for QC", to: { id: "10001", name: "Ready for QC" } }] },
+        goodStatus: "Ready for QC", badStatus: "Ready for Release",
+      },
+      linear: {
+        comments: (m) => ({ data: { issue: { comments: { nodes: m ? [{ id: "c1", body: `Done ${m}\n\nevidence` }] : [] } } } }),
+        statuses: { data: { team: { states: { nodes: [{ id: "s1", name: "In Review", type: "started" }, { id: "s2", name: "Done", type: "completed" }] } } } },
+        goodStatus: "In Review", badStatus: "Ready for QC",
+      },
+      clickup: {
+        comments: (m) => ({ comments: m ? [{ id: "9", comment_text: `Done ${m}`, user: { id: 1 } }] : [] }),
+        statuses: { statuses: [{ status: "to do", type: "open", orderindex: 0, color: "#d3d3d3" }, { status: "ready for qc", type: "custom", orderindex: 1, color: "#ff0000" }] },
+        goodStatus: "Ready for QC", badStatus: "Shipped",
+      },
+    };
+    for (const [name, t] of Object.entries(trackers)) {
+      writeFileSync(jp, JSON.stringify({ taskId: `${name.toUpperCase()}-7`, currentStage: "reviewing", status: "reviewing" }));
+      writeFileSync(cfgP, JSON.stringify({ ...cfg0, tracker: { ...cfg0.tracker, writeBack: "status", statusOnReview: t.goodStatus } }));
+      const d1 = JSON.parse(wb().stdout), marker = d1.marker;
+      if (d1.do !== "status" || !marker.includes(`${name.toUpperCase()}-7`)) fail(`#135 ${name}: lần đầu phải quyết định "status" kèm marker`, wb().stdout);
+      // The tracker has no comment yet → coordinator posts one containing the marker.
+      const before = JSON.stringify(t.comments(null)), after = JSON.stringify(t.comments(marker));
+      if (before.includes(marker) || !after.includes(marker)) fail(`#135 ${name}: fixture comment không chứa marker sau khi đăng`);
+      // Wrong status name the tracker does not have → refused, ticket untouched.
+      writeFileSync(cfgP, JSON.stringify({ ...cfg0, tracker: { ...cfg0.tracker, writeBack: "status", statusOnReview: t.badStatus } }));
+      const bad = wb("--statuses", JSON.stringify(t.statuses));
+      if (bad.status !== 1 || !/no status/.test(bad.stderr)) fail(`#135 ${name}: status "${t.badStatus}" không có trong tracker mà --statuses không chặn`, bad.stdout + bad.stderr);
+      writeFileSync(cfgP, JSON.stringify({ ...cfg0, tracker: { ...cfg0.tracker, writeBack: "status", statusOnReview: t.goodStatus } }));
+      const good = wb("--statuses", JSON.stringify(t.statuses));
+      if (good.status !== 0) fail(`#135 ${name}: status "${t.goodStatus}" CÓ trong tracker (shape ${name}) mà bị chặn`, good.stdout + good.stderr);
+      // Coordinator records what it did; a rerun is now a no-op (idempotent), whatever the vendor shape.
+      writeFileSync(jp, JSON.stringify({ taskId: `${name.toUpperCase()}-7`, currentStage: "reviewing", status: "reviewing", trackerWriteBack: { at: "2026-10-12T00:00:00Z", action: "status", status: t.goodStatus } }));
+      const again = JSON.parse(wb().stdout);
+      if (again.do !== "skip") fail(`#135 ${name}: chạy lại sau khi đã ghi phải là skip, được "${again.do}"`);
+    }
+    // Jira v3 returns the comment body as ADF — the marker must still be findable as text.
+    const adfHit = JSON.stringify(trackers.jira.adf("[spec-harness:JIRA-7]")).includes("[spec-harness:JIRA-7]");
+    if (!adfHit) fail("#135 jira: marker không sống sót trong ADF (v3) — kiểm tra bằng chuỗi sẽ không thấy comment đã đăng và đăng trùng");
+    rmSync(root, { recursive: true, force: true });
+  }
+
   // #134: docs/architecture.md must name real flags, not ones that drifted away, and must stay
   // packaged (same packaging check as #127's runbook).
   {
