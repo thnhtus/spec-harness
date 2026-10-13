@@ -19,7 +19,9 @@
     "commands/",
     "hooks/",
     "docs/advanced.md",
-    "docs/runbook.md"
+    "docs/runbook.md",
+    "docs/architecture.md",
+    "SUPPORT.md"
   ],
   "repository": {
     "type": "git",

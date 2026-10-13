@@ -19,7 +19,7 @@ import {
   cpSync, mkdirSync, existsSync, readFileSync, writeFileSync, rmSync, readdirSync,
   symlinkSync, lstatSync, statSync, unlinkSync, chmodSync, mkdtempSync, realpathSync, appendFileSync,
 } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir, homedir } from "node:os";
@@ -487,7 +487,20 @@ function migrateConfig(f) {
   return done;
 }
 
-function installInto(P, clis = []) {
+// #133: twin of validate-tasks.mjs ownerError/GATE_PATHS (install.mjs cannot import the validator:
+// importing it runs its main against the cwd's config). Self-test asserts the two stay identical.
+// ponytail: duplicated ~10 lines. Upgrade path: a side-effect-free kernel/scripts/lib.mjs both import.
+const CO_GATE_PATHS = ["harness.config.json", "docs/agents/", "docs/Instructions.md", "scripts/validate-tasks.mjs", ".github/workflows/", "hooks/", ".claude/settings.json"];
+function coOwnerError(o) {
+  if (!/^(@[A-Za-z0-9][A-Za-z0-9-]*(\/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(o ?? "")) return `"${o}" is not a CODEOWNERS owner (@user, @org/team, or an email)`;
+  if (/your-org|example\.com|changeme|placeholder/i.test(o)) return `"${o}" is a placeholder — it would make GitHub report an unknown owner and protect nothing`;
+  return null;
+}
+const coCodeownersText = (owner) => "# spec-harness (#133): who must review a change to the rules that decide every gate.\n" +
+  "# Only effective with branch protection \"Require review from Code Owners\" (server-side).\n" +
+  CO_GATE_PATHS.map((p) => `/${p} ${owner}`).join("\n") + "\n";
+
+function installInto(P, clis = [], coOwner = null) {
   // Nguồn thiếu folder = bản phát hành hỏng (package.json `files:` quên khai,
   // hoặc tarball cắt sai). Không bắt sớm thì lỗi rơi ra dưới dạng stack trace
   // ENOENT của cpSync — đúng nguyên nhân nhưng không ai đọc ra là lỗi đóng gói.
@@ -576,6 +589,18 @@ function installInto(P, clis = []) {
     keep(join(SRC, "adapters/ci/validate-tasks.yml"), join(P, ".github/workflows/spec-harness.yml"));
     if (remote.status !== 0)
       console.log("ℹ chưa có remote origin — cài CI cho GitHub. Repo GitLab thì: cp adapters/ci/.gitlab-ci.yml .");
+  }
+
+  // #133: CODEOWNERS only on request, and only with a REAL owner. The shipped template says
+  // @your-org/… which is valid syntax but an unknown owner on GitHub, i.e. a file that looks like
+  // a control and enforces nothing — worse than no file. Needs branch protection to do anything.
+  if (coOwner !== null) {
+    const bad = coOwnerError(coOwner);
+    if (bad) die(`✖ --codeowners: ${bad}`);
+    const dst = join(P, isGitlab ? "CODEOWNERS" : ".github/CODEOWNERS");
+    mkdirSync(dirname(dst), { recursive: true });
+    if (existsSync(dst)) kept.push(dst);
+    else { writeFileSync(dst, coCodeownersText(coOwner)); console.log(`ℹ ${relative(P, dst)} đã ghi — chỉ có hiệu lực khi bật branch protection "Require review from Code Owners"`); }
   }
 
   // Dấu phiên bản. Installer ghi ĐÈ mọi lần, nên nếu không ghi lại số thì sau
@@ -2614,7 +2639,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       `node -e "require('fs').writeFileSync(process.argv[1]+'/09-Adversarial-Review.md','**Result: PASS**')" docs/tasks/sprint-1/SHOP-7-discount`],
       { encoding: "utf8" });
     if (e.status !== 1 || !/✔ clean/.test(e.stdout) || !/✖ boundary/.test(e.stdout))
-      fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", e.stdout + e.stderr);
+      fail("--eval với agent luôn-PASS phải: clean ✔, case có bug ✖, exit 1", `status=${e.status} signal=${e.signal} err=${e.error?.code}\n--stdout--\n${e.stdout}\n--stderr--\n${e.stderr}`);
   }
 
   // #123 --eval-check: stale / missing / current record, and the always-PASS eval must NOT write one.
@@ -2634,6 +2659,186 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     if (run("--eval-check").status !== 0) fail("#123: record khớp phải exit 0");
     writeFileSync(rec, JSON.stringify({ date: "d", agent: "a", passed: 7, total: 7, inputs: { ...now, [some]: "stale" } }));
     if (run("--eval-check").status !== 1) fail("#123: record cũ phải exit 1");
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // #131 --run-adversary: the shipped prompt is the one --eval measured (8/8), and a fake agent run
+  // end-to-end proves the fresh process writes 09, the validator judges it, and a src/ write fails it.
+  {
+    // The prompt --eval measured (8/8) must be the prompt --run-adversary sends, or that measurement
+    // says nothing about isolated Gate 5. Compared as the literal body between the two sources.
+    const body = (src, start) => { const i = src.indexOf(start); return src.slice(i, src.indexOf("\n", src.indexOf("End your final message with", i))); };
+    const norm = (t) => t.replace(/\$\{[^}]*\}/g, "$").replace(/\\`/g, "`").replace(/\s+/g, " ");
+    const a = norm(body(read(join(SRC, "install.mjs")).split("// #131 --run-adversary")[0], "const EVAL_PROMPT"));
+    const b = norm(body(read(join(SRC, "kernel/scripts/validate-tasks.mjs")), "export function adversaryPrompt"));
+    // EVAL_PROMPT hardcodes --base main (the fixture's base); adversaryPrompt takes a real base —
+    // that is an intentional difference, not drift, so the base clause itself is not compared.
+    for (const frag of ["and read its output once: it bundles `docs/Instructions.md`", "default FAIL, re-run the ProjectRules §7 commands yourself", "do not touch `src/`", "End your final message with: gate verdict"])
+      if (!a.includes(frag) || !b.includes(frag)) fail(`#131: prompt --eval và --run-adversary lệch ở đoạn: ${frag}`);
+    const root = mkdtempSync(join(tmpdir(), "sh-runadv-"));
+    const { P, T } = buildEvalCase(evalCases().find((c) => c.id === "clean"), root);
+    const cfgP = join(P, "harness.config.json"), cfg = JSON.parse(read(cfgP));
+    const ra = (cmd) => { writeFileSync(cfgP, JSON.stringify({ ...cfg, adversary: { cmd } })); spawnSync("git", ["update-index", "--skip-worktree", "harness.config.json"], { cwd: P }); return spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--run-adversary", T, "--timeout", "60"], { cwd: P, encoding: "utf8" }); };
+    const silent = ra("cat > /dev/null");
+    if (silent.status !== 1 || !/without writing 09/.test(silent.stderr)) fail("#131: agent không ghi 09 phải exit 1", silent.stdout + silent.stderr);
+    const vandal = ra(`cat > /dev/null; echo x >> src/discount.js; echo '# 09' > ${T}/09-Adversarial-Review.md`);
+    if (vandal.status !== 1 || !/outside the task folder: src\/discount\.js/.test(vandal.stderr)) fail("#131: adversary sửa src/ phải exit 1", vandal.stdout + vandal.stderr);
+    spawnSync("git", ["checkout", "--", "src/discount.js"], { cwd: P });
+    // Reads the prompt it was given and proves it got PATHS: writes 09 only if the prompt names --pack.
+    const honest = ra(`grep -q -- '--pack ${T} adversarial_review --base main' && echo '## Verdict: FAIL' > ${T}/09-Adversarial-Review.md`);
+    if (!/Gate 5 ran isolated/.test(honest.stdout)) fail("#131: agent giả nhận đúng prompt (--pack …) mà không chạy hết luồng", honest.stdout + honest.stderr);
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // #135 tracker e2e (simulated): a fake coordinator drives --writeback against each vendor's
+  // documented response shapes — Jira v2 (comment `body` is a string; v3 is ADF) and transitions,
+  // Linear GraphQL connections (`nodes`) and WorkflowState, ClickUp list statuses (lowercased).
+  // It plays the part the MCP-calling LLM plays: list comments → look for the marker → "post" → record →
+  // run again. Proves the harness decisions hold for each shape. NOT a live instance: the shapes come
+  // from vendor docs (Jira, ClickUp) and the GraphQL schema convention (Linear).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-trk-"));
+    const { P } = buildBase(root), T = "docs/tasks/sprint-1/TRK-1";
+    const taskDir = join(P, T); mkdirSync(taskDir, { recursive: true });
+    const jp = join(taskDir, "task.agent.json"), cfgP = join(P, "harness.config.json"), cfg0 = JSON.parse(read(cfgP));
+    const wb = (...a) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--writeback", T, ...a], { cwd: P, encoding: "utf8" });
+    const trackers = {
+      jira: {
+        comments: (m) => ({ comments: m ? [{ id: "10000", body: `Done ${m} docs/tasks/x`, author: { accountId: "a" } }] : [], startAt: 0, maxResults: 50, total: m ? 1 : 0 }),
+        adf: (m) => ({ comments: [{ id: "10001", body: { version: 1, type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: `Done ${m}` }] }] } }] }),
+        statuses: { transitions: [{ id: "11", name: "Start", to: { id: "3", name: "In Progress" } }, { id: "31", name: "Ready for QC", to: { id: "10001", name: "Ready for QC" } }] },
+        goodStatus: "Ready for QC", badStatus: "Ready for Release",
+      },
+      linear: {
+        comments: (m) => ({ data: { issue: { comments: { nodes: m ? [{ id: "c1", body: `Done ${m}\n\nevidence` }] : [] } } } }),
+        statuses: { data: { team: { states: { nodes: [{ id: "s1", name: "In Review", type: "started" }, { id: "s2", name: "Done", type: "completed" }] } } } },
+        goodStatus: "In Review", badStatus: "Ready for QC",
+      },
+      clickup: {
+        comments: (m) => ({ comments: m ? [{ id: "9", comment_text: `Done ${m}`, user: { id: 1 } }] : [] }),
+        statuses: { statuses: [{ status: "to do", type: "open", orderindex: 0, color: "#d3d3d3" }, { status: "ready for qc", type: "custom", orderindex: 1, color: "#ff0000" }] },
+        goodStatus: "Ready for QC", badStatus: "Shipped",
+      },
+    };
+    for (const [name, t] of Object.entries(trackers)) {
+      writeFileSync(jp, JSON.stringify({ taskId: `${name.toUpperCase()}-7`, currentStage: "reviewing", status: "reviewing" }));
+      writeFileSync(cfgP, JSON.stringify({ ...cfg0, tracker: { ...cfg0.tracker, writeBack: "status", statusOnReview: t.goodStatus } }));
+      const d1 = JSON.parse(wb().stdout), marker = d1.marker;
+      if (d1.do !== "status" || !marker.includes(`${name.toUpperCase()}-7`)) fail(`#135 ${name}: lần đầu phải quyết định "status" kèm marker`, wb().stdout);
+      // The tracker has no comment yet → coordinator posts one containing the marker.
+      const before = JSON.stringify(t.comments(null)), after = JSON.stringify(t.comments(marker));
+      if (before.includes(marker) || !after.includes(marker)) fail(`#135 ${name}: fixture comment không chứa marker sau khi đăng`);
+      // Wrong status name the tracker does not have → refused, ticket untouched.
+      writeFileSync(cfgP, JSON.stringify({ ...cfg0, tracker: { ...cfg0.tracker, writeBack: "status", statusOnReview: t.badStatus } }));
+      const bad = wb("--statuses", JSON.stringify(t.statuses));
+      if (bad.status !== 1 || !/no status/.test(bad.stderr)) fail(`#135 ${name}: status "${t.badStatus}" không có trong tracker mà --statuses không chặn`, bad.stdout + bad.stderr);
+      writeFileSync(cfgP, JSON.stringify({ ...cfg0, tracker: { ...cfg0.tracker, writeBack: "status", statusOnReview: t.goodStatus } }));
+      const good = wb("--statuses", JSON.stringify(t.statuses));
+      if (good.status !== 0) fail(`#135 ${name}: status "${t.goodStatus}" CÓ trong tracker (shape ${name}) mà bị chặn`, good.stdout + good.stderr);
+      // Coordinator records what it did; a rerun is now a no-op (idempotent), whatever the vendor shape.
+      writeFileSync(jp, JSON.stringify({ taskId: `${name.toUpperCase()}-7`, currentStage: "reviewing", status: "reviewing", trackerWriteBack: { at: "2026-10-12T00:00:00Z", action: "status", status: t.goodStatus } }));
+      const again = JSON.parse(wb().stdout);
+      if (again.do !== "skip") fail(`#135 ${name}: chạy lại sau khi đã ghi phải là skip, được "${again.do}"`);
+    }
+    // Jira v3 returns the comment body as ADF — the marker must still be findable as text.
+    const adfHit = JSON.stringify(trackers.jira.adf("[spec-harness:JIRA-7]")).includes("[spec-harness:JIRA-7]");
+    if (!adfHit) fail("#135 jira: marker không sống sót trong ADF (v3) — kiểm tra bằng chuỗi sẽ không thấy comment đã đăng và đăng trùng");
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // #134: docs/architecture.md must name real flags, not ones that drifted away, and must stay
+  // packaged (same packaging check as #127's runbook).
+  {
+    const arch = read(join(SRC, "docs/architecture.md"));
+    const real = new Set();
+    for (const src of [read(join(SRC, "kernel/scripts/validate-tasks.mjs")), read(join(SRC, "install.mjs"))])
+      for (const m of src.matchAll(/args(?:\.has\(|\[0\] === )"(--[a-z-]+)"\)?/g)) real.add(m[1]);
+    const named = [...arch.matchAll(/`(--[a-z-]+)`/g)].map((m) => m[1]);
+    if (named.length < 10) fail("#134: docs/architecture.md không còn liệt kê đủ lệnh — đã bị rút gọn quá tay?");
+    for (const f of named) if (!real.has(f)) fail(`#134: docs/architecture.md nhắc "${f}" nhưng flag này không còn trong code — kiến trúc đã trôi khỏi sự thật`);
+  }
+
+  // #133 --codeowners: a real owner is written; the shipped placeholder is refused; preflight warns when
+  // there is no CODEOWNERS or it misses a gate path; and the installer twin never drifts from the kernel's.
+  {
+    const vsrc = read(join(SRC, "kernel/scripts/validate-tasks.mjs"));
+    const grab = (src, re) => (re.exec(src) ?? [])[1];
+    const kernelPaths = grab(vsrc, /export const GATE_PATHS = (\[[^\]]*\])/), twinPaths = grab(read(join(SRC, "install.mjs")), /const CO_GATE_PATHS = (\[[^\]]*\])/);
+    if (!kernelPaths || kernelPaths !== twinPaths) fail("#133: GATE_PATHS của install.mjs lệch bản của validate-tasks.mjs — preflight sẽ báo thiếu thứ installer vừa ghi", `${kernelPaths}\nvs\n${twinPaths}`);
+    const inst = (dir, ...a) => spawnSync(process.execPath, [fileURLToPath(import.meta.url), dir, "--yes", ...a], { encoding: "utf8" });
+    const pre = (dir) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--preflight"], { cwd: dir, encoding: "utf8" });
+    const mk = () => { const d = mkdtempSync(join(tmpdir(), "sh-co-")); spawnSync("git", ["init", "-q"], { cwd: d }); return d; };
+    const bad = mk(); const rb = inst(bad, "--codeowners", "@your-org/harness-maintainers");
+    if (rb.status === 0 || existsSync(join(bad, ".github/CODEOWNERS"))) fail("#133: owner placeholder phải bị từ chối, không ghi file", rb.stdout + rb.stderr);
+    const bad2 = mk(); if (inst(bad2, "--codeowners", "alice").status === 0) fail("#133: owner không có @ phải bị từ chối");
+    const none = mk(); inst(none);
+    if (!/no CODEOWNERS/.test(pre(none).stdout + pre(none).stderr)) fail("#133: không có CODEOWNERS thì preflight phải cảnh báo", pre(none).stdout);
+    const ok = mk(); const ri = inst(ok, "--codeowners", "@acme/platform");
+    if (ri.status !== 0) fail("#133: owner hợp lệ phải cài được", ri.stdout + ri.stderr);
+    const co = read(join(ok, ".github/CODEOWNERS"));
+    if (!co.includes("/harness.config.json @acme/platform") || !co.includes("/scripts/validate-tasks.mjs @acme/platform")) fail("#133: CODEOWNERS thiếu luật cho gate path", co);
+    const pok = pre(ok); if (/CODEOWNERS/.test(pok.stdout + pok.stderr)) fail("#133: CODEOWNERS vừa ghi đủ phủ mà preflight vẫn cảnh báo", pok.stdout + pok.stderr);
+    writeFileSync(join(ok, ".github/CODEOWNERS"), "/harness.config.json @acme/platform\n");
+    if (!/does not cover gate paths: .*scripts\/validate-tasks\.mjs/.test(pre(ok).stdout + pre(ok).stderr)) fail("#133: CODEOWNERS thiếu validator mà preflight không nêu", pre(ok).stdout);
+    writeFileSync(join(ok, ".github/CODEOWNERS"), "# edited by hand\n* @acme/platform\n");
+    const again = inst(ok, "--codeowners", "@someone/else"); if (read(join(ok, ".github/CODEOWNERS")).includes("someone")) fail("#133: cài lại không được đè CODEOWNERS đã có (người dùng đã sửa tay)");
+    for (const d of [bad, bad2, none, ok]) rmSync(d, { recursive: true, force: true });
+  }
+
+  // #132 --key-migrate: a shim keychain CLI on PATH stands in for the real one — never touches the
+  // user's own. Proves the order: store, read back, compare, THEN delete. Shimmed per platform
+  // because the command picks `security` (darwin) or `secret-tool` (linux); CI runs on linux.
+  if (["darwin", "linux"].includes(process.platform)) {
+    const root = mkdtempSync(join(tmpdir(), "sh-keymig-"));
+    const { P } = buildBase(root);
+    const bin = join(root, "bin"); mkdirSync(bin, { recursive: true });
+    const keyFile = join(root, "stamp.key"), stored = join(root, "stored");
+    const env = (extra = {}) => ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, SPEC_HARNESS_KEY_FILE: keyFile, SPEC_HARNESS_KEY_CMD: "", SPEC_HARNESS_KEY: "", ...extra });
+    const mac = process.platform === "darwin", tool = mac ? "security" : "secret-tool";
+    // How each real CLI takes the secret: security in `-w <value>`, secret-tool on stdin.
+    const STORE_OK = mac ? `while [ "$1" != "-w" ]; do shift; done; printf '%s' "$2" > "${stored}"` : `cat > "${stored}"`;
+    const isStore = mac ? `[ "$1" = add-generic-password ]` : `[ "$1" = store ]`;
+    const isRead = mac ? `[ "$1" = find-generic-password ]` : `[ "$1" = lookup ]`;
+    const shim = (store, read) => { const f = join(bin, tool); writeFileSync(f, `#!/bin/sh\nif ${isStore}; then ${store}; exit $?; fi\nif ${isRead}; then ${read}; exit $?; fi\nexit 1\n`); chmodSync(f, 0o755); };
+    const run = (e) => spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--key-migrate"], { cwd: P, encoding: "utf8", env: env(e) });
+    writeFileSync(keyFile, "cafebabe1234\n");
+    shim(STORE_OK, `cat "${stored}"`);
+    const r1 = run();
+    if (r1.status !== 0 || existsSync(keyFile)) fail("#132: happy path phải exit 0 và xoá key file", r1.stdout + r1.stderr);
+    if (read(stored).trim() !== "cafebabe1234") fail("#132: key lưu vào keychain không khớp key file gốc");
+    writeFileSync(keyFile, "deadbeef0000\n");
+    shim("true", "echo WRONG");
+    const r2 = run();
+    if (r2.status !== 1 || !existsSync(keyFile)) fail("#132: readback lệch phải exit 1 và GIỮ key file", r2.stdout + r2.stderr);
+    shim("false", "false");
+    const r3 = run();
+    if (r3.status !== 1 || !existsSync(keyFile)) fail(`#132: ${tool} lưu lỗi phải exit 1 và GIỮ key file`, r3.stdout + r3.stderr);
+    const r4 = run({ SPEC_HARNESS_KEY_CMD: "echo x" });
+    if (r4.status !== 0 || !existsSync(keyFile) || !/already/.test(r4.stdout)) fail("#132: đã dùng SPEC_HARNESS_KEY_CMD phải no-op, không đụng file", r4.stdout + r4.stderr);
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // #129: --json through a PIPE must not truncate at Node's default pipe highWaterMark. A real
+  // multi-task repo's --json easily exceeds one 64 KB pipe buffer; process.exit() after a large
+  // console.log drops whatever stdout had not flushed yet when writing to a pipe (not a file).
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-pipesize-"));
+    const { P } = buildBase(root);
+    for (let i = 0; i < 120; i++) {
+      const d = join(P, "docs/tasks/sprint-1", `T-${i}`);
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "task.agent.json"), JSON.stringify({ taskId: `T-${i}`, currentStage: "bootstrap", status: "in_progress" }));
+    }
+    // spawnSync, not execFileSync: this fixture has errors on purpose, so exit 1 is the right answer
+    // and must not throw.
+    const run = (sink) => spawnSync("sh", ["-c", `node scripts/validate-tasks.mjs --json --no-warn ${sink}`], { cwd: P, encoding: "utf8", maxBuffer: 16 << 20 }).stdout;
+    // The file write is the control: it never truncates, so it says how big the real output is.
+    // Comparing the two tells "pipe dropped bytes" apart from "fixture too small", which a bare
+    // length check cannot — a truncated run looks exactly like a short one.
+    const full = (run("> out.json"), read(join(P, "out.json"))), piped = run("| cat");
+    if (full.length < 65536) fail(`#129: fixture không đủ lớn để tái hiện cắt pipe (${full.length} B < 64 KB) — tăng số task`);
+    if (piped.length !== full.length) fail(`#129: --json qua pipe bị cắt: ${piped.length} B qua pipe vs ${full.length} B ra file — process.exit() bỏ phần stdout chưa flush`);
+    try { JSON.parse(piped); } catch (e) { fail(`#129: --json qua pipe không parse được (${piped.length} B)`, e.message); }
     rmSync(root, { recursive: true, force: true });
   }
 
@@ -2691,12 +2896,14 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
 // ── cài thật ───────────────────────────────────────────────────────────────
 const yes = args.includes("--yes") || args.includes("-y");
 const dry = args.includes("--dry-run");
+const coAt = args.indexOf("--codeowners");
+const coOwner = coAt === -1 ? null : args[coAt + 1] ?? "";
 const cliAt = args.indexOf("--cli");
 const clis = cliAt === -1 ? [] : String(args[cliAt + 1] ?? "").split(",").filter(Boolean);
 if (cliAt !== -1 && (!clis.length || clis.some((c) => !CLIS.includes(c))))
   die(`✖ --cli nhận danh sách phẩy trong: ${CLIS.join(", ")} (vd --cli codex,gemini)`);
-const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && a !== "--dry-run" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)));
-if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--dry-run] [--cli ${CLIS.join(",")}]`);
+const rest = args.filter((a, i) => a !== "--yes" && a !== "-y" && a !== "--dry-run" && (cliAt === -1 || (i !== cliAt && i !== cliAt + 1)) && (coAt === -1 || (i !== coAt && i !== coAt + 1)));
+if (rest.length > 1) die(`dùng: node install.mjs [project-root] [--yes] [--dry-run] [--cli ${CLIS.join(",")}] [--codeowners @org/team]`);
 const where = rest[0] ?? ".";
 const target = resolve(where);
 if (!existsSync(target)) die(`✖ không có thư mục: ${where}`);
@@ -2750,7 +2957,7 @@ if (!yes && readdirSync(target).filter((n) => n !== ".git").length) {
   if (ans !== "y" && ans !== "yes") die("đã huỷ, không ghi gì.");
 }
 
-const { kept, hookSkipped, signpost, clobbered, clis: done, migrated } = installInto(target, clis);
+const { kept, hookSkipped, signpost, clobbered, clis: done, migrated } = installInto(target, clis, coOwner);
 
 console.log(`\n✅ đã cài vào ${where}`);
 if (kept.length) {

@@ -1795,7 +1795,7 @@ export function unisolatedClis(installed, exists) {
   return [...new Set(installed)].filter((c) => !(ROLE_DIRS[c] && exists(ROLE_DIRS[c])));
 }
 export const isolationWarning = (c) =>
-  `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126)`;
+  `${c}: no native role files installed — cannot verify Gate 5 (adversary) runs in its own context. If it shares the implementer's, it is no longer independent; the exit-code gates (1-4) still hold (#126). Fix: set config.adversary.cmd and run --run-adversary <task> (#131)`;
 
 // #125: the default key lives in a file the agent (same OS user) can read. A keychain is the
 // cheap upgrade, so say so — but only when (a) the key IS a file, and (b) this machine really has
@@ -1805,10 +1805,78 @@ export function keyStoreAdvice({ env = process.env, platform = process.platform,
   if (env.SPEC_HARNESS_KEY || env.SPEC_HARNESS_KEY_CMD) return null;          // already out of the file
   if (!keyFileExists) return null;                                           // no key yet: nothing signed with a file key
   if (platform === "darwin" && has("security"))
-    return "the stamp key is a file the agent can read — move it into the Keychain: `security add-generic-password -a \"$USER\" -s spec-harness-stamp -w \"$(cat ~/.spec-harness/stamp.key)\" && export SPEC_HARNESS_KEY_CMD='security find-generic-password -s spec-harness-stamp -w'` then delete the file (#125)";
+    return "the stamp key is a file the agent can read — run `node scripts/validate-tasks.mjs --key-migrate` (stores it in the Keychain, verifies, then deletes the file) (#125/#132)";
   if (platform === "linux" && has("secret-tool"))
-    return "the stamp key is a file the agent can read — move it: `secret-tool store --label=spec-harness service spec-harness < ~/.spec-harness/stamp.key && export SPEC_HARNESS_KEY_CMD='secret-tool lookup service spec-harness'` then delete the file (#125)";
+    return "the stamp key is a file the agent can read — run `node scripts/validate-tasks.mjs --key-migrate` (stores it with secret-tool, verifies, then deletes the file) (#125/#132)";
   return null;
+}
+
+// #131: Gate 5 in a FRESH process. On a CLI with no subagents the coordinator would otherwise play
+// the adversary in the very context that wrote the code. config.adversary.cmd is any headless
+// agent command that reads a prompt on stdin (e.g. `claude -p`, `codex exec -`, `gemini -p`).
+// The prompt passes PATHS only: the new process reads its own inputs through --pack, so nothing
+// the implementer thought is in its context. Same prompt as the shipped --eval, which measured it.
+export function adversaryPrompt(task, base) {
+  return `You are the \`adversary\` subagent (stage adversarial_review, Gate 5) for the task in \`${task}\`.\n` +
+    `First run \`node scripts/validate-tasks.mjs --pack ${task} adversarial_review --base ${base}\` and read its output once: it bundles \`docs/Instructions.md\`, SharedRules §4 §5 §6 §8 §9, \`docs/agents/Adversary.md\`, ProjectRules, the output contract, the task artifacts, the last handoff and the unfiltered git file list. Do not open those files again. ` +
+    "Obey the artifact size caps in SharedRules §8. Work only inside the task folder. Write `09-Adversarial-Review.md` in the task folder, " +
+    `append your \`## Next Handoff\` block to \`${task}/.agent-memory/adversary.md\`, update \`${task}/task.agent.json\`. ` +
+    "Remind: default FAIL, re-run the ProjectRules §7 commands yourself instead of trusting `08`, do not touch `src/`. " +
+    "End your final message with: gate verdict (PASS/FAIL), status set, and the one-line reason.\n";
+}
+// What the run proved. Pure so the self-check covers every branch without spawning an agent.
+export function adversaryRunVerdict({ status, timedOut, nineBefore, nineAfter, srcChanged }) {
+  if (timedOut) return { exit: 1, why: "adversary process timed out — no verdict; re-run or raise --timeout" };
+  if (srcChanged.length) return { exit: 1, why: `adversary changed files outside the task folder: ${srcChanged.join(", ")} — Gate 5 is read-only; revert them` };
+  if (!nineAfter || nineAfter === nineBefore) return { exit: 1, why: `adversary process exited ${status} without writing 09-Adversarial-Review.md` };
+  return { exit: 0 };
+}
+
+// #132: move the stamp key out of the file into the OS keychain, as an explicit command (never at
+// install time). Order is the whole safety story: store → read back → compare → only then delete
+// the file. A failure at any step leaves the file key in place, so no signature is ever orphaned.
+export function keyMigratePlan(platform) {
+  if (platform === "darwin") return {
+    tool: "security",
+    store: (k) => ["security", ["add-generic-password", "-U", "-a", process.env.USER ?? "spec-harness", "-s", "spec-harness-stamp", "-w", k]],
+    readCmd: "security find-generic-password -s spec-harness-stamp -w",
+  };
+  if (platform === "linux") return {
+    tool: "secret-tool",
+    store: (k) => ["secret-tool", ["store", "--label=spec-harness", "service", "spec-harness"], k],
+    readCmd: "secret-tool lookup service spec-harness",
+  };
+  return null;
+}
+
+// #133: who must review a change to the rules that decide every gate. These paths are the gate:
+// whoever can edit them without review can turn any gate off.
+export const GATE_PATHS = ["harness.config.json", "docs/agents/", "docs/Instructions.md", "scripts/validate-tasks.mjs", ".github/workflows/", "hooks/", ".claude/settings.json"];
+// A CODEOWNERS owner: @user, @org/team, or an email. The placeholder "@your-org/…" is a SYNTACTICALLY
+// valid team, which is exactly why the template can't be installed as-is: GitHub then flags
+// "unknown owner" and the file protects nothing.
+export function ownerError(o) {
+  if (!/^(@[A-Za-z0-9][A-Za-z0-9-]*(\/[A-Za-z0-9._-]+)?|[^@\s]+@[^@\s]+\.[^@\s]+)$/.test(o ?? "")) return `"${o}" is not a CODEOWNERS owner (@user, @org/team, or an email)`;
+  if (/your-org|example\.com|changeme|placeholder/i.test(o)) return `"${o}" is a placeholder — it would make GitHub report an unknown owner and protect nothing`;
+  return null;
+}
+export function codeownersText(owner) {
+  return "# spec-harness (#133): who must review a change to the rules that decide every gate.\n" +
+    "# Only effective with branch protection \"Require review from Code Owners\" (server-side).\n" +
+    GATE_PATHS.map((p) => `/${p} ${owner}`).join("\n") + "\n";
+}
+// Gate paths with NO matching CODEOWNERS rule. Last-match-wins like GitHub; only the simple forms we
+// emit and the common hand-written ones (exact path, dir/, *, **) are understood — an unknown
+// pattern counts as "does not cover", so the warning errs toward telling you, never toward silence.
+export function codeownersGaps(text) {
+  const rules = (text ?? "").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => l.split(/\s+/)).filter((c) => c.length >= 2);
+  const covers = (pat, path) => {
+    const p = pat.replace(/^\//, "");
+    if (p === "*" || p === "**" || p === "**/*") return true;
+    if (p.endsWith("/")) return path.startsWith(p) || path === p.slice(0, -1);
+    return p === path || (p.endsWith("/**") && path.startsWith(p.slice(0, -2)));
+  };
+  return GATE_PATHS.filter((g) => !rules.some(([pat]) => covers(pat, g)));
 }
 
 export function denyGaps(settingsText) {
@@ -2348,8 +2416,8 @@ if (args.has("--self-check")) {
   }
   {
     const yes = (c) => ["security", "secret-tool"].includes(c), no = () => false, A = (o) => keyStoreAdvice({ env: {}, keyFileExists: true, has: yes, ...o });
-    assert.match(A({ platform: "darwin" }), /security add-generic-password/);
-    assert.match(A({ platform: "linux" }), /secret-tool store/);
+    assert.match(A({ platform: "darwin" }), /--key-migrate/);
+    assert.match(A({ platform: "linux" }), /secret-tool/);
     assert.equal(A({ platform: "win32" }), null, "no keychain CLI we can name on Windows: say nothing");
     assert.equal(A({ platform: "darwin", has: no }), null, "keychain CLI absent: do not teach a command that cannot run");
     assert.equal(A({ platform: "darwin", env: { SPEC_HARNESS_KEY_CMD: "x" } }), null, "already using a keychain: silent");
@@ -2373,6 +2441,31 @@ if (args.has("--self-check")) {
     assert.equal(stampChainBreak([L[0], L[1]].join("\n") + "\n", K), null, "truncating the TAIL keeps the chain intact — that is what stampHead is for");
     assert.equal(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }, { stage: "s", attempt: 2, startedAt: "c" }] }], K).join("").split("\n").filter(Boolean).length, 3);
     assert.equal(stampChainBreak(restampLines([{ taskId: "T", telemetry: [{ stage: "s", attempt: 1, startedAt: "a", endedAt: "b" }] }], K).join(""), K), null, "--restamp writes a valid chain");
+  }
+  {
+    const V = (o) => adversaryRunVerdict({ status: 0, timedOut: false, nineBefore: null, nineAfter: "# 09\nFAIL", srcChanged: [], ...o });
+    assert.equal(V({}).exit, 0, "wrote 09, touched nothing = ran");
+    assert.match(V({ timedOut: true }).why, /timed out/);
+    assert.match(V({ nineAfter: null }).why, /without writing 09/);
+    assert.match(V({ nineBefore: "same", nineAfter: "same" }).why, /without writing 09/, "an unchanged 09 from an earlier round is not a new verdict");
+    assert.match(V({ srcChanged: ["src/a.js"] }).why, /outside the task folder: src\/a\.js/, "Gate 5 is read-only");
+    assert.equal(V({ status: 1 }).exit, 0, "the agent CLI's own exit code is not the verdict; 09 + the validator are");
+    const pr = adversaryPrompt("docs/tasks/s/T", "develop");
+    assert.match(pr, /--pack docs\/tasks\/s\/T adversarial_review --base develop/, "base branch from 00-Metadata, not hardcoded main");
+    assert.doesNotMatch(pr, /06-Implementation-Notes|implementer said/, "paths only — no implementer content in the prompt");
+  }
+  {
+    for (const ok of ["@alice", "@acme/platform", "dev@acme.io"]) assert.equal(ownerError(ok), null, ok);
+    for (const bad of ["alice", "@", "@acme/", "", undefined, "a b"]) assert.ok(ownerError(bad), `rejects ${JSON.stringify(bad)}`);
+    assert.match(ownerError("@your-org/harness-maintainers"), /placeholder/, "the shipped template handle must never be installed");
+    const t = codeownersText("@acme/platform");
+    assert.deepEqual(codeownersGaps(t), [], "what we write covers every gate path");
+    assert.deepEqual(codeownersGaps("# only comments\n"), GATE_PATHS, "no rules = nothing covered");
+    assert.deepEqual(codeownersGaps("/harness.config.json @a\n"), GATE_PATHS.filter((p) => p !== "harness.config.json"), "partial coverage names exactly what is missing");
+    assert.deepEqual(codeownersGaps("* @a\n"), [], "a catch-all covers everything");
+    assert.deepEqual(codeownersGaps("/docs/ @a\n").filter((p) => p.startsWith("docs/")), [], "a directory rule covers files under it");
+    assert.ok(codeownersGaps("/docs/agents/Adversary.md @a\n").includes("docs/agents/"), "one file under docs/agents/ does not cover the directory");
+    assert.deepEqual(codeownersGaps(null), GATE_PATHS, "no file = nothing covered");
   }
   assert.equal(budgetConfigError(CFG.budget), null, budgetConfigError(CFG.budget) ?? "");
   assert.ok(budgetConfigError({ maxTokensPerTask: -1 }) && budgetConfigError({ maxTokensPerTask: "9" }) && budgetConfigError({ maxTokensPerTask: 1.5 }), "bad budget values must be rejected");
@@ -3986,6 +4079,23 @@ export function ruleFloor({ read, roleDoc, roles, roleStage }) {
   };
 }
 
+if (args.has("--key-migrate")) {
+  const plan = keyMigratePlan(process.platform);
+  if (!plan) { console.error(`✖ --key-migrate: no supported keychain CLI on ${process.platform} — use SPEC_HARNESS_KEY from your CI/secret store instead`); process.exit(2); }
+  if (process.env.SPEC_HARNESS_KEY || process.env.SPEC_HARNESS_KEY_CMD) { console.log("✔ key is already read from SPEC_HARNESS_KEY / SPEC_HARNESS_KEY_CMD — nothing to migrate"); process.exit(0); }
+  let key; try { key = readFileSync(KEY_FILE(), "utf8").trim(); } catch { key = ""; }
+  if (!key) { console.error(`✖ --key-migrate: no key file at ${KEY_FILE()} — nothing to migrate (run --advance once to create one)`); process.exit(1); }
+  const [bin, a, input] = plan.store(key);
+  const st = spawnSync(bin, a, { input, encoding: "utf8" });
+  if (st.status !== 0) { console.error(`✖ --key-migrate: ${bin} failed (exit ${st.status}): ${(st.stderr || st.error?.message || "").trim()}\n  the key file was NOT touched`); process.exit(1); }
+  const back = spawnSync(plan.readCmd, { shell: true, encoding: "utf8" });
+  if (back.status !== 0 || back.stdout.trim() !== key) { console.error(`✖ --key-migrate: stored, but reading it back ${back.status !== 0 ? `failed (exit ${back.status})` : "returned a different value"} — the key file was NOT deleted`); process.exit(1); }
+  if (args.has("--keep-file")) console.log(`✔ key stored in ${plan.tool} and verified; ${KEY_FILE()} kept (--keep-file)`);
+  else { rmSync(KEY_FILE()); console.log(`✔ key stored in ${plan.tool}, read back identical, ${KEY_FILE()} deleted`); }
+  console.log(`  add to your shell profile (and open a new terminal):\n  export SPEC_HARNESS_KEY_CMD='${plan.readCmd}'`);
+  process.exit(0);
+}
+
 if (args.has("--writeback")) {
   const dir = argv[argv.indexOf("--writeback") + 1];
   const jp = dir && !dir.startsWith("--") ? join(resolve(dir), "task.agent.json") : null;
@@ -4822,6 +4932,30 @@ if (args.has("--bootstrap")) {
   process.exit(0);
 }
 
+if (args.has("--run-adversary")) {
+  const dir0 = argv[argv.indexOf("--run-adversary") + 1];
+  const cmd = CFG.adversary?.cmd;
+  if (!dir0 || dir0.startsWith("--")) { console.error("usage: validate-tasks.mjs --run-adversary <task-folder> [--timeout <s>]"); process.exit(2); }
+  if (!cmd) { console.error('✖ --run-adversary: config.adversary.cmd is not set — e.g. "claude -p --agent adversary --permission-mode bypassPermissions" or "codex exec --dangerously-bypass-approvals-and-sandbox -"'); process.exit(2); }
+  const dir = resolve(dir0), task = relative(REPO_ROOT, dir).split(sep).join("/");
+  if (!existsSync(join(dir, "task.agent.json"))) { console.error(`✖ --run-adversary: no task.agent.json in ${dir0}`); process.exit(2); }
+  const nineP = join(dir, "09-Adversarial-Review.md"), before = existsSync(nineP) ? readFileSync(nineP, "utf8") : null;
+  const repo0 = resolve(REPO_ROOT, (REPOS[0] ?? {}).path ?? ".");
+  const dirtyBefore = new Set(dirtyPaths(repo0));
+  const t = Number(argv.includes("--timeout") ? argv[argv.indexOf("--timeout") + 1] : 1500) * 1000;
+  console.log(`▶ Gate 5 in a fresh process: ${cmd}`);
+  const r = spawnSync(cmd, { cwd: REPO_ROOT, shell: true, input: adversaryPrompt(task, packBase(dir)), encoding: "utf8", timeout: t, maxBuffer: 64 << 20, stdio: ["pipe", "inherit", "inherit"] });
+  const tasksRel = relative(repo0, TASKS_DIR).split(sep).join("/") + "/";
+  const srcChanged = dirtyPaths(repo0).filter((p) => !dirtyBefore.has(p) && !p.startsWith(tasksRel));
+  const v = adversaryRunVerdict({ status: r.status, timedOut: r.error?.code === "ETIMEDOUT", nineBefore: before, nineAfter: existsSync(nineP) ? readFileSync(nineP, "utf8") : null, srcChanged });
+  if (v.exit) { console.error(`✖ --run-adversary: ${v.why}`); process.exit(1); }
+  // The verdict itself is the validator's job, as for every other role: Gate 5 reads 09.
+  const g = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--task", dir, "--config", CONFIG_PATH], { encoding: "utf8" });
+  process.stdout.write(g.stdout); process.stderr.write(g.stderr);
+  console.log(`${g.status === 0 ? "✔" : "✖"} Gate 5 ran isolated (fresh process, paths-only prompt); validator exit ${g.status}`);
+  process.exit(g.status ?? 1);
+}
+
 if (args.has("--advance")) {
   const at = argv.indexOf("--advance");
   const [taskArg, stage] = argv.slice(at + 1, at + 3);
@@ -5077,6 +5211,11 @@ if (args.has("--preflight")) {
       const has = (c) => spawnSync(platformWhich(), [c], { encoding: "utf8" }).status === 0;
       const adv = keyStoreAdvice({ has, keyFileExists: existsSync(KEY_FILE()) });
       if (adv) warns.push(adv);
+    }
+    if (!isSourceRepo) {
+      const cf = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"].map((f) => join(REPO_ROOT, f)).find(existsSync);
+      if (!cf) warns.push("no CODEOWNERS — anyone who can merge can edit harness.config.json / the validator / the CI workflow, i.e. turn any gate off. Install: `npx spec-harness --codeowners @your-team` (#133)");
+      else { const gaps = codeownersGaps(readFileSync(cf, "utf8")); if (gaps.length) warns.push(`CODEOWNERS does not cover gate paths: ${gaps.join(", ")} — a change there needs no review (#133)`); }
     }
     for (const c of unisolatedClis(installed, (d) => existsSync(join(REPO_ROOT, d)))) warns.push(isolationWarning(c));
     for (const [cli, file] of Object.entries(guards)) {
@@ -6202,4 +6341,7 @@ if (AS_JSON) {
   );
 }
 
-process.exit(totalErr > 0 ? 1 : 0);
+// #129: NOT process.exit() — on a pipe stdout is async, and exit() drops whatever is still
+// buffered. Measured at 500 tasks: `--json | …` arrived truncated at 65536 bytes (one pipe
+// buffer) while `> file` wrote all 1.7 MB. exitCode lets Node flush, then leave.
+process.exitCode = totalErr > 0 ? 1 : 0;
