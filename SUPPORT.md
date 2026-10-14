@@ -28,3 +28,11 @@ Lỗ hổng: báo riêng cho chủ repo, đừng mở issue công khai. Không c
 | macOS | Linux (chỉ qua CI), Windows |
 
 Những dòng ở cột "chưa" không phải là đã hỏng — là **chưa ai đo**. Đừng đọc im lặng thành bảo đảm.
+
+Từng capability (guard hook, role file, Gate 5 chạy tiến trình riêng) hiện ở dạng bảng, mặc định `UNVERIFIED` khi chưa có lần chạy thật ghi trên đĩa:
+
+```bash
+node scripts/validate-tasks.mjs --capabilities
+```
+
+Có adapter trong installer **không** được tính là đã tương thích production.

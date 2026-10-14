@@ -129,7 +129,16 @@ Trên CLI chỉ có một context, adversary đọc luôn suy nghĩ của implem
 node scripts/validate-tasks.mjs --run-adversary docs/tasks/<sprint>/<task>
 ```
 
-Prompt chỉ chứa đường dẫn; adversary tự đọc đầu vào qua `--pack`. Thành công in `✔ Gate 5 ran isolated`. Exit 1 nếu agent không ghi `09-Adversarial-Review.md` hoặc sửa file ngoài thư mục task. Đã chạy thật với Claude; chưa chạy với Codex.
+Prompt chỉ chứa đường dẫn; adversary tự đọc đầu vào qua `--pack`. Thành công in `✔ Gate 5 ran isolated`. Exit 1 nếu agent không ghi `09-Adversarial-Review.md` hoặc sửa file ngoài thư mục task (so bằng nội dung, không chỉ danh sách path thay đổi — một file đã dirty từ trước mà adversary sửa tiếp vẫn bị bắt). Đã chạy thật với Claude; chưa chạy với Codex.
+
+### Ma trận capability: đừng tin "có adapter" = "đã chạy thật"
+
+Installer ghi file hook/role cho 12+ CLI — đó là **cơ chế đã lắp**, không phải **bằng chứng đã chạy**. `--capabilities` liệt kê 3 cột cho mỗi CLI (guard, role files, Gate 5 độc lập), mỗi ô mặc định `UNVERIFIED` trừ khi có một lần chạy thật ghi lại trên đĩa (`kernel/eval/last-pass.json`, `docs/reports/*.md`). Một hook được cài mà chưa ai chạy thử hiện `mechanism-only`, không bao giờ tự nhảy lên `verified`.
+
+```bash
+node scripts/validate-tasks.mjs --capabilities        # bảng người đọc
+node scripts/validate-tasks.mjs --capabilities --json # cho CI/script
+```
 
 ### Chữ ký evidence: đưa key ra khỏi tầm của agent
 

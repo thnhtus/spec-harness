@@ -19,7 +19,14 @@ Vì sao không tách: mỗi hàm có self-check/e2e đi kèm ngay cạnh nó (gr
 6. **`--run-adversary`** (#131) — Gate 5 ở tiến trình mới.
 7. **`--bootstrap` / `--triage`** — stage 1 không cần subagent.
 8. **`--preflight`** — mọi cảnh báo trạng thái cài đặt (guard, CODEOWNERS #133, isolation #126, key #125, branch protection #119) nằm ở đây, cộng dồn, không dừng ở lỗi đầu tiên.
-9. **Validator chính** (cuối file) — duyệt mọi task folder, gọi các `xDefects`, in hoặc trả JSON.
+9. **`--capabilities`** (#139) — ma trận per-CLI (guard hook, role file, Gate 5 tiến trình riêng), mặc định `UNVERIFIED`; chỉ một lần chạy thật trên đĩa mới đổi được thành `verified`. Installer self-test khoá phần bằng chứng (file phải tồn tại) và chỉ matrix không được tự nhận `verified` khi mới có file cài.
+
+## Ranh giới của attestation (đọc trước khi tin Gate 4)
+
+`run-evidence.mjs` làm Gate 4 đắt hơn để gian lận: `outputHash` gắn attestation với đúng output, `worktree:` gắn với nội dung cây code lúc chạy (#137), `_stamp.log` ký HMAC chuỗi. **Nó không phải chữ ký.** Hàm hash công khai và agent cùng OS user đọc được (key có thể đưa vào Keychain bằng `--key-migrate`, #125/#132). Ba chỗ fail-open: CI, task đã qua `reviewing`, và git không trả lời được.
+
+Nghĩa là: mức phòng thủ này chặn **nhầm lẫn** — dán evidence của task khác, sửa output sau khi chạy, chạy test hôm trước rồi đổi code hôm sau. Nó không chặn **ý định**. Thứ chặn ý định là adversary tự chạy lại lệnh ProjectRules §7 (Gate 5), không phải hash.
+10. **Validator chính** (cuối file) — duyệt mọi task folder, gọi các `xDefects`, in hoặc trả JSON.
 
 ## `install.mjs` — các khối chính
 
