@@ -119,9 +119,17 @@ function installHook(P) {
 // Những file kernel SẼ đè, tính trước khi ghi một byte nào — để hỏi user trước
 // chứ không báo sau. Trùng logic với over() bên dưới, nên self-test khoá hai
 // bên phải ra cùng kết quả (drift là im lặng và chỉ lộ ra khi đã đè mất file).
-// #139: capabilities.mjs is a kernel script like the rest — a second list is how one installs
+// #139/#118: capabilities.mjs is a kernel script like the rest — a second list is how one installs
 // while the other silently skips it, and the import only fails at run time.
 const KERNEL_SCRIPTS = ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs", "capabilities.mjs"];
+// #118 split validate-tasks.mjs into kernel/scripts/lib/*.mjs. The checks below look for a
+// literal string in "the kernel source", so they read every file that could hold it — a check
+// that only reads validate-tasks.mjs silently stops checking the moment the code moves.
+const KERNEL_LIB = (root = SRC) => {
+  try { return readdirSync(join(root, "kernel/scripts/lib")).filter((f) => f.endsWith(".mjs")).map((f) => join(root, "kernel/scripts/lib", f)); }
+  catch { return []; }
+};
+const readKernel = (root = SRC) => [join(root, "kernel/scripts/validate-tasks.mjs"), ...KERNEL_LIB(root)].map(read).join("\n");
 
 function wouldClobber(P) {
   const out = [];
@@ -131,6 +139,7 @@ function wouldClobber(P) {
   for (const f of readdirSync(join(SRC, "kernel/docs"), { withFileTypes: true }))
     if (f.isFile()) chk(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
   for (const f of KERNEL_SCRIPTS) chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
+  for (const f of KERNEL_LIB()) chk(f, join(P, "scripts/lib", f.split("/").pop()));
   chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   chk(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
   chk(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
@@ -540,6 +549,9 @@ function installInto(P, clis = [], coOwner = null) {
     else cpSync(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name), { recursive: true });
   }
   for (const f of KERNEL_SCRIPTS) over(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
+  // #118: validate-tasks.mjs is a thin CLI over scripts/lib/*.mjs; missing one is a runtime
+  // import error, not a degraded feature.
+  for (const f of KERNEL_LIB()) over(f, join(P, "scripts/lib", f.split("/").pop()));
   for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md")))
     cpSync(join(SRC, "agents", f), join(P, ".claude/agents", f));
   over(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
@@ -1811,7 +1823,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       if (installInto(T).migrated.some((x) => /#106/.test(x)) || read(sp) !== s2) fail("#106: cài lại lần 2 vẫn ghi lại settings.json");
     }
     // The installer's ASK_RULES and the validator's REQUIRED_ASK are one list in two files.
-    if (!read(join(SRC, "kernel/scripts/validate-tasks.mjs")).includes(`export const REQUIRED_ASK = ${JSON.stringify(ASK_RULES).replaceAll(",", ", ")};`))
+    if (!readKernel().includes(`export const REQUIRED_ASK = ${JSON.stringify(ASK_RULES).replaceAll(",", ", ")};`))
       fail("#106: ASK_RULES (install.mjs) lệch REQUIRED_ASK (validate-tasks.mjs) — migration sẽ chuyển sai rule");
     { const o = JSON.parse(again); delete o.protectedBranches; delete o._protectedBranches; writeFileSync(cp, JSON.stringify(o));
       const m2 = installInto(T).migrated, n2 = JSON.parse(read(cp));
@@ -2672,7 +2684,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const body = (src, start) => { const i = src.indexOf(start); return src.slice(i, src.indexOf("\n", src.indexOf("End your final message with", i))); };
     const norm = (t) => t.replace(/\$\{[^}]*\}/g, "$").replace(/\\`/g, "`").replace(/\s+/g, " ");
     const a = norm(body(read(join(SRC, "install.mjs")).split("// #131 --run-adversary")[0], "const EVAL_PROMPT"));
-    const b = norm(body(read(join(SRC, "kernel/scripts/validate-tasks.mjs")), "export function adversaryPrompt"));
+    const b = norm(body(readKernel(), "export function adversaryPrompt"));
     // EVAL_PROMPT hardcodes --base main (the fixture's base); adversaryPrompt takes a real base —
     // that is an intentional difference, not drift, so the base clause itself is not compared.
     for (const frag of ["and read its output once: it bundles `docs/Instructions.md`", "default FAIL, re-run the ProjectRules §7 commands yourself", "do not touch `src/`", "End your final message with: gate verdict"])
@@ -2781,7 +2793,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
   {
     const arch = read(join(SRC, "docs/architecture.md"));
     const real = new Set();
-    for (const src of [read(join(SRC, "kernel/scripts/validate-tasks.mjs")), read(join(SRC, "install.mjs"))])
+    for (const src of [readKernel(), read(join(SRC, "install.mjs"))])
       for (const m of src.matchAll(/args(?:\.has\(|\[0\] === )"(--[a-z-]+)"\)?/g)) real.add(m[1]);
     const named = [...arch.matchAll(/`(--[a-z-]+)`/g)].map((m) => m[1]);
     if (named.length < 10) fail("#134: docs/architecture.md không còn liệt kê đủ lệnh — đã bị rút gọn quá tay?");
@@ -2791,7 +2803,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
   // #133 --codeowners: a real owner is written; the shipped placeholder is refused; preflight warns when
   // there is no CODEOWNERS or it misses a gate path; and the installer twin never drifts from the kernel's.
   {
-    const vsrc = read(join(SRC, "kernel/scripts/validate-tasks.mjs"));
+    const vsrc = readKernel();
     const grab = (src, re) => (re.exec(src) ?? [])[1];
     const kernelPaths = grab(vsrc, /export const GATE_PATHS = (\[[^\]]*\])/), twinPaths = grab(read(join(SRC, "install.mjs")), /const CO_GATE_PATHS = (\[[^\]]*\])/);
     if (!kernelPaths || kernelPaths !== twinPaths) fail("#133: GATE_PATHS của install.mjs lệch bản của validate-tasks.mjs — preflight sẽ báo thiếu thứ installer vừa ghi", `${kernelPaths}\nvs\n${twinPaths}`);
@@ -2896,7 +2908,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     ];
     // install.mjs's own eval-check messages are above this self-test block; the slice before
     // the marker excludes THIS pairs array so a mutated message can never satisfy itself.
-    const code = [read(join(SRC, "kernel/scripts/validate-tasks.mjs")), read(join(SRC, "kernel/scripts/lease.mjs")),
+    const code = [readKernel(), read(join(SRC, "kernel/scripts/lease.mjs")),
       read(join(SRC, "install.mjs")).split("// #127: runbook sentences")[0]].join("\n");
     for (const [doc, src] of pairs) {
       if (!rb.includes(doc)) fail(`#127: docs/runbook.md thiếu/trôi khỏi chuỗi lỗi thật: ${JSON.stringify(doc)}`);
