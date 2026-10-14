@@ -110,7 +110,5 @@ export async function selfCheck({ assert }) {
       mcpGaps(JSON.stringify({ mcpServers: { t: { url: "https://x.com", headers: { Authorization: v } } } })).errors, [],
       `runtime value (${v}) is a recipe for fetching the secret, not the secret`);
 
-  console.log("✅ validate-tasks self-check passed");
-  process.exit(0);
 }
 

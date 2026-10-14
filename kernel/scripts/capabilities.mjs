@@ -44,3 +44,28 @@ export function renderCapabilityMatrix(rows) {
     L.push(`| ${r.cli} | ${CAPABILITIES.map((c) => { const x = r.cells[c]; return x.state === "verified" ? `verified (\`${x.evidence}\`)` : x.state; }).join(" | ")} |`);
   return L.join("\n");
 }
+
+// ── self-check: moved here with the logic it tests ──────────────────────────
+// The two names from other modules are imported HERE, not at the top: install.mjs --self-test
+// imports this file directly (it owns no config), and a top-level import chain would drag the
+// whole kernel — and the config load — into the installer.
+export async function selfCheck({ assert }) {
+  const { CLI_NAMES } = await import("./lib/routing.mjs");
+  const { ROLE_DIRS } = await import("./lib/wiring.mjs");
+  {
+    const R = capabilityRows(["claude", "pi", "aider"], { claude: { guard: true, roleFiles: true }, aider: { guard: true } });
+    const cell = (cli, c) => R.find((r) => r.cli === cli).cells[c];
+    assert.equal(cell("aider", "roleFiles").state, "UNVERIFIED", "an unwired control is UNVERIFIED, not absent");
+    assert.equal(cell("aider", "freshAdversary").state, "UNVERIFIED", "no adversary.cmd and no run → UNVERIFIED");
+    assert.equal(cell("aider", "guard").state, "mechanism-only", "a written hook is a mechanism, never a run");
+    assert.equal(cell("claude", "freshAdversary").state, "verified", "claude has a recorded adversary run");
+    assert.match(cell("claude", "freshAdversary").evidence, /\.json$/, "verified names the file that proves it");
+    assert.equal(cell("pi", "freshAdversary").state, "verified", "pi ran the full pipeline (multi-cli-e2e)");
+    assert.equal(R.length, 3, "one row per CLI, deduped");
+    assert.match(renderCapabilityMatrix(R), /^\| CLI \|/, "matrix renders as a table");
+    assert.deepEqual(Object.keys(CAP_PROOF).sort(), [...CAPABILITIES].sort(), "every capability documents the proof it needs");
+    const roleClis = Object.keys(ROLE_DIRS);
+    assert.ok(roleClis.every((c) => CLI_NAMES.includes(c)), "every CLI with a role dir is a known CLI name");
+    assert.ok(Object.keys(CAP_RUNS).every((c) => CLI_NAMES.includes(c)), "evidence is only recorded for known CLIs");
+  }
+}

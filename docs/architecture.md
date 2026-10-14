@@ -70,6 +70,7 @@ Mỗi `--advance` gọi lại chính validator (`--task <dir>`) để chấm gat
 ## Khi cần sửa một gate
 
 1. Tìm hàm pure tương ứng trong `kernel/scripts/lib/<domain>.mjs` (ví dụ `budgetDefect` ở `telemetry.mjs`, `writeBackRecordDefect` ở `wiring.mjs`) — sửa ở đó trước.
-2. Thêm assert vào `selfCheck()` của CHÍNH module đó, ngay cạnh hàm, không thêm ở cuối `validate-tasks.mjs`.
-3. Nếu gate liên quan tới `--advance` hay installer, thêm e2e thật trong `install.mjs --self-test` (sandbox, không mock).
-4. `node install.mjs --self-test` phải xanh trước khi coi là xong — nó chạy cả self-check của validator và bản trên tarball đã pack.
+2. Thêm assert vào `selfCheck()` của CHÍNH module đó, ngay cạnh hàm, không thêm ở cuối `validate-tasks.mjs`. Nếu assert mới làm số lượng assert của module vượt `SC_MIN` cũ, nâng số đó trong bảng `kernels`/`SC_MIN` ở khối `--self-check`.
+3. Thêm module mới vào `kernel/scripts/lib/`: `--self-check` tự phát hiện file chưa có trong bảng `kernels` và đỏ, nên không thể ship module không test.
+4. Nếu gate liên quan tới `--advance` hay installer, thêm e2e thật trong `install.mjs --self-test` (sandbox, không mock).
+5. `node install.mjs --self-test` phải xanh trước khi coi là xong — nó chạy cả self-check của validator và bản trên tarball đã pack.
