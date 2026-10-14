@@ -133,7 +133,29 @@ Prompt chỉ chứa đường dẫn; adversary tự đọc đầu vào qua `--pa
 
 ### Ma trận capability: đừng tin "có adapter" = "đã chạy thật"
 
-Installer ghi file hook/role cho 12+ CLI — đó là **cơ chế đã lắp**, không phải **bằng chứng đã chạy**. `--capabilities` liệt kê 3 cột cho mỗi CLI (guard, role files, Gate 5 độc lập), mỗi ô mặc định `UNVERIFIED` trừ khi có một lần chạy thật ghi lại trên đĩa (`kernel/eval/last-pass.json`, `docs/reports/*.md`). Một hook được cài mà chưa ai chạy thử hiện `mechanism-only`, không bao giờ tự nhảy lên `verified`.
+Installer ghi file hook/role cho 12+ CLI — đó là **cơ chế đã lắp**, không phải **bằng chứng đã chạy**. `--capabilities` cho mỗi CLI một dòng và 8 cột, đúng 8 control cần kiểm:
+
+| cột | câu hỏi |
+|---|---|
+| `role load` | CLI thật có nạp đúng nội dung role/skill không |
+| `deny cmd` | lệnh bị cấm có thực sự bị chặn không |
+| `scope write` | sửa file ngoài scope, tạo file mới, ghi qua shell — có chặn cả ba không |
+| `dispatch` | role có được gọi đúng và nhận đúng artifact không |
+| `gate fail` | gate hỏng có exit khác 0 **và** không dispatch stage tiếp theo không |
+| `resume` | sau lỗi có tiếp đúng stage mà không ghi đè evidence không |
+| `adversary` | adversary có chạy ở process/context riêng, có ghi lại không |
+| `mcp` | đọc đúng dữ liệu và lỗi xác thực có nổi lên thành lỗi không |
+
+Bốn mức, **không có mức nào tên là PASS**:
+
+| mức | nghĩa |
+|---|---|
+| `verified` | có một lần chạy với **CLI thật** ghi trên đĩa |
+| `sim` | `install.mjs --self-test` chạy đúng đường code đó với payload tổng hợp hoặc agent giả — phía harness đúng, phía CLI **chưa biết** |
+| `mech` | file đã cài và đã armed; chưa có gì từng chạy qua nó |
+| `UNVERIFIED` | không có gì để dựa vào. **Đây là mặc định.** Không phải hỏng, cũng không phải đạt |
+
+Hiện tại **không ô nào là `verified`** — không có lần chạy nào thoả đúng câu bằng chứng trong `CAP_PROOF`. Hai lần chạy thật đã có (`kernel/eval/last-pass.json`: adversary bắt 8/8 bug; `docs/reports/multi-cli-e2e.md`: pi chạy hết pipeline) được in thành **ghi chú cuối bảng**, không thành ô xanh: cái thứ nhất không ghi pid/session nên không chứng minh process riêng, cái thứ hai chạy qua `--cli claude` với model Claude nên không chứng minh gì về pi.
 
 ```bash
 node scripts/validate-tasks.mjs --capabilities        # bảng người đọc

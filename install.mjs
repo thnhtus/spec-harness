@@ -2511,6 +2511,44 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       if (okDev.status !== 0) fail("#115: file khai trong 06 Plan Deviations (nêu đường dẫn) phải qua", okDev.stderr);
       writeFileSync(nP, nK); rmSync(strayF, { force: true }); writeFileSync(jp, jK); writeFileSync(planP, slicedPlan);
     }
+    // #150 resume: the review's "Resume sau lỗi — tiếp tục đúng stage mà không ghi đè evidence".
+    // Three claims, each asserted on the real --advance: a blocked gate (a) exits non-zero,
+    // (b) does NOT dispatch (no telemetry entry, stage unchanged — so the retry resumes at the same
+    // stage, not the next one), and (c) leaves 08/09 byte-identical. (c) is the one with no test
+    // before this: a gate that rewrote evidence on the way out would corrupt the retry's inputs.
+    {
+      const jK = read(jp), nP = join(P, T, "06-Implementation-Notes.md"), nK = read(nP), strayF = join(P, "src/stray-resume.js");
+      const eP = join(P, T, "08-Test-Evidence.md"), aP = join(P, T, "09-Adversarial-Review.md");
+      // currentStage = the stage BEFORE the one being advanced to, so --advance really promotes
+      // first and has something to roll back. Starting already on the target stage skips the
+      // promotion path entirely, and the rollback this asserts would never run.
+      const toPrev = () => writeFileSync(jp, JSON.stringify({ ...JSON.parse(jK), currentStage: "implementation", status: "in_progress", telemetry: [] }));
+      writeFileSync(planP, planKeep); toPrev();
+      const e0 = read(eP), a0 = existsSync(aP) ? read(aP) : null;
+      writeFileSync(strayF, "export const x = 1;\n");
+
+      const r1 = adv(T, "adversarial_review", "--cli", "claude");
+      if (r1.status === 0) fail("#150 resume: gate hỏng phải exit khác 0");
+      if (J().telemetry.length) fail("#150 resume: gate hỏng mà vẫn ghi telemetry — stage kế tiếp coi như đã dispatch");
+      if (J().currentStage !== "implementation") fail(`#150 resume: gate hỏng vẫn để task ở ${J().currentStage} — lần chạy lại nhảy qua stage vừa hỏng`);
+      if (read(eP) !== e0) fail("#150 resume: 08-Test-Evidence.md bị ghi đè khi gate hỏng — evidence của lần chạy lại đã hỏng");
+      if ((existsSync(aP) ? read(aP) : null) !== a0) fail("#150 resume: 09-Adversarial-Review.md bị ghi đè khi gate hỏng");
+
+      // Same failure twice: a retry must not accumulate state either (the first run's rollback has
+      // to be complete, or attempt 2 starts from a tree attempt 1 half-wrote).
+      const r2 = adv(T, "adversarial_review", "--cli", "claude");
+      if (r2.status !== r1.status) fail("#150 resume: chạy lại sau lỗi ra exit code khác lần đầu — trạng thái đã trôi");
+      if (J().telemetry.length || read(eP) !== e0) fail("#150 resume: lần chạy lại thứ hai làm bẩn telemetry/evidence");
+
+      // Now fix the cause and resume: the SAME stage proceeds, and the evidence it reads is the
+      // untouched one. This is the half that proves "resume at the right stage", not just "stop".
+      rmSync(strayF, { force: true });
+      const ok = adv(T, "adversarial_review", "--cli", "claude");
+      if (ok.status !== 0) fail("#150 resume: sửa nguyên nhân rồi chạy lại cùng stage phải qua", ok.stdout + ok.stderr);
+      if (read(eP) !== e0) fail("#150 resume: lần chạy thành công ghi đè evidence cũ");
+      writeFileSync(nP, nK); writeFileSync(jp, jK); writeFileSync(planP, slicedPlan);
+    }
+
     // #116 e2e: a pack over packCap.<stage> stops --advance before the role runs — the cap used to be read
     // only when a role called --pack, so two Gate 5 rounds were spent finding "pack over the cap".
     {
