@@ -35,7 +35,7 @@ import { dirname, isAbsolute, join, matchesGlob, parse as parsePath, relative, r
 import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
-import { CAPABILITIES, CAP_PROOF, CAP_RUNS, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
+import { CAPABILITIES, CAP_HEADER, CAP_INDIRECT, CAP_PROOF, CAP_SIMULATED, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
 import * as capabilities from "./capabilities.mjs";
 import * as config from "./lib/config.mjs";
 import { AC_REACHED, AC_TRACE, AC_TRACE_SINCE, CFG, CONFIG_FOUND, CONFIG_NAME, CONFIG_PATH, DOC_ENUMS, GATE4_ARTIFACTS, GATE4_DONE, GROUP_FIELD, GROUP_PREFIX, HANDOFF_BLOCK_CAP, LINE_CAPS, LINE_WARN, REPOS, REPO_ROOT, REQUIRED_AT_STAGE, ROLE_STAGE, ROUTING, SCHEMA_PATH, STAGE_ORDER, STAMP_LOG, STAMP_LOG_NAME, STAMP_SINCE, TASKS_DIR, needSliceBytes, needStampSince } from "./lib/config.mjs";
@@ -63,7 +63,7 @@ import * as wiring from "./lib/wiring.mjs";
 import { ROLE_DIRS, adapterGaps, askGaps, codeownersGaps, denyGaps, findUpward, isolationWarning, keyMigratePlan, keyStoreAdvice, mcpGaps, ruleFloor, settingsReachable, statusMissing, unisolatedClis, writeBackDecision, writeBackRecordDefect } from "./lib/wiring.mjs";
 // #139 lives in its own side-effect-free module: install.mjs --self-test imports it, and importing
 // THIS file runs its main against the cwd's config, which a packed tarball does not have.
-export { CAPABILITIES, CAP_PROOF, CAP_RUNS, capState, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
+export { CAPABILITIES, CAP_HEADER, CAP_INDIRECT, CAP_PROOF, CAP_RUNS, CAP_SIMULATED, capState, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -202,7 +202,7 @@ if (args.has("--self-check")) {
   // per-module floor is the point: the total floor below cannot see a dozen asserts deleted from one
   // module, and that is exactly how #139's block went missing.
   const kernels = { capabilities, config, docs: docsMod, evidence, gate5, guard, lifecycle, routing, schema: schemaMod, scope, telemetry, trace, wiring };
-  const SC_MIN = { capabilities: 6, config: 13, docs: 120, evidence: 62, gate5: 62, guard: 82, lifecycle: 54, routing: 196, schema: 50, scope: 67, telemetry: 95, trace: 73, wiring: 77 };
+  const SC_MIN = { capabilities: 34, config: 13, docs: 120, evidence: 62, gate5: 62, guard: 82, lifecycle: 54, routing: 196, schema: 50, scope: 67, telemetry: 95, trace: 73, wiring: 77 };
   const onDisk = readdirSync(join(__dirname, "lib")).filter((f) => f.endsWith(".mjs")).map((f) => f.replace(".mjs", ""));
   for (const n of onDisk) if (!(n in kernels)) throw new Error(`kernel/scripts/lib/${n}.mjs is not run by --self-check — add it to the list and give it a selfCheck`);
   for (const [name, mod] of Object.entries(kernels)) {
@@ -876,18 +876,58 @@ if (args.has("--capabilities")) {
   const installed = [...new Set([...Object.keys(manifest),
     ...["codex", "cursor"].filter((c) => existsSync(join(REPO_ROOT, `.${c}`))),
     ...(existsSync(join(REPO_ROOT, ".claude/agents")) ? ["claude"] : [])])];
+  // What is ARMED on disk, per capability. Each flag answers "is the mechanism there", never "did
+  // it work" — capState decides whether an armed mechanism is also simulated by the self-test.
+  //   guardArmed   the hook file runs `--guard <cli>` — the deny-list (reset --hard, .env, git push)
+  //   roleGuard    the role files carry the `--guard-role` hook — the out-of-scope WRITE sandbox.
+  //                Different control, different wiring: it lives in `.claude/agents/*.md` front
+  //                matter, which is Claude Code's own agent format. Codex gets its roles as
+  //                developer_instructions in .toml with no hook field, so on Codex the "roles may
+  //                only write inside tasksDir" rule is prose — the review asked exactly this kind of
+  //                question, so it must not be answered by the deny-list's `armed` flag.
+  //   roles        the CLI has its own native role files (ROLE_DIRS)
+  // gateFailure/resumeAfterFail/roleDispatch are kernel-side (the validator and the stage→role
+  // mapping, not the CLI), so they are armed wherever the kernel is installed. mcp has no
+  // installable mechanism at all: the harness installs no MCP server — .mcp.json is the project's.
   const mechanisms = Object.fromEntries(installed.map((c) => {
-    let armed = false; try { armed = !!manifest[c] && readFileSync(join(REPO_ROOT, manifest[c]), "utf8").includes(`--guard ${c}`); } catch {}
-    return [c, { guard: armed, roleFiles: !!(ROLE_DIRS[c] && existsSync(join(REPO_ROOT, ROLE_DIRS[c]))) }];
+    let guardArmed = false;
+    try { guardArmed = !!manifest[c] && readFileSync(join(REPO_ROOT, manifest[c]), "utf8").includes(`--guard ${c}`); } catch {}
+    if (["codex", "cursor", "claude"].includes(c)) guardArmed ||= existsSync(join(REPO_ROOT, `.${c === "claude" ? "claude" : c}`));
+    const roles = !!(ROLE_DIRS[c] && existsSync(join(REPO_ROOT, ROLE_DIRS[c])));
+    let roleGuard = false;
+    try {
+      roleGuard = readdirSync(join(REPO_ROOT, ".claude/agents")).filter((f) => f.endsWith(".md"))
+        .some((f) => readFileSync(join(REPO_ROOT, ".claude/agents", f), "utf8").includes("--guard-role"));
+    } catch {}
+    return [c, {
+      roleLoading: roles,
+      dangerousCommand: guardArmed,
+      outOfScopeWrite: c === "claude" && roleGuard,
+      roleDispatch: Object.keys(ROLE_STAGE).length > 0, // the stage→role mapping is the mechanism
+      gateFailure: true,
+      resumeAfterFail: true,
+      freshAdversary: !!CFG.adversary?.cmd,
+      mcp: false,
+    }];
   }));
   const rows = capabilityRows(CLI_NAMES, mechanisms);
-  if (AS_JSON) { console.log(JSON.stringify({ rows, proof: CAP_PROOF }, null, 2)); process.exit(0); }
+  if (AS_JSON) { console.log(JSON.stringify({ rows, proof: CAP_PROOF, simulated: CAP_SIMULATED, indirect: CAP_INDIRECT }, null, 2)); process.exit(0); }
   console.log(`\n── capability matrix (${installed.length} CLI installed of ${CLI_NAMES.length} known) ──`);
   console.log(renderCapabilityMatrix(rows));
-  console.log(`\n  verified = a run on disk proves it; mechanism-only = the file is installed, the CLI was`);
-  console.log(`  never run against it; UNVERIFIED = nothing to go on. What each cell would need to be verified:`);
-  for (const c of CAPABILITIES) console.log(`    ${c.padEnd(16)} ${CAP_PROOF[c]}`);
-  console.log(`  Not installed here: ${CLI_NAMES.filter((c) => !installed.includes(c)).join(", ") || "—"} (UNVERIFIED, not broken).`);
+  console.log(`
+  verified    a run against the REAL CLI is recorded on disk
+  sim         install.mjs --self-test exercises the real code path with a synthetic payload or a
+              fake agent — the harness side holds, the CLI side is untested
+  mech        the file is installed and armed; nothing has ever been run against it
+  UNVERIFIED  nothing to go on. This is the default. It is not a failure, and it is not a pass.`);
+  console.log(`\n  What each cell would need to read "verified":`);
+  for (const c of CAPABILITIES) console.log(`    ${CAP_HEADER[c].padEnd(12)} ${CAP_PROOF[c]}`);
+  const foot = rows.filter((r) => r.indirect);
+  if (foot.length) {
+    console.log(`\n  Recorded runs that are real, but do not prove the cell's own claim:`);
+    for (const r of foot) for (const [c, why] of Object.entries(r.indirect)) console.log(`    ${r.cli}/${CAP_HEADER[c]}: ${why}`);
+  }
+  console.log(`\n  Not installed here: ${CLI_NAMES.filter((c) => !installed.includes(c)).join(", ") || "—"} (UNVERIFIED, not broken).`);
   process.exit(0);
 }
 
