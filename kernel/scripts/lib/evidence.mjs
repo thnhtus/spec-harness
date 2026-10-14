@@ -467,9 +467,5 @@ export async function selfCheck({ assert }) {
   assert.equal(taskKeyOf("sprint-1/ABC-1-x"), "sprint-1/ABC-1-x", "short form");
   assert.equal(taskKeyOf("./docs/tasks/sprint-1/ABC-1-x/"), "sprint-1/ABC-1-x", "leading ./ and trailing /");
   assert.equal(taskKeyOf("docs\\tasks\\sprint-1\\ABC-1-x"), "sprint-1/ABC-1-x", "Windows \\ separators");
-
-  // A --task pointing at a nonexistent folder must EXIT WITH AN ERROR, not
-  // "0 tasks, 0 errors". A gate green because it found nothing to check is
-  // worse than no gate.
 }
 

@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { CAPABILITIES, CAP_PROOF, CAP_RUNS, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
+import * as capabilities from "./capabilities.mjs";
 import * as config from "./lib/config.mjs";
 import { AC_REACHED, AC_TRACE, AC_TRACE_SINCE, CFG, CONFIG_FOUND, CONFIG_NAME, CONFIG_PATH, DOC_ENUMS, GATE4_ARTIFACTS, GATE4_DONE, GROUP_FIELD, GROUP_PREFIX, HANDOFF_BLOCK_CAP, LINE_CAPS, LINE_WARN, REPOS, REPO_ROOT, REQUIRED_AT_STAGE, ROLE_STAGE, ROUTING, SCHEMA_PATH, STAGE_ORDER, STAMP_LOG, STAMP_LOG_NAME, STAMP_SINCE, TASKS_DIR, needSliceBytes, needStampSince } from "./lib/config.mjs";
 import * as docsMod from "./lib/docs.mjs";
@@ -185,19 +186,50 @@ if (args.has("--codex-rules")) {
 }
 
 if (args.has("--self-check")) {
-  const { strict: assert } = await import("node:assert");
-  await evidence.selfCheck({ assert });
-  await docsMod.selfCheck({ assert });
-  await telemetry.selfCheck({ assert });
-  await scope.selfCheck({ assert });
-  await trace.selfCheck({ assert });
-  await gate5.selfCheck({ assert });
-  await routing.selfCheck({ assert });
-  await wiring.selfCheck({ assert });
-  await guard.selfCheck({ assert });
-  await config.selfCheck({ assert });
-  await lifecycle.selfCheck({ assert });
-  await schemaMod.selfCheck({ assert });
+  const { strict: rawAssert } = await import("node:assert");
+  // #118: every assert goes through this counter, so a block of asserts that silently disappears in
+  // a refactor is visible. The suite still passed while #139's 11 asserts were lost for a day during
+  // the split — "it went green" is not the same as "it checked what it used to".
+  let assertCount = 0;
+  const assert = new Proxy(rawAssert, {
+    get: (t, k) => (typeof t[k] === "function" ? (...a) => { assertCount++; return t[k](...a); } : t[k]),
+  });
+  // #118: a module without tests must not be able to look tested. Each must export selfCheck and must
+  // actually run assertions, and every file in kernel/scripts/lib/ must appear below — that is what
+  // catches "new module, no selfCheck" and "module quietly dropped off the list".
+  // min = asserts that module's selfCheck is expected to run, measured on the maintainer's machine
+  // minus 5, so a platform-conditional branch (keychain, git availability) cannot make it flaky. The
+  // per-module floor is the point: the total floor below cannot see a dozen asserts deleted from one
+  // module, and that is exactly how #139's block went missing.
+  const kernels = { capabilities, config, docs: docsMod, evidence, gate5, guard, lifecycle, routing, schema: schemaMod, scope, telemetry, trace, wiring };
+  const SC_MIN = { capabilities: 6, config: 13, docs: 120, evidence: 62, gate5: 62, guard: 82, lifecycle: 54, routing: 196, schema: 50, scope: 67, telemetry: 95, trace: 73, wiring: 77 };
+  const onDisk = readdirSync(join(__dirname, "lib")).filter((f) => f.endsWith(".mjs")).map((f) => f.replace(".mjs", ""));
+  for (const n of onDisk) if (!(n in kernels)) throw new Error(`kernel/scripts/lib/${n}.mjs is not run by --self-check — add it to the list and give it a selfCheck`);
+  for (const [name, mod] of Object.entries(kernels)) {
+    if (typeof mod.selfCheck !== "function") throw new Error(`kernel module ${name} exports no selfCheck — its asserts are unchecked`);
+    const before = assertCount;
+    await mod.selfCheck({ assert });
+    const ran = assertCount - before;
+    if (ran < (SC_MIN[name] ?? 1))
+      throw new Error(`kernel module ${name}'s selfCheck ran ${ran} assertions, below its floor ${SC_MIN[name]} — a block of asserts was deleted; lower SC_MIN only with a reason`);
+  }
+
+  // Integration asserts live here, not in a leaf module: this one spawns the CLI against itself.
+  {
+    const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--task", "sprint-9/khong-co-that", "--quiet"],
+      { cwd: REPO_ROOT, encoding: "utf8" });
+    assert.equal(r.status, 2, "--task on a nonexistent folder must exit 2, never pass");
+    assert.ok(/no task folder matching/.test(r.stderr), "and it must say why");
+  }
+
+  // Backstop over all modules (1024 on macOS). Stated ceiling: this catches a block or a whole module
+  // being dropped, NOT a small block deleted inside one module — SC_MIN above is that one.
+  const SC_FLOOR = Number(process.env.SPEC_HARNESS_SC_FLOOR ?? 920);
+  if (assertCount < SC_FLOOR)
+    throw new Error(`self-check ran only ${assertCount} assertions (floor ${SC_FLOOR}) — a block or a whole module was dropped; raise SPEC_HARNESS_SC_FLOOR only with a reason`);
+
+  console.log("✅ validate-tasks self-check passed");
+  process.exit(0);
 }
 
 if (args.has("--key-migrate")) {
