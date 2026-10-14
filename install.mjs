@@ -551,7 +551,18 @@ function installInto(P, clis = [], coOwner = null) {
   for (const f of KERNEL_SCRIPTS) over(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   // #118: validate-tasks.mjs is a thin CLI over scripts/lib/*.mjs; missing one is a runtime
   // import error, not a degraded feature.
+  mkdirSync(join(P, "scripts/lib"), { recursive: true });
   for (const f of KERNEL_LIB()) over(f, join(P, "scripts/lib", f.split("/").pop()));
+  // #118: a module this version no longer ships must not survive an upgrade. scripts/lib is
+  // kernel-owned (always overwritten), and the upgraded project's --self-check refuses any lib file
+  // it does not have in its own list — so a leftover from an older kernel turns a clean upgrade red.
+  {
+    const shipped = new Set(KERNEL_LIB().map((f) => f.split("/").pop()));
+    for (const f of readdirSync(join(P, "scripts/lib")).filter((x) => x.endsWith(".mjs") && !shipped.has(x))) {
+      rmSync(join(P, "scripts/lib", f));
+      clobbered.push(`scripts/lib/${f} (module an older kernel shipped and this one does not — removed)`);
+    }
+  }
   for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md")))
     cpSync(join(SRC, "agents", f), join(P, ".claude/agents", f));
   over(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
@@ -2732,6 +2743,20 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const shipped = readdirSync(join(P, "scripts/lib")).sort().join(",");
     const source = KERNEL_LIB().map((f) => f.split("/").pop()).sort().join(",");
     if (shipped !== source) fail(`#118: scripts/lib ghi ${shipped} nhưng kernel có ${source}`);
+    rmSync(root, { recursive: true, force: true });
+  }
+
+  // #118 upgrade: re-installing over an older kernel must clear modules that version shipped and this
+  // one does not. Without this, the upgraded project's --self-check fails on a file it never wrote.
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-stale-"));
+    const { P } = buildBase(root);
+    writeFileSync(join(P, "scripts/lib/zz-removed-in-018.mjs"), "export const gone = 1;\n");
+    const re = spawnSync(process.execPath, [fileURLToPath(import.meta.url), P, "--yes"], { encoding: "utf8" });
+    if (re.status !== 0) fail("#118 upgrade: cài lại đè lên bản cũ phải xanh", re.stdout + re.stderr);
+    if (existsSync(join(P, "scripts/lib/zz-removed-in-018.mjs"))) fail("#118 upgrade: module cũ còn sót lại trong scripts/lib — self-check của project sau nâng cấp sẽ đỏ");
+    const sc = spawnSync(process.execPath, ["scripts/validate-tasks.mjs", "--self-check"], { cwd: P, encoding: "utf8" });
+    if (sc.status !== 0) fail("#118 upgrade: self-check đỏ sau khi nâng cấp", sc.stdout + sc.stderr);
     rmSync(root, { recursive: true, force: true });
   }
 
