@@ -29,7 +29,7 @@ Lỗ hổng: báo riêng cho chủ repo, đừng mở issue công khai. Không c
 
 Những dòng ở cột "chưa" không phải là đã hỏng — là **chưa ai đo**. Đừng đọc im lặng thành bảo đảm.
 
-Từng capability (guard hook, role file, Gate 5 chạy tiến trình riêng) hiện ở dạng bảng, mặc định `UNVERIFIED` khi chưa có lần chạy thật ghi trên đĩa:
+Từng capability trong **8 control** (nạp role, chặn lệnh nguy hiểm, scope write, dispatch role, gate failure, resume sau lỗi, adversary độc lập, MCP) hiện ở dạng bảng, **mặc định `UNVERIFIED`** khi chưa có bằng chứng. Bốn mức, không mức nào tên PASS: `verified` (chạy CLI thật, ghi trên đĩa) · `sim` (self-test chạy đúng đường code với payload tổng hợp) · `mech` (đã cài, chưa từng chạy qua) · `UNVERIFIED`. Hiện **không ô nào `verified`**: hai lần chạy thật đã có không khớp câu bằng chứng của ô nào, nên được in thành ghi chú chứ không thành ô xanh.
 
 ```bash
 node scripts/validate-tasks.mjs --capabilities

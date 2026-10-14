@@ -7,7 +7,7 @@ Bản đồ cho người thứ hai đọc code, không phải tổng quan market
 | `kernel/scripts/validate-tasks.mjs` | CLI: dispatch lệnh, các lệnh (`--advance`, `--preflight`, `--pack`, …), validator chính, self-check tổng | ~1.8k dòng |
 | `kernel/scripts/lib/*.mjs` | logic thuần, tách theo domain (#118) — mỗi module có `selfCheck({ assert })` riêng | ~4.6k dòng |
 | `kernel/scripts/capabilities.mjs` | dữ liệu ma trận capability (#139), không import gì, để `install.mjs --self-test` import được | 46 dòng |
-| `install.mjs` | cài đặt + `--eval`/`--bench`/`--self-test` (sandbox hoá toàn bộ pipeline để test không cần agent thật) | ~3.1k dòng |
+| `install.mjs` | cài đặt + `--eval`/`--bench`/`--self-test` (sandbox hoá toàn bộ pipeline để test không cần agent thật) | ~3.2k dòng |
 
 Vì sao tách (thay cho quyết định hoãn ở #118): logic và self-check của nó đi cùng nhau vào từng module, nên đọc một domain không phải cuộn qua 6k dòng của domain khác, mà vẫn giữ được tính chất "assert nằm ngay cạnh hàm" — thứ lý do ban đầu để không tách. `--self-check` gọi `selfCheck()` của từng module theo đúng thứ tự cũ, nên exit code và output không đổi.
 
@@ -39,7 +39,7 @@ Quy ước import: module chỉ import từ module ở tầng trên nó. Tên ch
 5. **`--run-adversary`** (#131) — Gate 5 ở tiến trình mới.
 6. **`--bootstrap` / `--triage`** — stage 1 không cần subagent.
 7. **`--preflight`** — mọi cảnh báo trạng thái cài đặt (guard, CODEOWNERS #133, isolation #126, key #125, branch protection #119) nằm ở đây, cộng dồn, không dừng ở lỗi đầu tiên.
-8. **`--capabilities`** (#139) — ma trận per-CLI (guard hook, role file, Gate 5 tiến trình riêng), mặc định `UNVERIFIED`; chỉ một lần chạy thật trên đĩa mới đổi được thành `verified`. Installer self-test khoá phần bằng chứng (file phải tồn tại) và chỉ matrix không được tự nhận `verified` khi mới có file cài.
+8. **`--capabilities`** (#139, #150) — ma trận per-CLI × 8 control, 4 mức: `verified` (chạy CLI thật, ghi trên đĩa) / `sim` (self-test chạy đúng đường code với payload tổng hợp) / `mech` (đã cài, chưa chạy qua) / `UNVERIFIED` (mặc định, không phải PASS). Dữ liệu + hàm thuần nằm ở `kernel/scripts/capabilities.mjs`; `CAP_RUNS` hiện rỗng vì chưa lần chạy nào khớp `CAP_PROOF` — hai lần chạy thật được in thành `CAP_INDIRECT`. Installer self-test khoá: file bằng chứng phải tồn tại, không cell nào tự nhận `verified` khi chỉ có file cài.
 9. **Validator chính** (cuối file) — duyệt mọi task folder, gọi các `xDefects`, in hoặc trả JSON.
 
 ## Ranh giới của attestation (đọc trước khi tin Gate 4)
