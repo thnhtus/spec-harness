@@ -1755,7 +1755,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     if (vendorLeaks("<!-- example -->\n```json\ngpt-5\n```\ngpt-5", t).join() !== "5") fail("vendorLeaks: fence <!-- example --> phải miễn, dòng sau fence thì không");
     if (vendorLeaks("```json\ngpt-5\n```", t).join() !== "2") fail("vendorLeaks: fence không có marker không được miễn");
     // The validator ships alone and cannot import CLIS; the two lists must not drift.
-    const vs = read(join(SRC, "kernel/scripts/validate-tasks.mjs"));
+    const vs = readKernel();
     const vc = JSON.parse(/export const CLI_NAMES = (\[[\s\S]*?\]);/.exec(vs)[1].replace(/\s+/g, " "));
     if (vc.join() !== CLIS.join()) fail(`validate-tasks CLI_NAMES lệch install.mjs CLIS: [${vc}] vs [${CLIS}]`);
   }
@@ -2710,6 +2710,29 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const readme = read(join(SRC, "README.md"));
     for (const f of ["--run-adversary", "--key-migrate", "--codeowners", "--writeback", "--report", "--eval-check", "--preflight", "--accept-over-budget", "--statuses", "--capabilities"])
       if (!readme.includes(f)) fail(`README thiếu ${f} — tính năng đã ship mà người dùng không tìm thấy`);
+  }
+
+  // #118: the kernel is a CLI plus scripts/lib/*.mjs. A module the CLI imports but the tarball (or
+  // an upgrade) forgot to ship fails at RUN time, on the user's machine — so walk the installed
+  // copy's relative imports and assert every target exists. This is the compatibility test for the
+  // split layout: an installer that ships the new validate-tasks.mjs without lib/ is caught here.
+  {
+    const root = mkdtempSync(join(tmpdir(), "sh-lib-"));
+    const { P } = buildBase(root);
+    const files = [join(P, "scripts/validate-tasks.mjs"), ...readdirSync(join(P, "scripts/lib")).map((f) => join(P, "scripts/lib", f))];
+    if (files.length < 3) fail("#118: bản cài không có scripts/lib/ — kernel đã tách module, thiếu thư mục này là lỗi import lúc chạy");
+    for (const f of files) {
+      const src = read(f);
+      for (const m of src.matchAll(/from "\.\/((?:lib\/)?[\w-]+\.mjs)"/g))
+        if (!existsSync(join(dirname(f), m[1]))) fail(`#118: ${f.slice(P.length + 1)} import "./${m[1]}" nhưng file không tồn tại trong bản cài`);
+      const r = spawnSync(process.execPath, ["--check", f], { encoding: "utf8" });
+      if (r.status !== 0) fail(`#118: ${f.slice(P.length + 1)} không parse được`, r.stderr);
+    }
+    // …and the module list is not allowed to drift from the source tree either.
+    const shipped = readdirSync(join(P, "scripts/lib")).sort().join(",");
+    const source = KERNEL_LIB().map((f) => f.split("/").pop()).sort().join(",");
+    if (shipped !== source) fail(`#118: scripts/lib ghi ${shipped} nhưng kernel có ${source}`);
+    rmSync(root, { recursive: true, force: true });
   }
 
   // #139: the capability matrix renders, defaults to UNVERIFIED, and every "verified" cell names a

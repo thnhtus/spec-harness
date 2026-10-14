@@ -1,8 +1,8 @@
 // config.mjs — harness.config.json: load + derived constants (#118 split).
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname, resolve, parse as parsePath } from "node:path";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, parse as parsePath, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
 const HERE = dirname(fileURLToPath(import.meta.url));
 const argv = process.argv.slice(2);
 
@@ -19,7 +19,7 @@ export const CONFIG_PATH =
 // the session. validate-tasks.mjs does the exit check right after those two, with the same message.
 export const CONFIG_FOUND = !!CONFIG_PATH;
 
-export let CFG = null;
+export let CFG = {};
 if (CONFIG_PATH) {
   try {
     CFG = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
@@ -28,9 +28,9 @@ if (CONFIG_PATH) {
     process.exit(2);
   }
 }
-// Every constant below is derived from the config; with no config they take the shipped defaults,
-// which is what the guard path sees (it reads none of them).
-const C = CFG ?? {};
+// Every constant below is derived from the config; with no config CFG is an empty object, so the
+// shipped defaults apply — that is the state the guard path sees, and it reads none of them.
+const C = CFG;
 
 
 
@@ -147,3 +147,90 @@ export const needStampSince = (who) => {
   console.error(`✖ ${who}: config.stampSince (YYYY-MM-DD) is required — tasks created from that date must have every telemetry window witnessed in _stamp.log`);
   process.exit(2);
 };
+// ── self-check: moved here with the logic it tests ──────────────────
+export async function selfCheck({ assert }) {
+  const { handoffBlockCount } = await import("./docs.mjs");
+  const { trackerConfigError } = await import("./wiring.mjs");
+  {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const d = mkdtempSync(join(tmpdir(), "sh-rb-"));
+    assert.equal(handoffBlockCount(d, "nope"), 0, "no file = never ran");
+    writeFileSync(join(d, "r.md"), "### a\nx\n### b\ny\n### c\nz\n");
+    assert.equal(handoffBlockCount(d, "r"), 3, "counts append-only blocks");
+    rmSync(d, { recursive: true, force: true });
+  }
+  // Without a real acTrace.since the default is "9999-12-31", so every AC
+  // failure degrades to a warning and pre-commit (--no-warn) blocks nothing.
+  // That is the silent no-op this whole self-check exists to prevent.
+  assert.ok(
+    AC_TRACE.since && !Number.isNaN(Date.parse(AC_TRACE.since)),
+    'config.acTrace.since is required (YYYY-MM-DD, the day you switched the harness on) — without it every AC error degrades to a warning and the gate no-ops',
+  );
+  assert.ok(
+    CFG.layers?.length,
+    'config.layers is required (e.g. ["frontend"]) — without it any layer value passes',
+  );
+  // evidenceMode has no safe default. "legacy" accepts hand-pasted evidence, so
+  // an agent that ran nothing still clears Gate 4 by typing `Tests: 12 passed`.
+  // Inheriting that from an unset field is how the product's whole claim fails
+  // silently — so the field is required, and choosing legacy has to be a choice
+  // someone typed.
+  // Prose language is a project choice, not a kernel constant. Welding it in is
+  // the same bug as naming the roles fe-*: an English-speaking team installs
+  // this and gets told to write task docs in Vietnamese.
+  assert.ok(
+    typeof CFG.docLanguage === "string" && CFG.docLanguage.trim(),
+    'config.docLanguage is required (e.g. "English", "Tiếng Việt") — the kernel does not pick a prose language for you',
+  );
+  assert.ok(
+    ["attested", "legacy"].includes(CFG.evidenceMode),
+    `config.evidenceMode must be "attested" or "legacy" (got ${JSON.stringify(CFG.evidenceMode)}) — there is no default: "legacy" lets Gate 4 accept evidence no process ever produced`,
+  );
+  // (predicate defined at module scope; see trackerConfigError)
+  // Tracker write-back. The PM does not read task.agent.json, they read the
+  // board -- so a task that reaches `reviewing` while the ticket sits untouched
+  // means two sources of truth disagree from week one.
+  //
+  // The kernel does NOT call a vendor API. ClickUp, Jira and Linear share no
+  // status model and no auth, and a client here would be untestable code that
+  // only the maintainer's tracker exercises. The coordinator asks the `tracker`
+  // MCP server instead: whatever the team already authenticated is what writes.
+  //
+  // Default `off`, because a harness that silently mutates a ticket on first
+  // install is worse than one that does nothing.
+  // Checked through the exported predicate, not inline against CFG: an inline
+  // assert can only ever see the config this repo happens to ship, so it proves
+  // nothing about the config a project will write, and deleting it leaves no
+  // trace. The predicate can be fed junk.
+  for (const [tracker, want] of [
+    [undefined, null],
+    [{}, null],
+    [{ writeBack: "off" }, null],
+    [{ writeBack: "comment" }, null],
+    [{ writeBack: "status", statusOnReview: "Ready for QC" }, null],
+    [{ writeBack: "yes-please" }, /must be "off", "comment" or "status"/],
+    [{ writeBack: "Status" }, /must be "off"/],            // enum is case-sensitive
+    [{ writeBack: true }, /must be "off"/],
+    // Enabled and pointed at nothing: reads as on in review, moves no ticket.
+    // This is the exact failure this file exists to prevent, so it is the one
+    // case worth spelling out three ways.
+    [{ writeBack: "status" }, /needs tracker.statusOnReview/],
+    [{ writeBack: "status", statusOnReview: "" }, /needs tracker.statusOnReview/],
+    [{ writeBack: "status", statusOnReview: "   " }, /needs tracker.statusOnReview/],
+  ]) {
+    const got = trackerConfigError(tracker);
+    if (want === null) assert.equal(got, null, `tracker ${JSON.stringify(tracker)} should be accepted, got: ${got}`);
+    else assert.ok(got && want.test(got), `tracker ${JSON.stringify(tracker)} should be rejected by ${want}, got: ${got}`);
+  }
+  assert.equal(trackerConfigError(CFG.tracker), null, `this repo's own tracker config is invalid: ${trackerConfigError(CFG.tracker)}`);
+
+  // repos: where the CODE lives, relative to the config root. One entry with
+  // path "." means harness and code share a repo; several entries mean the
+  // harness sits above them (workspace layout) and task docs are NOT inside
+  // the repo being edited — which changes how worktrees work (Agents.md §0).
+  // models: tier -> whatever the host CLI calls it. The kernel never names a
+  // vendor model; a Codex/Gemini user maps the same three tiers to their own.
+  // Empty object is legal: it means "let the harness use its default".
+}
+

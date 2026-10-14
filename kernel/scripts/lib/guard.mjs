@@ -1,8 +1,8 @@
 // guard.mjs — the deny-list guard and role sandbox (#118 split).
 // No config import on purpose: --guard runs BEFORE config load, so a missing harness.config.json
 // must not stop a hook from answering.
-import { resolve, relative, isAbsolute, join, dirname, sep } from "node:path";
-
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { denyGaps } from "./wiring.mjs";
 // Declared here, not next to denyGaps(): --guard below runs BEFORE config load.
 // `git push` is deliberately NOT in REQUIRED_DENY: it is the last step of a task,
 // not an accident. It is REQUIRED_ASK: pause, show the command, run it on the
@@ -323,6 +323,8 @@ export function roleBashTargets(cmd, cwd, home = process.env.HOME ?? "/") {
 
 // ── self-check: moved here with the logic it tests ──────────────────
 export async function selfCheck({ assert }) {
+  const { strayTaskFolders } = await import("./lifecycle.mjs");
+  const { ruleFloor } = await import("./wiring.mjs");
   {
     const cfgAt = (d) => (d === "/h" ? { tasksDir: "docs/tasks" } : null);
     assert.equal(roleWriteVerdict("docs/tasks/sprint-1/A-1/09-Adversarial-Review.md", "/h", cfgAt), null, "09 inside tasksDir is allowed");
@@ -418,5 +420,13 @@ export async function selfCheck({ assert }) {
   }
 
   // ruleFloor: the cost half that does not need anyone to fill telemetry in.
+    // #143 guard: every row is a bypass that used to pass.
+    const D = ["Bash(git reset --hard:*)", "Bash(cat .env:*)", "Read(.env)"], G = (c) => guardVerdict("shell", c, D);
+    for (const c of ["GIT_X=1 git reset --hard", "(git reset --hard)", "$(git reset --hard)", "cat ./.env", "head -c 100 .env", "tail -n1 .env.local", "grep SECRET .env", "FOO=1 BAR=2 cat .env"])
+      assert.ok(G(c), `guard must block: ${c}`);
+    for (const c of ["git status", "cat README.md", "head -5 src/env.ts", "grep env README.md", "cat .envrc.md.txt".replace(".envrc", "notes")])
+      assert.equal(G(c), null, `guard must allow: ${c}`);
+    // The documented ceiling stays open — said out loud so nobody mistakes the fix for a sandbox.
+    for (const c of ["sh -c 'git reset --hard'", "git -C . reset --hard", "/usr/bin/git reset --hard"])
+      assert.equal(G(c), null, `documented ceiling, not a regression: ${c}`);
 }
-
