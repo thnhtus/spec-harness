@@ -102,3 +102,19 @@ git add kernel/eval/last-pass.json && git commit
 **Nguyên nhân:** CLI đó không nằm trong nhóm có role file riêng (claude/codex/cursor/gemini/qwen/droid); 7 role chạy trong một context, hoặc qua cơ chế subagent installer không thấy được (ví dụ pi extension).
 
 **Hành động:** không phải lỗi cần "sửa" — là giới hạn đã biết của CLI đó. Nếu task quan trọng, cân nhắc chạy Gate 5 trên CLI có role file riêng.
+
+## Evidence chạy trên code cũ (#137)
+
+**Triệu chứng:** `the evidence ran against a different tree (worktree <a>, now <b>) — the code changed after this command ran`.
+
+**Nguyên nhân:** `run-evidence.mjs` ghi `worktree:` = hash nội dung mọi file (staged, chưa stage, chưa track; trừ `tasksDir`). Sửa code sau khi chạy lệnh thì hash lệch. Commit lại đúng nội dung cũ thì không lệch.
+
+**Khôi phục:** chạy lại lệnh qua wrapper, không sửa tay dòng `worktree:` (hand-edit = gian lận chủ động, adversary đối chiếu `gitRev`):
+```bash
+node scripts/run-evidence.mjs --append docs/tasks/<sprint>/<task>/08-Test-Evidence.md -- <lệnh §7>
+node scripts/run-evidence.mjs --fingerprint        # in hash hiện tại để so tay
+```
+
+**Không kiểm khi:** biến `CI`/`GITHUB_ACTIONS` có (PR là merge-commit, cây khác máy dev), task đã qua `reviewing`, hoặc git không trả lời được (`worktree: unavailable`, không phải repo, shallow clone) — fail open, ghi trong `docs/advanced.md`.
+
+**Xác nhận:** `node scripts/validate-tasks.mjs` không còn lỗi `#137`.

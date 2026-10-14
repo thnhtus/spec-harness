@@ -57,7 +57,7 @@ Mỗi task đi qua 7 role theo thứ tự; giữa các role là một gate. Gate
 Hai điểm khác một bộ prompt có tổ chức:
 
 - **Gate 5 là đối kháng.** Adversary mặc định FAIL, tự chạy lại lệnh thay vì tin evidence, đọc `git diff` thật, và hỏi "đổi hằng số thì test có đỏ không".
-- **Evidence không giả được.** Evidence do `run-evidence.mjs` sinh và gắn hash với output; dán tay hay chép từ task khác đều lệch hash.
+- **Evidence khó giả.** Evidence do `run-evidence.mjs` sinh, gắn hash với output *và* với nội dung cây code lúc chạy: dán tay, chép từ task khác, hoặc sửa code sau khi chạy test đều bị chặn (trước khi push; không kiểm trong CI vì PR là merge-commit). Commit lại đúng nội dung cũ thì không bị tính là đổi. Giới hạn: agent cố tình tự gõ cả block vẫn qua được — đó là gian lận chủ động, `gitRev` + `durationMs` để adversary đối chiếu.
 
 Độ phức tạp (vector 8 chiều, validator tự tính lại) chỉ quyết định gate nặng hay nhẹ và dùng model nào — mức nào cũng đủ 5 gate. Task nhỏ thật sự thì đi đường tắt `quick-task` / `fix-bug`; ranh giới đó cũng do exit code quyết định.
 

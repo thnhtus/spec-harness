@@ -2869,6 +2869,8 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       ["validate-tasks.mjs --guard", "does not run \\`validate-tasks.mjs --guard"],
       ["no native role files installed — cannot verify Gate 5", "no native role files installed — cannot verify Gate 5"],
       ["budget.maxTokensPerTask", "budget.maxTokensPerTask"], ["--accept-over-budget", "--accept-over-budget"],
+      ["the evidence ran against a different tree", "the evidence ran against a different tree"],
+      ["run-evidence.mjs --append", "run-evidence.mjs"], ["--fingerprint", "--fingerprint"],
     ];
     // install.mjs's own eval-check messages are above this self-test block; the slice before
     // the marker excludes THIS pairs array so a mutated message can never satisfy itself.

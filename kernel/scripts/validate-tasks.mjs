@@ -1375,6 +1375,7 @@ function attestationsIn(text) {
       exitCode: Number(code),
       durationMs: Number(get("durationMs") ?? NaN),
       gitRev: get("gitRev"),
+      worktree: get("worktree"),
       startedAt: get("startedAt"),
       outputHash: get("outputHash"),
       body,
@@ -1383,8 +1384,41 @@ function attestationsIn(text) {
   return out;
 }
 
+// #137: the tree the evidence ran against, not just the commit it recorded.
+// `gitRev` is parsed but comparing commits is the wrong test: the normal flow is
+// to run the tests on a dirty tree and commit the same content afterwards, which
+// moves HEAD without changing a byte. The wrapper hashes file CONTENT for this
+// reason, and one implementation serves both sides — the validator asks through
+// `run-evidence.mjs --fingerprint` rather than keeping a second copy to drift.
+// Cached per cwd: one child process per repo, not one per attestation.
+const _fpCache = new Map();
+function currentWorktreeFingerprint(cwd) {
+  if (_fpCache.has(cwd)) return _fpCache.get(cwd);
+  const r = spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "run-evidence.mjs"), "--fingerprint"],
+    { cwd, encoding: "utf8", timeout: 20000 });
+  // null = git could not answer (no repo, shallow clone, run-evidence missing).
+  // Callers fail OPEN on null, like the _stamp.log signatures: an unverifiable
+  // tree is not a stale one, and a gate that reds every task on a repo without
+  // git is a gate people switch off.
+  const v = r.status === 0 ? (r.stdout ?? "").trim() : "";
+  const fp = v && v !== "unavailable" ? v : null;
+  _fpCache.set(cwd, fp);
+  return fp;
+}
+
+// Where the stale-tree check applies. NOT in CI: a PR is checked out as a merge
+// with the base branch, so its tree legitimately differs from the one the dev ran
+// the tests on. And not for a task past `reviewing`: its evidence describes the
+// repo of the day it shipped, and the repo has moved on since — checking it would
+// turn every merged task red forever. The dev machine, before the push, is where
+// "I changed code after the tests" can still be acted on.
+function treeCtx(status) {
+  if (process.env.CI || process.env.GITHUB_ACTIONS || status !== "reviewing") return {};
+  return { current: currentWorktreeFingerprint(REPO_ROOT) };
+}
+
 // Returns the list of defects. Empty = the attestation says nothing wrong.
-function attestationDefects(text, label, mode = EVIDENCE_MODE) {
+function attestationDefects(text, label, mode = EVIDENCE_MODE, ctx = {}) {
   const found = attestationsIn(text);
   if (!found.length) {
     if (mode !== "attested") return [];
@@ -1411,6 +1445,16 @@ function attestationDefects(text, label, mode = EVIDENCE_MODE) {
       else if (hashOutput(a.body) !== a.outputHash)
         d.push(`${label}: outputHash does not match the output in the fence — the output was edited after the run, or the attestation was copied from elsewhere`);
     }
+    // #137: the code the evidence ran against. outputHash binds the block to its
+    // own output; nothing bound it to the tree being shipped, so running the
+    // tests before the last edit passed both gates. A block with no `worktree`
+    // field predates this check (or was hand-typed): only the newer rules block,
+    // so in-flight evidence written before the kernel upgrade stays a warning.
+    if (!a.worktree) {
+      if (ctx.requireWorktree) d.push(`${label}: the attestation records no worktree fingerprint — re-run it through \`node scripts/run-evidence.mjs\` so it witnesses the code it tested (#137)`);
+    } else if (ctx.current !== null && ctx.current !== undefined && a.worktree !== "unavailable" && a.worktree !== ctx.current) {
+      d.push(`${label}: the evidence ran against a different tree (worktree ${a.worktree}, now ${ctx.current}) — the code changed after this command ran; re-run it through \`node scripts/run-evidence.mjs\` (#137)`);
+    }
   }
   return d;
 }
@@ -1422,12 +1466,12 @@ function attestationDefects(text, label, mode = EVIDENCE_MODE) {
 // back on, so hand-pasted output would be the whole proof. The LAST attestation
 // must be green -- the repro run before the fix is red on purpose (known-failure),
 // but a file ending red means the fix never went green.
-export function liteDefects(text) {
+export function liteDefects(text, ctx = {}) {
   if (!/^##\s+Evidence\b/m.test(text)) return ["no `## Evidence` section"];
   const found = attestationsIn(text);
   if (!found.length)
     return ["no run-evidence attestation — run the ProjectRules §7 commands through `node scripts/run-evidence.mjs --append <this file> -- <command>`"];
-  const d = attestationDefects(text, "evidence");
+  const d = attestationDefects(text, "evidence", EVIDENCE_MODE, ctx);
   if (found.at(-1).exitCode !== 0) d.push(`the last attestation exits ${found.at(-1).exitCode} — the fix never went green`);
   return [...new Set(d)];
 }
@@ -2866,11 +2910,42 @@ if (args.has("--self-check")) {
   {
     // Build the block exactly as run-evidence.mjs does, outputHash included —
     // otherwise every case below only tests "hash missing" and nothing else.
-    const att = (code, dur = 12, at = "2026-09-18T09:00:00Z", out = "Tests: 12 passed") => {
+    const att = (code, dur = 12, at = "2026-09-18T09:00:00Z", out = "Tests: 12 passed", wt = "beef1234beef1234") => {
       const body = `$ ${sample}\n${out}`;
       return ["```", body, ATTEST_MARK, `exitCode: ${code}`, `durationMs: ${dur}`,
-              "gitRev: a3f9c1e", `startedAt: ${at}`, `outputHash: ${hashOutput(body)}`, "```"].join("\n");
+              "gitRev: a3f9c1e", ...(wt ? [`worktree: ${wt}`] : []), `startedAt: ${at}`, `outputHash: ${hashOutput(body)}`, "```"].join("\n");
     };
+
+    // #137: evidence that ran against a DIFFERENT tree than the one being shipped.
+    // Every other fake above is caught by a field inside the block; this one is
+    // only visible by comparing the block to the repo, and before this check the
+    // whole flow "run the tests → keep editing → ship" was green. gitRev was
+    // parsed and never compared, so it caught nothing.
+    assert.deepEqual(attestationDefects(att(0), "08", "attested", { current: "beef1234beef1234" }), [],
+      "evidence whose worktree matches the tree on disk is clean");
+    assert.ok(
+      attestationDefects(att(0), "08", "attested", { current: "0000ffff0000ffff" })
+        .some((d) => /ran against a different tree/.test(d)),
+      "code edited after the command ran must be caught — this is the one fake outputHash cannot see",
+    );
+    // Fail open, never fail closed, when the tree cannot be fingerprinted: no git,
+    // shallow clone, a repo that is not one. A gate that reds every such task is
+    // a gate that gets switched off, and an unverifiable tree is not a stale one.
+    assert.deepEqual(attestationDefects(att(0), "08", "attested", { current: null }), [],
+      "no fingerprint available (no git / CI) → the check is skipped, not failed");
+    assert.deepEqual(attestationDefects(att(0), "08", "attested", {}), [],
+      "no context passed at all → skipped, so every other entry point keeps working");
+    assert.deepEqual(attestationDefects(att(0, 12, "2026-09-18T09:00:00Z", "Tests: 12 passed", "unavailable"), "08", "attested", { current: "beef1234beef1234" }), [],
+      'a block whose wrapper could not read git records "unavailable" — that is honest, not stale');
+    // A block from before this field existed stays a warning: an in-flight task
+    // must not go red purely from a kernel upgrade, same rule as evidenceMode.
+    assert.deepEqual(attestationDefects(att(0, 12, "2026-09-18T09:00:00Z", "Tests: 12 passed", null), "08", "attested", { current: "beef1234beef1234" }), [],
+      "an attestation predating #137 has no worktree field and is not failed for it");
+    assert.ok(
+      attestationDefects(att(0, 12, "2026-09-18T09:00:00Z", "Tests: 12 passed", null), "08", "attested", { current: "x", requireWorktree: true })
+        .some((d) => /no worktree fingerprint/.test(d)),
+      "once requireWorktree is on, a block with no witness is rejected",
+    );
 
     assert.deepEqual(attestationDefects(att(0), "08"), [], "an exit-0 attestation is clean");
 
@@ -4238,7 +4313,7 @@ if (args.has("--escape-outcome")) {
   if (result === "clean") {
     const dir = join(TASKS_DIR, "fixes");
     const file = existsSync(dir) && readdirSync(dir).find((f) => f.startsWith(`${taskId}-`) && f.endsWith(".md"));
-    const d = file ? liteDefects(readFileSync(join(dir, file), "utf8")) : [`no ${relative(REPO_ROOT, dir)}/${taskId}-<slug>.md`];
+    const d = file ? liteDefects(readFileSync(join(dir, file), "utf8"), treeCtx("reviewing")) : [`no ${relative(REPO_ROOT, dir)}/${taskId}-<slug>.md`];
     if (d.length) {
       console.error(`✖ --escape-outcome ${taskId} clean: the evidence does not pass --lite-check — ${d.join("; ")}`);
       process.exit(2);
@@ -4260,7 +4335,7 @@ if (args.has("--lite-check")) {
     console.error("✖ --lite-check needs an existing file: docs/tasks/fixes/<taskId>-<slug>.md");
     process.exit(2);
   }
-  const d = liteDefects(readFileSync(f, "utf8"));
+  const d = liteDefects(readFileSync(f, "utf8"), treeCtx("reviewing"));
   for (const x of d) console.error(`✖ ${f}: ${x}`);
   if (!d.length) console.log(`✔ ${f}: evidence attested, last run green`);
   process.exit(d.length ? 1 : 0);
@@ -4409,7 +4484,8 @@ export function stageContract(stage, { stages = STAGE_ORDER, roleStage = ROLE_ST
       R.push(`- ${q}${r.doc}${q}: every declared AC id in a table row${r.cell === "first" ? ", as the row's FIRST cell" : ""} (error)`);
   if (stage === "implementation" && GATE4_ARTIFACTS.evidence)
     R.push(`- ${q}${GATE4_ARTIFACTS.evidence}${q}: output pasted inside a ${q.repeat(3)} fence, a command matching /${EVIDENCE_RE.source}/ and a result (passed / exit 0 / n/n tests); a failure line needs ${q}<!-- known-failure: why -->${q} above the fence (error)`,
-      `- evidenceMode="${EVIDENCE_MODE}": ${EVIDENCE_MODE === "attested" ? "every command run through" : "an attestation block, when present, must come from"} ${q}node scripts/run-evidence.mjs -- <cmd>${q} — exitCode 0, durationMs > 0, outputHash matching the fence (error)`);
+      `- evidenceMode="${EVIDENCE_MODE}": ${EVIDENCE_MODE === "attested" ? "every command run through" : "an attestation block, when present, must come from"} ${q}node scripts/run-evidence.mjs -- <cmd>${q} — exitCode 0, durationMs > 0, outputHash matching the fence (error)`,
+      `- #137: that block's ${q}worktree${q} must still match the tree you are shipping (error, before the push). If you edited code after the command ran, re-run it — a green run under old code proves nothing about new code. Committing identical content does NOT invalidate it: the witness is file content, not the commit.`);
   if (stage === "adversarial_review" && GATE4_ARTIFACTS.adversarial)
     R.push(`- ${q}${GATE4_ARTIFACTS.adversarial}${q}: a verdict PASS / FAIL / UNCERTAIN, and your own fenced run under the same rules as 08 — not byte-identical to 08, an attestation starting after 08's newest (error)`,
       `- a "Static layer" table, one row per command: ${q}| ${q}<cmd>${q} | <what 08 claimed> | <what you got> | ✔/✖ |${q} — the third column is the gate (error if empty)`,
@@ -6221,7 +6297,7 @@ for (const { sprint, task, path } of folders) {
     else if (!hasRealEvidence(ev))
       errors.push(`${evName} has no real command+result evidence (Gate 4 honesty)`);
     if (existsSync(ev))
-      for (const d of attestationDefects(readFileSync(ev, "utf8"), evName)) errors.push(d);
+      for (const d of attestationDefects(readFileSync(ev, "utf8"), evName, EVIDENCE_MODE, treeCtx(data.status))) errors.push(d);
     if (GATE4_ARTIFACTS.notes && !existsSync(join(path, GATE4_ARTIFACTS.notes)))
       warnings.push(`status=${data.status} but ${GATE4_ARTIFACTS.notes} missing`);
     // Gate 5: reviewing means the adversary passed it, so its review must exist.
@@ -6237,7 +6313,7 @@ for (const { sprint, task, path } of folders) {
           errors.push(`${GATE4_ARTIFACTS.adversarial}: ${d}`);
         // Gate 5 RE-RUNS the commands, so it must be attested too — otherwise the
         // adversary can still invent its own output and both gates go blind.
-        for (const d of attestationDefects(advText, GATE4_ARTIFACTS.adversarial)) errors.push(d);
+        for (const d of attestationDefects(advText, GATE4_ARTIFACTS.adversarial, EVIDENCE_MODE, treeCtx(data.status))) errors.push(d);
       }
     }
   }
