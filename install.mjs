@@ -119,6 +119,10 @@ function installHook(P) {
 // Những file kernel SẼ đè, tính trước khi ghi một byte nào — để hỏi user trước
 // chứ không báo sau. Trùng logic với over() bên dưới, nên self-test khoá hai
 // bên phải ra cùng kết quả (drift là im lặng và chỉ lộ ra khi đã đè mất file).
+// #139: capabilities.mjs is a kernel script like the rest — a second list is how one installs
+// while the other silently skips it, and the import only fails at run time.
+const KERNEL_SCRIPTS = ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs", "capabilities.mjs"];
+
 function wouldClobber(P) {
   const out = [];
   const chk = (src, dst) => {
@@ -126,8 +130,7 @@ function wouldClobber(P) {
   };
   for (const f of readdirSync(join(SRC, "kernel/docs"), { withFileTypes: true }))
     if (f.isFile()) chk(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
-  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs"])
-    chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
+  for (const f of KERNEL_SCRIPTS) chk(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   chk(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
   chk(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
@@ -536,8 +539,7 @@ function installInto(P, clis = [], coOwner = null) {
     if (f.isFile()) over(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name));
     else cpSync(join(SRC, "kernel/docs", f.name), join(P, "docs", f.name), { recursive: true });
   }
-  for (const f of ["validate-tasks.mjs", "lease.mjs", "run-evidence.mjs", "collect-telemetry.mjs"])
-    over(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
+  for (const f of KERNEL_SCRIPTS) over(join(SRC, "kernel/scripts", f), join(P, "scripts", f));
   for (const f of readdirSync(join(SRC, "agents")).filter((n) => n.endsWith(".md")))
     cpSync(join(SRC, "agents", f), join(P, ".claude/agents", f));
   over(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
@@ -2694,8 +2696,28 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
   // an undocumented feature (found: five #129-#135 flags shipped in 0.16.0 with no README mention).
   {
     const readme = read(join(SRC, "README.md"));
-    for (const f of ["--run-adversary", "--key-migrate", "--codeowners", "--writeback", "--report", "--eval-check", "--preflight", "--accept-over-budget", "--statuses"])
+    for (const f of ["--run-adversary", "--key-migrate", "--codeowners", "--writeback", "--report", "--eval-check", "--preflight", "--accept-over-budget", "--statuses", "--capabilities"])
       if (!readme.includes(f)) fail(`README thiếu ${f} — tính năng đã ship mà người dùng không tìm thấy`);
+  }
+
+  // #139: the capability matrix renders, defaults to UNVERIFIED, and every "verified" cell names a
+  // file that exists in this tree — evidence pointing at nothing is how a matrix starts lying.
+  {
+    const { capabilityRows, renderCapabilityMatrix, CAP_RUNS, CAPABILITIES, CAP_PROOF } = await import(join(SRC, "kernel/scripts/capabilities.mjs"));
+    const rows = capabilityRows(CLIS, {});
+    if (rows.length !== CLIS.length) fail("capability matrix: không đủ một dòng cho mỗi CLI");
+    const md = renderCapabilityMatrix(rows);
+    for (const c of CLIS) if (!md.includes(`| ${c} |`)) fail(`capability matrix: thiếu dòng cho ${c}`);
+    for (const [cli, caps] of Object.entries(CAP_RUNS)) for (const [cap, ev] of Object.entries(caps)) {
+      if (!CLIS.includes(cli)) fail(`capability matrix: evidence cho CLI lạ ${cli}`);
+      if (!CAPABILITIES.includes(cap)) fail(`capability matrix: capability lạ ${cap}`);
+      if (!existsSync(join(SRC, ev))) fail(`capability matrix: ${cli}/${cap} trỏ vào ${ev} — file không tồn tại, bằng chứng treo`);
+    }
+    for (const c of CAPABILITIES) if (!CAP_PROOF[c]) fail(`capability matrix: ${c} thiếu bằng chứng cần có`);
+    // No mechanism passed in → not one cell may read as verified (except the two with a recorded run).
+    const cb = CLIS.filter((c) => !CAP_RUNS[c]);
+    for (const r of capabilityRows(cb, Object.fromEntries(cb.map((c) => [c, { guard: true, roleFiles: true }]))))
+      for (const c of CAPABILITIES) if (r.cells[c].state === "verified") fail(`capability matrix: ${r.cli}/${c} tự nhận verified khi chỉ có file trên đĩa`);
   }
 
   // #135 tracker e2e (simulated): a fake coordinator drives --writeback against each vendor's

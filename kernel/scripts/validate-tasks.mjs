@@ -35,6 +35,10 @@ import { matchesGlob, join, dirname, relative, resolve, isAbsolute, parse as par
 import { fileURLToPath } from "node:url";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
+// #139 lives in its own side-effect-free module: install.mjs --self-test imports it, and importing
+// THIS file runs its main against the cwd's config, which a packed tarball does not have.
+export { CAPABILITIES, CAP_PROOF, CAP_RUNS, capState, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
+import { CAPABILITIES, CAP_PROOF, CAP_RUNS, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -108,11 +112,18 @@ const REQUIRED_DENY = [
 // Runs before config load on purpose: a hook that exits 2 because
 // harness.config.json is missing blocks EVERY shell command in the session.
 //
-// ponytail: prefix match per `&&`/`;`/`|` segment, same ceiling as Claude's
-// deny — `bash -c "git push"`, `git -C x push`, `python -c open('.env')` pass.
+// ponytail: prefix match per `&&`/`;`/`|` segment after guardNorm (#143: strips `VAR=x `,
+// `(`/`$(`, a leading `./`; any common reader of .env counts as `cat .env`). Same ceiling as
+// Claude's deny — `bash -c "git push"`, `git -C x push`, `python -c open('.env')` pass.
 // It stops accidents, not intent. Upgrade path: a real shell parser, if a
 // bypass ever shows up in telemetry.
 // ---------------------------------------------------------------------------
+// #143: what a shell would run, not what was typed. Drops leading `VAR=val ` assignments and
+// `(`/`{` groupers, and a `./` in front of an operand. Still no parser: `sh -c`, `git -C` stay open.
+export const guardNorm = (s) => s.trim().replace(/^(?:\$\()?[({\s`]*/, "").replace(/^(?:[A-Za-z_]\w*=\S*\s+)+/, "")
+  .replace(/\s+/g, " ").replace(/ \.\//g, " ").replace(/[)}]+$/, "").trim();
+// Readers other than `cat` that dump a file's content; a Bash(cat .env) rule means "read .env".
+const READERS = /^(?:cat|head|tail|less|more|tac|nl|od|xxd|strings|bat|sed|awk|grep|rg|cut|sort|uniq|base64)\b/;
 export function guardVerdict(kind, subject, deny) {
   const toRe = (glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
   for (const rule of deny) {
@@ -121,8 +132,12 @@ export function guardVerdict(kind, subject, deny) {
     if (kind === "shell" && m[1] === "Bash") {
       const prefix = m[2].replace(/:\*$/, "");
       const open = m[2].endsWith(":*");
-      for (const seg of String(subject).split(/&&|\|\||[;|\n]/).map((s) => s.trim().replace(/\s+/g, " ")))
+      for (const seg of String(subject).split(/&&|\|\||[;|\n]/).map(guardNorm))
         if (seg === prefix || (open && seg.startsWith(prefix + " "))) return rule;
+      // `cat .env` rule → any common reader whose operand is .env / .env.*  (#143)
+      const cat = /^cat (\S+)$/.exec(prefix);
+      if (cat && open) for (const seg of String(subject).split(/&&|\|\||[;|\n]/).map(guardNorm))
+        if (READERS.test(seg) && seg.split(" ").slice(1).some((a) => a === cat[1] || a.startsWith(cat[1] + "."))) return rule;
     }
     if (kind === "read" && m[1] === "Read") {
       const base = String(subject).split(/[\\/]/).pop();
@@ -2458,6 +2473,61 @@ if (args.has("--self-check")) {
     assert.match(isolationWarning("pi"), /cannot verify/, "wording must stay honest: pi may have extension subagents");
     assert.doesNotMatch(isolationWarning("pi"), /is not isolated/);
   }
+  // #140-#143: scope control and the guard, against the bypasses found by probing (4.3).
+  {
+    // #142 -z parsing: a space, a non-ASCII name and a rename must come back verbatim and unquoted.
+    assert.deepEqual(parsePorcelainZ("?? sp ace.js\0?? tên.js\0 M src/a.js\0R  new.js\0old.js\0"), ["sp ace.js", "tên.js", "src/a.js", "new.js"], "-z: no quotes, rename's old path dropped");
+    assert.deepEqual(parsePorcelainZ(""), [], "clean tree → nothing");
+    // #141 a source file under a nested docs/tasks/ is code, not a task artifact (when tasksRel is known).
+    assert.deepEqual(undeclaredFiles({ changed: ["src/docs/tasks/evil.js"], plan: "## Files to change\n| `src/a.js` | x |", tasksRel: "docs/tasks/" }), ["src/docs/tasks/evil.js"], "nested docs/tasks is not exempt once the real tasks dir is known");
+    // #143 guard: every row is a bypass that used to pass.
+    const D = ["Bash(git reset --hard:*)", "Bash(cat .env:*)", "Read(.env)"], G = (c) => guardVerdict("shell", c, D);
+    for (const c of ["GIT_X=1 git reset --hard", "(git reset --hard)", "$(git reset --hard)", "cat ./.env", "head -c 100 .env", "tail -n1 .env.local", "grep SECRET .env", "FOO=1 BAR=2 cat .env"])
+      assert.ok(G(c), `guard must block: ${c}`);
+    for (const c of ["git status", "cat README.md", "head -5 src/env.ts", "grep env README.md", "cat .envrc.md.txt".replace(".envrc", "notes")])
+      assert.equal(G(c), null, `guard must allow: ${c}`);
+    // The documented ceiling stays open — said out loud so nobody mistakes the fix for a sandbox.
+    for (const c of ["sh -c 'git reset --hard'", "git -C . reset --hard", "/usr/bin/git reset --hard"])
+      assert.equal(G(c), null, `documented ceiling, not a regression: ${c}`);
+    // #140/#141 content snapshots on a real repo: an already-dirty file edited again, and a gitignored file.
+    const { mkdtempSync: mk, writeFileSync: wf, mkdirSync: md, rmSync: rm } = await import("node:fs");
+    const { tmpdir: td } = await import("node:os");
+    const { execFileSync: ex } = await import("node:child_process");
+    const d = mk(join(td(), "scope-"));
+    const git = (...a) => ex("git", a, { cwd: d, stdio: "pipe" });
+    try {
+      git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t");
+      wf(join(d, ".gitignore"), "node_modules/\ngen/\n"); wf(join(d, "a.js"), "1\n");
+      git("add", "-A"); git("commit", "-qm", "base");
+      wf(join(d, "a.js"), "2\n");                       // dirty BEFORE the adversary ran
+      wf(join(d, "sp ace.js"), "x\n");
+      const before = contentSnapshot(d);
+      assert.ok("sp ace.js" in before, "a spaced name is tracked verbatim");
+      wf(join(d, "a.js"), "3\n");                       // already dirty, edited further
+      md(join(d, "gen")); wf(join(d, "gen/x.js"), "evil\n");            // ignored, not noise
+      md(join(d, "node_modules")); wf(join(d, "node_modules/y.js"), "dep\n"); // ignored, noise
+      const moved = changedSince(before, contentSnapshot(d));
+      assert.deepEqual(moved, ["a.js", "gen/x.js"], "dirty-edited-again and non-noise ignored files are seen; node_modules is not");
+      assert.deepEqual(changedSince(before, before), [], "nothing moved → silent");
+    } finally { rm(d, { recursive: true, force: true }); }
+  }
+  // #139: the matrix must default to UNVERIFIED and must never promote a mechanism to a run.
+  {
+    const R = capabilityRows(["claude", "pi", "aider"], { claude: { guard: true, roleFiles: true }, aider: { guard: true } });
+    const cell = (cli, c) => R.find((r) => r.cli === cli).cells[c];
+    assert.equal(cell("aider", "roleFiles").state, "UNVERIFIED", "an unwired control is UNVERIFIED, not absent");
+    assert.equal(cell("aider", "freshAdversary").state, "UNVERIFIED", "no adversary.cmd and no run → UNVERIFIED");
+    assert.equal(cell("aider", "guard").state, "mechanism-only", "a written hook is a mechanism, never a run");
+    assert.equal(cell("claude", "freshAdversary").state, "verified", "claude has a recorded adversary run");
+    assert.match(cell("claude", "freshAdversary").evidence, /\.json$/, "verified names the file that proves it");
+    assert.equal(cell("pi", "freshAdversary").state, "verified", "pi ran the full pipeline (multi-cli-e2e)");
+    assert.equal(R.length, 3, "one row per CLI, deduped");
+    assert.match(renderCapabilityMatrix(R), /^\| CLI \|/, "matrix renders as a table");
+    assert.deepEqual(Object.keys(CAP_PROOF).sort(), [...CAPABILITIES].sort(), "every capability documents the proof it needs");
+    const roleClis = Object.keys(ROLE_DIRS);
+    assert.ok(roleClis.every((c) => CLI_NAMES.includes(c)), "every CLI with a role dir is a known CLI name");
+    assert.ok(Object.keys(CAP_RUNS).every((c) => CLI_NAMES.includes(c)), "evidence is only recorded for known CLIs");
+  }
   {
     const yes = (c) => ["security", "secret-tool"].includes(c), no = () => false, A = (o) => keyStoreAdvice({ env: {}, keyFileExists: true, has: yes, ...o });
     assert.match(A({ platform: "darwin" }), /--key-migrate/);
@@ -4568,7 +4638,10 @@ export function undeclaredFiles({ changed = [], plan = "", notes = "", tasksRel 
   const allowed = scopeFiles(plan);
   const dev = notes.split(/^## /m).filter((x) => /^[\d.]*\s*Plan Deviations/i.test(x)).join("\n");
   return changed
-    .filter((p) => !(tasksRel && p.startsWith(tasksRel)) && !/(^|\/)docs\/tasks\//.test(p))
+    // tasksRel is the project's real tasks dir; the literal fallback keeps the self-check's
+    // no-arg cases working, but it must not exempt a source file that merely lives under
+    // some `docs/tasks/` of its own (#141 review: src/docs/tasks/evil.js was in scope-blind).
+    .filter((p) => (tasksRel ? !p.startsWith(tasksRel) : !/(^|\/)docs\/tasks\//.test(p)))
     .filter((p) => !allowed.some((a) => p === a || p.endsWith("/" + a) || (a.includes("*") && matchesGlob(p, a))))
     .filter((p) => !dev.includes(p))
     .sort();
@@ -4707,7 +4780,37 @@ export function sliceScopeViolations({ snap, changed, hash, allowed, skip = () =
 }
 function gitAt(cwd, ...a) { const r = spawnSync("git", a, { cwd, encoding: "utf8" }); return r.status === 0 ? r.stdout : null; }
 function fileHash(top) { return (p) => { try { return createHash("sha256").update(readFileSync(join(top, p))).digest("hex").slice(0, 16); } catch { return "-"; } }; }
-function dirtyPaths(cwd) { return (gitAt(cwd, "status", "--porcelain", "--untracked-files=all") ?? "").split("\n").filter(Boolean).map((l) => l.slice(3).split(" -> ").at(-1)); }
+// #142: `-z` = NUL-separated and never quoted; the line format quotes "sp ace.js" and non-ASCII
+// names, which then match no 03 row. A rename/copy entry carries the old path as an extra field.
+export function parsePorcelainZ(out = "") {
+  const f = out.split("\0"), r = [];
+  for (let i = 0; i < f.length; i++) {
+    if (f[i].length < 4) continue;
+    r.push(f[i].slice(3));
+    if (/[RC]/.test(f[i].slice(0, 2))) i++;
+  }
+  return r;
+}
+function dirtyPaths(cwd) { return parsePorcelainZ(gitAt(cwd, "status", "--porcelain", "-z", "--untracked-files=all") ?? ""); }
+// #141: gitignored files are invisible to status. Build/dep dirs are noise by definition; anything
+// else ignored (a generated src file, a stray script) is a place to hide a change.
+// ponytail: fixed noise list, not config; add config.scope.ignoredNoise when a project needs another.
+// A function, not a const regex: the self-check runs above this line and a const would be in TDZ.
+export function ignoredPaths(cwd) {
+  const noise = /(^|\/)(node_modules|dist|build|coverage|target|__pycache__|\.venv|\.next|\.cache|\.turbo|\.git)\/|(^|\/)\.DS_Store$|\.log$/;
+  return (gitAt(cwd, "ls-files", "-z", "--others", "--ignored", "--exclude-standard") ?? "").split("\0").filter((p) => p && !noise.test(p));
+}
+// #140: path → content hash for everything dirty or ignored. Membership alone cannot see a file that
+// was already dirty being edited further.
+export function contentSnapshot(cwd) {
+  const top = gitAt(cwd, "rev-parse", "--show-toplevel")?.trim();
+  if (!top) return {};
+  const h = fileHash(top);
+  return Object.fromEntries([...dirtyPaths(cwd), ...ignoredPaths(cwd)].map((p) => [p, h(p)]));
+}
+export function changedSince(before, after) {
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((p) => before[p] !== after[p]).sort();
+}
 export function sliceSnapshot(cwd) {
   const top = gitAt(cwd, "rev-parse", "--show-toplevel")?.trim(), head = gitAt(cwd, "rev-parse", "HEAD")?.trim();
   if (!top || !head) return null;
@@ -5017,12 +5120,12 @@ if (args.has("--run-adversary")) {
   if (!existsSync(join(dir, "task.agent.json"))) { console.error(`✖ --run-adversary: no task.agent.json in ${dir0}`); process.exit(2); }
   const nineP = join(dir, "09-Adversarial-Review.md"), before = existsSync(nineP) ? readFileSync(nineP, "utf8") : null;
   const repo0 = resolve(REPO_ROOT, (REPOS[0] ?? {}).path ?? ".");
-  const dirtyBefore = new Set(dirtyPaths(repo0));
+  const snapBefore = contentSnapshot(repo0);
   const t = Number(argv.includes("--timeout") ? argv[argv.indexOf("--timeout") + 1] : 1500) * 1000;
   console.log(`▶ Gate 5 in a fresh process: ${cmd}`);
   const r = spawnSync(cmd, { cwd: REPO_ROOT, shell: true, input: adversaryPrompt(task, packBase(dir)), encoding: "utf8", timeout: t, maxBuffer: 64 << 20, stdio: ["pipe", "inherit", "inherit"] });
   const tasksRel = relative(repo0, TASKS_DIR).split(sep).join("/") + "/";
-  const srcChanged = dirtyPaths(repo0).filter((p) => !dirtyBefore.has(p) && !p.startsWith(tasksRel));
+  const srcChanged = changedSince(snapBefore, contentSnapshot(repo0)).filter((p) => !p.startsWith(tasksRel));
   const v = adversaryRunVerdict({ status: r.status, timedOut: r.error?.code === "ETIMEDOUT", nineBefore: before, nineAfter: existsSync(nineP) ? readFileSync(nineP, "utf8") : null, srcChanged });
   if (v.exit) { console.error(`✖ --run-adversary: ${v.why}`); process.exit(1); }
   // The verdict itself is the validator's job, as for every other role: Gate 5 reads 09.
@@ -5080,7 +5183,7 @@ if (args.has("--advance")) {
     const top = gitAt(repo0, "rev-parse", "--show-toplevel")?.trim();
     const mb = top && gitAt(repo0, "merge-base", packBase(dir), "HEAD")?.trim();
     if (top && mb) {
-      const changed = [...new Set([...(gitAt(repo0, "diff", "--name-only", mb) ?? "").split("\n"), ...dirtyPaths(repo0)])].filter(Boolean);
+      const changed = [...new Set([...(gitAt(repo0, "diff", "--name-only", mb) ?? "").split("\n"), ...dirtyPaths(repo0), ...ignoredPaths(repo0)])].filter(Boolean);
       const rd0 = (f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : "");
       const bad = undeclaredFiles({ changed, plan: rd0("03-Technical-Plan.md"), notes: rd0("06-Implementation-Notes.md"), tasksRel: relative(top, TASKS_DIR).split(sep).join("/") + "/" });
       if (bad.length) { console.error(`✖ --advance adversarial_review: changed but in neither 03 "Files to change" nor 06 "Plan Deviations": ${bad.join(", ")}\n  add each to 03 or declare it in 06 (name the path), or revert it — the adversary is not dispatched (#115)`); process.exit(1); }
@@ -5241,6 +5344,30 @@ if (args.has("--triage")) {
   else console.log(`${r.verdict}  —  ${r.why}${force ? `\n(forced: ${force} — logged to ${join(CFG.tasksDir ?? "docs/tasks", "_triage.log")})` : ""}`);
   // 10, not 1: "run the harness" is a routing answer, not a validator failure.
   process.exit(force || r.verdict !== "harness" ? 0 : 10);
+}
+
+if (args.has("--capabilities")) {
+  // In an installed project the guard manifest is the honest source of what was written;
+  // --guard <cli> in the file is the same literal string preflight checks.
+  let manifest = {};
+  try { manifest = JSON.parse(readFileSync(join(REPO_ROOT, ".agents/spec-harness-guards.json"), "utf8")); } catch {}
+  // Same detection as --preflight: codex/cursor are installed outside the manifest.
+  const installed = [...new Set([...Object.keys(manifest),
+    ...["codex", "cursor"].filter((c) => existsSync(join(REPO_ROOT, `.${c}`))),
+    ...(existsSync(join(REPO_ROOT, ".claude/agents")) ? ["claude"] : [])])];
+  const mechanisms = Object.fromEntries(installed.map((c) => {
+    let armed = false; try { armed = !!manifest[c] && readFileSync(join(REPO_ROOT, manifest[c]), "utf8").includes(`--guard ${c}`); } catch {}
+    return [c, { guard: armed, roleFiles: !!(ROLE_DIRS[c] && existsSync(join(REPO_ROOT, ROLE_DIRS[c]))) }];
+  }));
+  const rows = capabilityRows(CLI_NAMES, mechanisms);
+  if (AS_JSON) { console.log(JSON.stringify({ rows, proof: CAP_PROOF }, null, 2)); process.exit(0); }
+  console.log(`\n── capability matrix (${installed.length} CLI installed of ${CLI_NAMES.length} known) ──`);
+  console.log(renderCapabilityMatrix(rows));
+  console.log(`\n  verified = a run on disk proves it; mechanism-only = the file is installed, the CLI was`);
+  console.log(`  never run against it; UNVERIFIED = nothing to go on. What each cell would need to be verified:`);
+  for (const c of CAPABILITIES) console.log(`    ${c.padEnd(16)} ${CAP_PROOF[c]}`);
+  console.log(`  Not installed here: ${CLI_NAMES.filter((c) => !installed.includes(c)).join(", ") || "—"} (UNVERIFIED, not broken).`);
+  process.exit(0);
 }
 
 if (args.has("--preflight")) {
