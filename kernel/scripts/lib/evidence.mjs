@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -142,7 +143,12 @@ export function attestationsIn(text) {
 
 export function currentWorktreeFingerprint(cwd) {
   if (_fpCache.has(cwd)) return _fpCache.get(cwd);
-  const r = spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "run-evidence.mjs"), "--fingerprint"],
+  // #154: one level UP from lib/. The #118 split moved this function into
+  // kernel/scripts/lib/ and left the path relative to itself, so it spawned
+  // lib/run-evidence.mjs — a file that does not exist. Every fingerprint came back
+  // null, and null fails open, so the #137 stale-tree comparison silently compared
+  // nothing from #118 until now. Assert the resolution in the self-check below.
+  const r = spawnSync(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "..", "run-evidence.mjs"), "--fingerprint"],
     { cwd, encoding: "utf8", timeout: 20000 });
   // null = git could not answer (no repo, shallow clone, run-evidence missing).
   // Callers fail OPEN on null, like the _stamp.log signatures: an unverifiable
@@ -155,15 +161,30 @@ export function currentWorktreeFingerprint(cwd) {
 }
 
 
+// Blocks that start on/after this date must witness the tree they tested. Older
+// blocks were written by kernels that did not record a fingerprint, and re-requiring
+// it today would turn other repos' in-flight tasks red for a rule they never ran
+// under (the same shape as AC_TRACE_SINCE: a new rule applies to work started after
+// it, not retroactively).
+export const FINGERPRINT_SINCE = "2026-10-19";
+
 // Where the stale-tree check applies. NOT in CI: a PR is checked out as a merge
 // with the base branch, so its tree legitimately differs from the one the dev ran
 // the tests on. And not for a task past `reviewing`: its evidence describes the
 // repo of the day it shipped, and the repo has moved on since — checking it would
 // turn every merged task red forever. The dev machine, before the push, is where
 // "I changed code after the tests" can still be acted on.
+//
+// #154: `requireWorktree` used to be reachable only from the self-check, so the
+// asymmetry the field allows — "a block with no fingerprint is fine" — was the
+// production default. A read-only role on a CLI with no hook enforcement mutated
+// the real tree, died, and left the mutation in place; its 09 then described code
+// that no longer existed, and nothing went red (postcite #151). From
+// FINGERPRINT_SINCE on, the transition that accepts the verdict demands the
+// witness: the evidence must name the tree being shipped.
 export function treeCtx(status) {
   if (process.env.CI || process.env.GITHUB_ACTIONS || status !== "reviewing") return {};
-  return { current: currentWorktreeFingerprint(REPO_ROOT) };
+  return { current: currentWorktreeFingerprint(REPO_ROOT), requireWorktree: true, since: FINGERPRINT_SINCE };
 }
 
 
@@ -201,7 +222,11 @@ export function attestationDefects(text, label, mode = EVIDENCE_MODE, ctx = {}) 
     // field predates this check (or was hand-typed): only the newer rules block,
     // so in-flight evidence written before the kernel upgrade stays a warning.
     if (!a.worktree) {
-      if (ctx.requireWorktree) d.push(`${label}: the attestation records no worktree fingerprint — re-run it through \`node scripts/run-evidence.mjs\` so it witnesses the code it tested (#137)`);
+      // #154: a block written by a kernel that did not fingerprint the tree cannot
+      // witness what it tested. Only blocks from FINGERPRINT_SINCE on are held to
+      // it — see the constant for why.
+      const owed = ctx.requireWorktree && (!ctx.since || (a.startedAt ?? "") >= ctx.since);
+      if (owed) d.push(`${label}: the attestation records no worktree fingerprint — re-run it through \`node scripts/run-evidence.mjs\` so it witnesses the code it tested (#137/#154); if the field never appears, this project's \`scripts/run-evidence.mjs\` is older than the kernel — re-run the installer`);
     } else if (ctx.current !== null && ctx.current !== undefined && a.worktree !== "unavailable" && a.worktree !== ctx.current) {
       d.push(`${label}: the evidence ran against a different tree (worktree ${a.worktree}, now ${ctx.current}) — the code changed after this command ran; re-run it through \`node scripts/run-evidence.mjs\` (#137)`);
     }
@@ -362,6 +387,29 @@ export async function selfCheck({ assert }) {
         .some((d) => /no worktree fingerprint/.test(d)),
       "once requireWorktree is on, a block with no witness is rejected",
     );
+    // #154: the Gate-5 window is a read-only role's window too, and the kernel now
+    // demands the witness there — but only from FINGERPRINT_SINCE on, so a repo that
+    // upgrades mid-task does not go red for blocks it wrote under the old rule.
+    const gate = { current: "beef1234beef1234", requireWorktree: true, since: FINGERPRINT_SINCE };
+    assert.ok(
+      attestationDefects(att(0, 12, FINGERPRINT_SINCE + "T08:00:00Z", "Tests: 12 passed", null), "08", "attested", gate)
+        .some((d) => /no worktree fingerprint/.test(d)),
+      "a block from the day the rule starts must name the tree it tested",
+    );
+    assert.deepEqual(
+      attestationDefects(att(0, 12, "2026-01-02T08:00:00Z", "Tests: 12 passed", null), "08", "attested", gate).filter((d) => /worktree/.test(d)),
+      [],
+      "a block older than the rule is not failed for a field its kernel never wrote",
+    );
+    assert.equal(Object.keys(treeCtx("done")).length, 0, "a shipped task is never re-fingerprinted");
+    assert.equal(Object.keys(treeCtx("in_progress")).length, 0, "while the code is still moving there is nothing to witness");
+    assert.equal(treeCtx("reviewing").requireWorktree, true,
+      "#154: the transition that accepts the verdict demands the witness — a block with no fingerprint is not enough");
+    // #154: the subprocess path is the difference between "the tree matches" and
+    // "nothing was compared". The #118 split broke it for four releases: the spawn
+    // pointed at lib/run-evidence.mjs, every result was null, and null fails open.
+    assert.ok(existsSync(join(dirname(fileURLToPath(import.meta.url)), "..", "run-evidence.mjs")),
+      "the fingerprint wrapper must be found one level up — a wrong path silently disables #137/#154");
 
     assert.deepEqual(attestationDefects(att(0), "08"), [], "an exit-0 attestation is clean");
 
