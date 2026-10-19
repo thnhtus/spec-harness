@@ -242,7 +242,9 @@ function installCodex(P, keep) {
   // network is off, so a push fails rather than running unasked.
   mkdirSync(join(P, ".codex/rules"), { recursive: true });
   const rules = spawnSync(process.execPath,
-    [join(P, "scripts/validate-tasks.mjs"), "--codex-rules", join(P, ".claude/settings.json")], { encoding: "utf8" });
+    // #165: --config pinned to P -- the installer's own cwd may sit under a different harness project,
+    // and --codex-rules now reads git.push from the config it finds.
+    [join(P, "scripts/validate-tasks.mjs"), "--codex-rules", join(P, ".claude/settings.json"), "--config", join(P, "harness.config.json")], { encoding: "utf8" });
   if (rules.status === 0) writeFileSync(join(P, ".codex/rules/spec-harness.rules"), rules.stdout);
   // MCP: Codex reads config.toml, not .mcp.json. Generated from the project's
   // .mcp.json (already filled in by then on a re-install), kept once written.
@@ -451,7 +453,10 @@ const RENAMED = { sliceFiles: "sliceBytes" };
 // 0.12: keys that became required. Default = the shipped example value, so an
 // upgrade does not exit 2 on the first --bootstrap. Not every new key belongs
 // here: one that is the user's own fact (repos, models) must stay a loud exit 2.
-const ADDED = ["protectedBranches"];
+// #165: `git` is NOT required (absent = "ask", the shipped behaviour). It is listed so an upgrade
+// surfaces the switch in the config with its comment -- a documented option nobody can find is one
+// that does not exist.
+const ADDED = ["protectedBranches", "git"];
 // 0.12: start-task.md is the user's (kept), so its old `--triage '<vector JSON>'`
 // line survives an upgrade and the coordinator's step 0 exits 2. Swap exactly
 // that shipped line; anything the user rewrote is left alone.
@@ -469,18 +474,34 @@ function migrateCommand(f) {
 // Move exactly the shipped ask rules; every other rule, key and the file's own
 // formatting stay. Nothing to change = the file is not rewritten.
 const ASK_RULES = ["Bash(git push:*)"]; // = REQUIRED_ASK in validate-tasks.mjs; the self-test locks the two together
-function migrateSettings(f) {
+// #165: `want` = the effective list (config.git.push = "allow" -> []). The installer is what makes
+// config and settings.json agree, in both directions -- the same reason #106 moves a deny rule that
+// can never fire. Leaving a rule behind under "allow" would keep the confirmation the project just
+// turned off AND leave `--codex-rules` unioning it back (Codex would keep prompting), so the "just
+// re-run the installer" message preflight prints has to be true. Only the SHIPPED rules are touched;
+// every other rule, key and the file's own formatting stay.
+function migrateSettings(f, want = ASK_RULES) {
   let t, cfg; try { t = read(f); cfg = JSON.parse(t); } catch { return []; }
   const perms = cfg.permissions;
   if (!perms || typeof perms !== "object") return [];
   const deny = Array.isArray(perms.deny) ? perms.deny : [], ask = Array.isArray(perms.ask) ? perms.ask : [];
-  const moved = ASK_RULES.filter((r) => deny.includes(r)), added = ASK_RULES.filter((r) => !ask.includes(r));
-  if (!moved.length && !added.length) return [];
+  const moved = want.filter((r) => deny.includes(r)), added = want.filter((r) => !ask.includes(r));
+  const dropped = want.length ? [] : ASK_RULES.filter((r) => ask.includes(r)); // git.push = allow
+  if (!moved.length && !added.length && !dropped.length) return [];
   perms.deny = deny.filter((r) => !moved.includes(r));
-  perms.ask = [...ask, ...added];
+  perms.ask = [...ask.filter((r) => !dropped.includes(r)), ...added];
   writeFileSync(f, JSON.stringify(cfg, null, 2) + "\n");
-  return added.map((r) => `.claude/settings.json: ${r} ${moved.includes(r) ? "deny → ask" : "+ ask"} (#106)`);
+  return [
+    ...added.map((r) => `.claude/settings.json: ${r} ${moved.includes(r) ? "deny → ask" : "+ ask"} (#106)`),
+    ...dropped.map((r) => `.claude/settings.json: ${r} ask → removed (git.push = allow, #165)`),
+  ];
 }
+// The project's own git.push, read where the installer can (it cannot import the validator: that runs
+// main against the cwd's config). Anything but exactly "allow" -> the shipped ask.
+const gitPushWanted = (P) => {
+  let m; try { m = JSON.parse(read(join(P, "harness.config.json")))?.git?.push; } catch {}
+  return m === "allow" ? [] : ASK_RULES;
+};
 function migrateConfig(f) {
   let cfg; try { cfg = JSON.parse(read(f)); } catch { return []; }
   const ex = JSON.parse(read(join(SRC, "adapters/example/harness.config.json"))), done = [];
@@ -585,7 +606,7 @@ function installInto(P, clis = [], coOwner = null) {
   // bằng văn bản; văn bản là thứ model chọn tuân thủ, deny thì không.
   keep(join(SRC, "adapters/example/settings.json"), join(P, ".claude/settings.json"));
   keep(join(SRC, "adapters/example/harness.config.json"), join(P, "harness.config.json"));
-  const migrated = [...migrateConfig(join(P, "harness.config.json")), ...migrateSettings(join(P, ".claude/settings.json"))];
+  const migrated = [...migrateConfig(join(P, "harness.config.json")), ...migrateSettings(join(P, ".claude/settings.json"), gitPushWanted(P))];
   // #101: _stamp.log/_triage.log are untracked witnesses; `git clean -fd` or an agent
   // tidying "stray" files deletes them and the gate then blocks. Ignored files survive -fd.
   // Not committed: append-only, conflicts on every dispatch, and tracking adds no trust.
@@ -1833,6 +1854,49 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       const s2 = read(sp);
       if (installInto(T).migrated.some((x) => /#106/.test(x)) || read(sp) !== s2) fail("#106: cài lại lần 2 vẫn ghi lại settings.json");
     }
+    // #165: git.push = "allow" drops ONLY the push confirmation -- end to end, through the real
+    // installer, the real --codex-rules render and a real --guard hook payload.
+    {
+      const sp = join(T, ".claude/settings.json"), vt = join(T, "scripts/validate-tasks.mjs"), cfp = join(T, "harness.config.json");
+      const cfg0 = read(cfp), set0 = read(sp);
+      const setPush = (v) => { const c = JSON.parse(cfg0); if (v === undefined) delete c.git; else c.git = { push: v }; writeFileSync(cfp, JSON.stringify(c, null, 2) + "\n"); };
+      const chk = () => spawnSync(process.execPath, [vt, "--check-settings", sp], { cwd: T, encoding: "utf8" });
+      const rules = () => spawnSync(process.execPath, [vt, "--codex-rules", sp, "--config", cfp], { cwd: T, encoding: "utf8" }).stdout;
+      const asks = (cmd) => {
+        const r = spawnSync(process.execPath, [vt, "--guard", "antigravity"], { cwd: T, input: JSON.stringify({ cwd: T, tool_name: "Bash", tool_input: { command: cmd } }), encoding: "utf8" });
+        let o; try { o = JSON.parse(r.stdout); } catch {}
+        return o?.decision === "ask" && /spec-harness ask rule/.test(o.reason ?? "");
+      };
+      // ask (default, and explicit "ask"): settings has the rule, Codex prompts, the hook asks.
+      setPush(undefined);
+      if (!/prefix_rule/.test(rules()) || !asks("git push origin main")) fail("#165: git.push vắng phải giữ ask (rules + guard)");
+      setPush("ask");
+      if (!asks("git push origin main")) fail("#165: git.push = ask phải hỏi");
+      // allow + settings still asking: reported, not silently kept.
+      setPush("allow");
+      if (!/still ASKS/.test(chk().stderr)) fail("#165: allow mà settings còn ask rule phải bị báo, không im lặng");
+      installInto(T); // = "chạy lại installer", đúng câu preflight in ra
+      const s1 = JSON.parse(read(sp));
+      if (s1.permissions.ask?.includes("Bash(git push:*)")) fail("#165: nâng cấp với git.push = allow không gỡ ask rule khỏi settings.json");
+      if (/prefix_rule/.test(rules())) fail("#165: git.push = allow mà .codex/rules vẫn có prefix_rule — Codex vẫn hỏi");
+      if (asks("git push origin main")) fail("#165: git.push = allow mà guard vẫn ra ask của spec-harness");
+      if (chk().status !== 0) fail("#165: allow + settings đã hội tụ mà --check-settings vẫn đỏ", chk().stderr);
+      // allow never loosens a deny: reset --hard stays blocked, and a deny on push stays an error.
+      const d = spawnSync(process.execPath, [vt, "--guard", "codex"], { cwd: T, input: JSON.stringify({ cwd: T, tool_name: "Bash", tool_input: { command: "git reset --hard HEAD" } }), encoding: "utf8" });
+      if (d.status !== 2) fail("#165: git.push = allow làm hở deny-list — reset --hard không bị chặn", d.stdout + d.stderr);
+      const s2 = JSON.parse(read(sp)); s2.permissions.deny = [...s2.permissions.deny, "Bash(git push:*)"]; writeFileSync(sp, JSON.stringify(s2));
+      if (!/still DENIES/.test(chk().stderr)) fail("#165: allow che mất deny git push — push đã duyệt vẫn không chạy được");
+      // idempotent: a second install under allow writes nothing.
+      writeFileSync(sp, JSON.stringify({ ...s2, permissions: { ...s2.permissions, deny: s2.permissions.deny.filter((r) => r !== "Bash(git push:*)") } }, null, 2) + "\n");
+      const before = read(sp);
+      if (installInto(T).migrated.some((x) => /#165/.test(x)) || read(sp) !== before) fail("#165: allow đã hội tụ mà cài lại vẫn ghi settings.json");
+      // a typo is not "allow": the ask stays, and the value is named by preflight.
+      setPush("Allow");
+      if (!asks("git push origin main") || !/prefix_rule/.test(rules())) fail("#165: git.push = \"Allow\" (typo) bị coi là allow — fail-open");
+      const st = JSON.parse(read(sp)); st.permissions.ask = [...st.permissions.ask, "Bash(git push:*)"]; writeFileSync(sp, JSON.stringify(st));
+      if (!/must be "ask" or "allow"/.test(chk().stderr)) fail("#165: giá trị git.push sai không được preflight gọi tên", chk().stderr);
+      writeFileSync(cfp, cfg0); writeFileSync(sp, set0);
+    }
     // The installer's ASK_RULES and the validator's REQUIRED_ASK are one list in two files.
     if (!readKernel().includes(`export const REQUIRED_ASK = ${JSON.stringify(ASK_RULES).replaceAll(",", ", ")};`))
       fail("#106: ASK_RULES (install.mjs) lệch REQUIRED_ASK (validate-tasks.mjs) — migration sẽ chuyển sai rule");
@@ -2205,7 +2269,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     const ASKS = { gemini: (o) => o.decision === "ask", antigravity: (o) => o.decision === "ask",
       copilot: (o) => o.permissionDecision === "ask", droid: (o) => o.hookSpecificOutput?.permissionDecision === "ask",
       qwen: (o) => o.hookSpecificOutput?.permissionDecision === "ask" };
-    for (const [cli, run, shellP, , isDeny, isAllow] of cases) {
+    for (const [cli, run, shellP, , isDeny] of cases) {
       const r = run(shellP("git push origin main"));
       if (ASKS[cli]) {
         let o; try { o = JSON.parse(r.stdout); } catch {}

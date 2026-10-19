@@ -74,6 +74,17 @@ Claude Code dùng `permissions.deny` / `permissions.ask`; các CLI khác dùng h
 
 Guard khớp theo prefix lệnh: nó chặn tai nạn, không chặn người cố ý (`bash -c "git push"` vẫn lọt). Bảo vệ thật cho secret là không để chúng trong repo.
 
+### Tắt hỏi trước `git push`
+
+`git push` là quyền **duy nhất** có công tắc, vì nó khác bản chất với 4 cái còn lại: `reset --hard`/`stash`/`clean`/đọc `.env` phá dữ liệu git không trả lại được, nên không cấu hình được. `git push` thì có đường lùi (`--force-with-lease`, push lại) — team đã tự duyệt mọi push từ trước thì câu hỏi luôn là "có".
+
+```jsonc
+// harness.config.json
+"git": { "push": "allow" }   // mặc định "ask"; thiếu field cũng = "ask"
+```
+
+Chạy lại `npx spec-harness` sau khi đổi (regenerate `.codex/rules`). `--preflight` luôn in giá trị hiệu lực; một giá trị sai chính tả bị báo lỗi, không âm thầm giữ nguyên hay âm thầm tắt.
+
 ## Tuỳ chọn: Jev pre-filter (tiết kiệm token ở Gate 2, 3, 5)
 
 Jev là decision model của TypeSafe. Nó đọc artifact **trước** khi `--advance` gọi role kế tiếp; chỉ khi chắc chắn sai (FAIL, confidence ≥ 0.9) thì `--advance` mới chặn và trả task về role vừa bàn giao, bỏ qua một lượt dispatch (Gate 5: 54k–132k token).

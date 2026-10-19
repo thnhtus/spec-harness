@@ -46,7 +46,7 @@ import { EVIDENCE_MODE, attestationDefects, liteDefects, treeCtx } from "./lib/e
 import * as gate5 from "./lib/gate5.mjs";
 import { PREFILTER_SCRIPT, adversaryCoverageDefects, adversaryDefects, adversaryPrompt, adversaryRunVerdict, evidenceTableDefects, packBase, packParts, prefilterVerdict, stageContract } from "./lib/gate5.mjs";
 import * as guard from "./lib/guard.mjs";
-import { ASK_FORMATS, GUARD_MODES, REQUIRED_ASK, REQUIRED_DENY, askRulesFile, clineDeny, guardSubjects, guardVerdict, roleBashTargets, roleWriteVerdict } from "./lib/guard.mjs";
+import { ASK_FORMATS, GUARD_MODES, REQUIRED_DENY, askRulesFile, askRulesFor, clineDeny, guardSubjects, guardVerdict, roleBashTargets, roleWriteVerdict } from "./lib/guard.mjs";
 import * as lifecycle from "./lib/lifecycle.mjs";
 import { advanceDecision, backdatedCreatedAt, bootstrapInputErrors, calibrate, findTaskFolders, firstCommitDate, isProtected, outcomeIsBlocking, promotion, stagedTaskFolders, strayTaskFolders, taskKeyOf } from "./lib/lifecycle.mjs";
 import * as routing from "./lib/routing.mjs";
@@ -60,7 +60,7 @@ import { KEY_FILE, budgetDefect, budgetSpent, cascadeDefects, contextBleed, disp
 import * as trace from "./lib/trace.mjs";
 import { acValueGaps, acsMissingFrom, declaredACs, gate1Defects, gate1IsOwed, gate4EvidenceOwed, hasRealEvidence, routeForUrl, routeMessage, vectorIsOwed } from "./lib/trace.mjs";
 import * as wiring from "./lib/wiring.mjs";
-import { ROLE_DIRS, adapterGaps, askGaps, codeownersGaps, denyGaps, findUpward, isolationWarning, keyMigratePlan, keyStoreAdvice, mcpGaps, ruleFloor, settingsReachable, statusMissing, unisolatedClis, writeBackDecision, writeBackRecordDefect } from "./lib/wiring.mjs";
+import { ROLE_DIRS, adapterGaps, askGaps, codeownersGaps, denyGaps, findUpward, gitPushConfigError, isolationWarning, keyMigratePlan, keyStoreAdvice, mcpGaps, ruleFloor, settingsReachable, statusMissing, unisolatedClis, writeBackDecision, writeBackRecordDefect } from "./lib/wiring.mjs";
 // #139 lives in its own side-effect-free module: install.mjs --self-test imports it, and importing
 // THIS file runs its main against the cwd's config, which a packed tarball does not have.
 export { CAPABILITIES, CAP_HEADER, CAP_INDIRECT, CAP_PROOF, CAP_RUNS, CAP_SIMULATED, capState, capabilityRows, renderCapabilityMatrix } from "./capabilities.mjs";
@@ -109,7 +109,10 @@ if (args.has("--guard")) {
   const root = [input.cwd, input.workspaceRoots?.[0], input.workspacePaths?.[0], input.working_dir]
     .find((x) => typeof x === "string") ?? process.cwd();
   const settings = findUpward(join(".claude", "settings.json"), root);
-  const ask = new Set(REQUIRED_ASK);
+  // #165: --guard runs BEFORE config load, so git.push is read here by hand. Any failure (no
+  // config above root, bad JSON) is undefined -> askRulesFor keeps the ask: unreadable = armed.
+  let gitPush; try { gitPush = JSON.parse(readFileSync(findUpward(CONFIG_NAME, root), "utf8"))?.git?.push; } catch {}
+  const ask = new Set(askRulesFor(gitPush));
   if (settings) try {
     const perms = JSON.parse(readFileSync(settings, "utf8"))?.permissions;
     for (const r of perms?.deny ?? []) deny.add(r);
@@ -169,17 +172,21 @@ if (!CONFIG_FOUND) {
 if (args.has("--check-settings")) {
   const f = argv[argv.indexOf("--check-settings") + 1];
   if (!f) { console.error("usage: --check-settings <settings.json>"); process.exit(2); }
-  const t = readFileSync(f, "utf8"), gaps = [...denyGaps(t), ...askGaps(t)];
+  // #165: a bad git.push is a config error, but this is the command both --preflight and the
+  // installer's self-test read the guardrail state through -- reporting it here is what keeps the two
+  // from agreeing on a settings.json whose meaning the config just changed.
+  const bad = gitPushConfigError(CFG.git);
+  const t = readFileSync(f, "utf8"), gaps = [...denyGaps(t), ...askGaps(t, askRulesFor(CFG.git?.push)), ...(bad ? [bad] : [])];
   gaps.forEach((g) => console.error(`✖ ${g}`));
   process.exit(gaps.length ? 1 : 0);
 }
 
-// --codex-rules [settings.json]: render REQUIRED_ASK ∪ the project's permissions.ask
+// --codex-rules [settings.json]: render askRulesFor(git.push) ∪ the project's permissions.ask
 // as a Codex execpolicy .rules file on stdout. install.mjs writes it to
-// .codex/rules/; no settings.json arg = REQUIRED_ASK alone (fresh install, #105).
+// .codex/rules/; no settings.json arg = the effective ask list alone (fresh install, #105/#165).
 if (args.has("--codex-rules")) {
   const f = argv[argv.indexOf("--codex-rules") + 1];
-  const ask = new Set(REQUIRED_ASK);
+  const ask = new Set(askRulesFor(CFG.git?.push));
   if (f) try { for (const r of JSON.parse(readFileSync(f, "utf8"))?.permissions?.ask ?? []) ask.add(r); } catch {}
   process.stdout.write(askRulesFile([...ask]));
   process.exit(0);
@@ -965,7 +972,12 @@ if (args.has("--preflight")) {
   // Present and loaded still says nothing about armed.
   const st = reach === "ok" ? readFileSync(join(REPO_ROOT, ".claude/settings.json"), "utf8") : "";
   if (reach === "ok")
-    for (const gap of [...denyGaps(st), ...askGaps(st)]) errs.push(gap);
+    for (const gap of [...denyGaps(st), ...askGaps(st, askRulesFor(CFG.git?.push))]) errs.push(gap);
+  // #165: the one widened permission is never silent. A bad value is an error (it is ignored, the
+  // ask stays, and the user must learn that); a good "allow" is a warning on every preflight.
+  { const e = gitPushConfigError(CFG.git); if (e) errs.push(e); }
+  if (CFG.git?.push === "allow")
+    warns.push('git.push = "allow" — git push runs with NO confirmation on every CLI (reset --hard / stash / clean / .env stay denied). Remove the key to restore the ask (#165)');
 
   // Codex/Cursor do not read permissions.deny: their deny-list is a hook. A CLI
   // layer present with the hook gone is the same failure as a missing settings.json.
