@@ -2355,8 +2355,27 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     writeFileSync(cfgP, JSON.stringify({ ...cfg, packWarn: 10 }));
     const w = pk("adversarial_review", "--base", "main");
     if (w.status !== 0 || !/⚠ --pack: machine part/.test(w.stderr)) fail("R3a: phần git vượt packWarn phải là warning, exit 0", w.stderr);
+    const warn0 = cfg.packWarn; // packWarn is about to be deleted from cfg; the #155 case needs it back
     delete cfg.packWarn; writeFileSync(cfgP, JSON.stringify(cfg));
     if (pk("fsd_write").status !== 2) fail("S6: thiếu packWarn phải exit 2");
+    // #155: 08 is an output LOG, and on a real task (postcite#151) one TAP fence
+    // was 171 KB of the adversary's 258 KB bundle. The pack keeps head+tail and
+    // marks the middle trimmed; the file on disk is untouched.
+    const evP = join(P, T, "08-Test-Evidence.md"), evKeep = read(evP);
+    const bigLog = "## Command output\n\n```\n$ npm run test\n" +
+      Array.from({ length: 8000 }, (_, i) => `ok ${i} - case ${i}`).join("\n") + "\nTests 8000 passed (8000)\n```\n";
+    writeFileSync(evP, bigLog);
+    if (Buffer.byteLength(bigLog) < 60000) fail("#155: fixture không lớn hơn cap — e2e không chứng minh được gì");
+    const baseCfg = { ...cfg, packWarn: warn0 };
+    writeFileSync(cfgP, JSON.stringify({ ...baseCfg, packCap: { ...baseCfg.packCap, adversarial_review: 60000 } }));
+    const t1 = pk("adversarial_review", "--base", "main");
+    if (t1.status !== 0) fail("#155: pack với 08 lớn (> cap) phải exit 0 sau khi cắt", t1.stderr);
+    if (!/\[… \d+ lines trimmed by --pack \(#155\)/.test(t1.stdout)) fail("#155: fence log bị cắt phải kèm dấu trim", t1.stdout.slice(0, 300));
+    if (t1.stdout.includes("ok 4000 - case 4000")) fail("#155: phần giữa của log vẫn nằm trong bundle");
+    if (!t1.stdout.includes("Tests 8000 passed (8000)")) fail("#155: dòng kết quả phải ở lại bundle");
+    if (Buffer.byteLength(t1.stdout) > 60000) fail("#155: bundle vẫn vượt cap dù đã cắt log");
+    if (read(evP) !== bigLog) fail("#155: --pack không được sửa file 08 trên đĩa");
+    writeFileSync(evP, evKeep);
     writeFileSync(cfgP, keep);
     rmSync(root, { recursive: true, force: true });
   }
@@ -2682,7 +2701,10 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
       rmSync(root, { recursive: true, force: true });
     }
     const c = { expect: "FAIL", mustMention: ["AC-03"] };
-    const ok = (x, want, why) => { if (!x.length !== want) fail(`scoreAdversary: ${why} → ${JSON.stringify(x)}`); };
+    // `want` = "this case should find no defects", so the fail condition is
+    // "x is empty XOR want" — written out, because `!x.length !== want` is the
+    // same expression and reads as a precedence bug to every linter and reviewer.
+    const ok = (x, want, why) => { if ((x.length === 0) !== want) fail(`scoreAdversary: ${why} → ${JSON.stringify(x)}`); };
     ok(scoreAdversary(c, "**Result: FAIL** · x\nAC-03 không assert", []), true, "FAIL + nhắc đúng AC phải đậu");
     ok(scoreAdversary(c, "**Result: UNCERTAIN**\nAC-03", []), true, "UNCERTAIN trên task có bug vẫn chặn merge → đậu");
     ok(scoreAdversary(c, "**Result: FAIL**\nkhông nói gì cụ thể", []), false, "FAIL không nhắc bug = đoán mò");
@@ -2909,7 +2931,7 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     writeFileSync(join(ok, ".github/CODEOWNERS"), "/harness.config.json @acme/platform\n");
     if (!/does not cover gate paths: .*scripts\/validate-tasks\.mjs/.test(pre(ok).stdout + pre(ok).stderr)) fail("#133: CODEOWNERS thiếu validator mà preflight không nêu", pre(ok).stdout);
     writeFileSync(join(ok, ".github/CODEOWNERS"), "# edited by hand\n* @acme/platform\n");
-    const again = inst(ok, "--codeowners", "@someone/else"); if (read(join(ok, ".github/CODEOWNERS")).includes("someone")) fail("#133: cài lại không được đè CODEOWNERS đã có (người dùng đã sửa tay)");
+    inst(ok, "--codeowners", "@someone/else"); if (read(join(ok, ".github/CODEOWNERS")).includes("someone")) fail("#133: cài lại không được đè CODEOWNERS đã có (người dùng đã sửa tay)");
     for (const d of [bad, bad2, none, ok]) rmSync(d, { recursive: true, force: true });
   }
 

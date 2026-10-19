@@ -370,7 +370,7 @@ node scripts/validate-tasks.mjs --advance "$TASK" <stage> --cli claude   # trư�
 node scripts/validate-tasks.mjs --bootstrap '<json>'                     # stage 1 không cần subagent: tạo folder từ _templates, validate, rollback nếu hỏng
 node scripts/validate-tasks.mjs --contract <stage>                       # mọi check output của stage phải qua, sinh từ chính hằng của validator
 node scripts/validate-tasks.mjs --advance <task> implementation --slice S<n>  # task lớn: 03 có cột Slice (file có sẵn > ngân sách của model: models.<cli>.<tier>.sliceBytes, không có thì sliceBytes) → mỗi slice 1 dispatch theo thứ tự, retry budget tính theo slice; slice sửa file ngoài dòng của nó → exit 1
-node scripts/validate-tasks.mjs --pack <task> <stage> [--base <nhánh>]   # gói input của 1 dispatch (luật + role file + contract + artifact + handoff + git không lọc), 1 lần đọc thay vì 6-10 lần Read; vượt packCap → exit 1
+node scripts/validate-tasks.mjs --pack <task> <stage> [--base <nhánh>]   # gói input của 1 dispatch (luật + role file + contract + artifact + handoff + git không lọc), 1 lần đọc thay vì 6-10 lần Read; fence dài trong 08 (log test) chỉ giữ đầu+đuôi, phần giữa đánh dấu đã cắt (#155) nên cap còn phản ánh kernel/artifact phình; vượt packCap → exit 1
 ```
 
 ## Vì sao có cái này

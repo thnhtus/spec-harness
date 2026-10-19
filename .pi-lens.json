@@ -1,0 +1,8 @@
+{
+  "_why": "install.mjs and kernel/scripts/validate-tasks.mjs are CLI entry points whose whole job is to refuse loudly: a malformed harness.config.json, task.agent.json or schema MUST abort the run with the parser's own error, which is what an uncaught JSON.parse does. unchecked-throwing-call-js asks for the opposite at ~106 pre-existing sites (they predate this file; #155 touches none of them). Recorded here, not silenced per line, because the policy is about what these two scripts are — a repo-visible decision rather than a rule disabled in someone's editor. Re-open per site if a parse ever needs a friendly message the raw SyntaxError cannot give.",
+  "rules": {
+    "unchecked-throwing-call-js": {
+      "disable": ["unchecked-throwing-call-js", "ast-grep:unchecked-throwing-call-js", "slop:unchecked-throwing-call-js"]
+    }
+  }
+}

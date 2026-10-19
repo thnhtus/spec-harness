@@ -202,7 +202,7 @@ if (args.has("--self-check")) {
   // per-module floor is the point: the total floor below cannot see a dozen asserts deleted from one
   // module, and that is exactly how #139's block went missing.
   const kernels = { capabilities, config, docs: docsMod, evidence, gate5, guard, lifecycle, routing, schema: schemaMod, scope, telemetry, trace, wiring };
-  const SC_MIN = { capabilities: 34, config: 13, docs: 120, evidence: 62, gate5: 62, guard: 82, lifecycle: 54, routing: 196, schema: 50, scope: 67, telemetry: 95, trace: 73, wiring: 77 };
+  const SC_MIN = { capabilities: 34, config: 13, docs: 120, evidence: 62, gate5: 71, guard: 82, lifecycle: 54, routing: 196, schema: 50, scope: 67, telemetry: 95, trace: 73, wiring: 77 };
   const onDisk = readdirSync(join(__dirname, "lib")).filter((f) => f.endsWith(".mjs")).map((f) => f.replace(".mjs", ""));
   for (const n of onDisk) if (!(n in kernels)) throw new Error(`kernel/scripts/lib/${n}.mjs is not run by --self-check — add it to the list and give it a selfCheck`);
   for (const [name, mod] of Object.entries(kernels)) {
