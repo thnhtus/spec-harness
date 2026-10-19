@@ -78,6 +78,21 @@ export function trackerConfigError(tracker) {
   return null;
 }
 
+// #165: `git.push` is the only permission a project may widen. A typo here must be
+// reported, not obeyed: `askRulesFor()` fails safe on an unknown value (the ask
+// stays), but that means the user believes they turned it off and never finds out
+// why the pause is still there -- or, in the other direction, someone reads their
+// own config and assumes it applied. Say it out loud.
+export function gitPushConfigError(git) {
+  const mode = git?.push;
+  if (mode === undefined) return null; // unset = the shipped default, "ask"
+  if (!["ask", "allow"].includes(mode))
+    return `config.git.push must be "ask" or "allow" (got ${JSON.stringify(mode)}) \u2014 unset and every unknown value keep the push confirmation`;
+  if (git !== null && typeof git === "object" && Object.keys(git).some((k) => k !== "push" && k !== "_push"))
+    return `config.git has unknown keys (${Object.keys(git).filter((k) => k !== "push" && k !== "_push").join(", ")}) \u2014 the only switch is git.push; deny rules (reset --hard, stash, clean) are not configurable`;
+  return null;
+}
+
 
 // #120: tracker write-back decision. The harness never calls the tracker (the coordinator does,
 // through MCP), so idempotency is two things it CAN own: a marker every comment carries, and a
@@ -205,17 +220,32 @@ export function denyGaps(settingsText) {
 // one an upgrade produces: a project installed before push moved to `ask` keeps
 // denying it, so the push the user approved can never run -- on Claude and, since
 // the guard unions the project's deny list, on every hook CLI too.
-export function askGaps(settingsText) {
+//
+// #165: `askRules` is the EFFECTIVE list (askRulesFor(config.git.push)), not the
+// constant. With git.push = "allow" it is empty: there is then no ask rule to
+// require and none to warn about. Deny is still checked -- turning the pause off
+// must not also make a deny rule invisible, because deny wins over ask in every
+// CLI and the push would silently never run.
+export function askGaps(settingsText, askRules = REQUIRED_ASK) {
   let parsed;
   try { parsed = JSON.parse(settingsText); } catch { return []; } // denyGaps already reports unparseable
   const deny = parsed?.permissions?.deny ?? [], ask = parsed?.permissions?.ask ?? [];
-  return REQUIRED_ASK.flatMap((r) =>
+  // Deny is checked over REQUIRED_ASK, not askRules: an empty effective list must not skip it.
+  const gaps = REQUIRED_ASK.flatMap((r) =>
     deny.includes(r)
-      ? [`.claude/settings.json still DENIES \`${r}\` — it belongs in permissions.ask: a push the user approved after the final gate can never run. Run the installer again to migrate it (#106)`]
-      : ask.includes(r)
+      ? [`.claude/settings.json still DENIES \`${r}\` — ${askRules.includes(r) ? "it belongs in permissions.ask" : "harness.config.json sets git.push = \"allow\""}: a push the user approved can never run. Run the installer again to migrate it (#106)`]
+      : !askRules.includes(r) || ask.includes(r)
         ? []
         : [`.claude/settings.json has no ask rule \`${r}\` — it runs with no confirmation, so nothing pauses before the last irreversible step`],
   );
+  // The reverse drift, now that the list has a config switch: config says "allow"
+  // but the rule is still sitting in ask. Not dangerous -- it silently keeps the
+  // pause the project just turned off, which is the same class of "gate looks like
+  // one thing, acts like another" that askGaps was written for.
+  if (!askRules.length)
+    for (const r of REQUIRED_ASK.filter((x) => ask.includes(x)))
+      gaps.push(`.claude/settings.json still ASKS for \`${r}\` while harness.config.json sets git.push = "allow" — the confirmation is still there. Re-run the installer (or delete the rule) (#165)`);
+  return gaps;
 }
 
 
@@ -459,7 +489,21 @@ export async function selfCheck({ assert }) {
     "a pre-#104 settings.json that still denies push must be reported, not silently accepted");
   assert.match(askGaps('{"permissions":{}}')[0], /no ask rule/, "a missing ask rule means push runs with no confirmation");
   assert.deepEqual(askGaps('{"permissions":{"ask":["Bash(git push:*)"]}}'), [], "push in ask is the correct state");
-  assert.deepEqual(askGaps("not json"), [], "unparseable settings.json is denyGaps' error to report, not reported twice");
+  // #165: with git.push = allow the effective ask list is empty -- no rule required,
+  // and no warning about the rule being absent (that would be every install one
+  // config line away from red). A DENY rule stays an error: deny beats ask, so the
+  // approved push still could not run, on this CLI and every hook CLI that unions it.
+  assert.deepEqual(askGaps('{"permissions":{}}', []), [], "git.push = allow: no ask rule wanted");
+  assert.match(askGaps('{"permissions":{"deny":["Bash(git push:*)"]}}', [])[0], /still DENIES/,
+    "git.push = allow does not hide a deny rule — deny wins over ask everywhere");
+  assert.match(askGaps('{"permissions":{"ask":["Bash(git push:*)"]}}', [])[0], /still ASKS/,
+    "a rule left in ask after git.push = allow must be reported, not silently kept");
+  assert.deepEqual(askGaps("not json", []), [], "unparseable settings.json is denyGaps' error to report, not reported twice");
+  // gitPushConfigError (#165): unset and the two legal values pass; anything else is named.
+  for (const ok of [undefined, {}, { push: "ask" }, { push: "allow", _push: "why" }]) assert.equal(gitPushConfigError(ok), null, `git ${JSON.stringify(ok)} is valid`);
+  assert.match(gitPushConfigError({ push: "Allow" }), /must be "ask" or "allow"/, "case matters — Allow is a typo");
+  assert.match(gitPushConfigError({ push: true }), /must be "ask" or "allow"/, "a boolean is not a mode");
+  assert.match(gitPushConfigError({ push: "allow", reset: "allow" }), /not configurable/, "no other git rule can be widened");
 
   // This list used to hold fragments ("git push") matched with
   // `d.includes(r)`, and the moment `env` joined it the check started lying:

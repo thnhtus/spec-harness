@@ -150,7 +150,8 @@ export const needStampSince = (who) => {
 // ── self-check: moved here with the logic it tests ──────────────────
 export async function selfCheck({ assert }) {
   const { handoffBlockCount } = await import("./docs.mjs");
-  const { trackerConfigError } = await import("./wiring.mjs");
+  const { trackerConfigError, gitPushConfigError } = await import("./wiring.mjs");
+  assert.equal(gitPushConfigError(CFG.git), null, `this repo's own git config is invalid: ${gitPushConfigError(CFG.git)}`);
   {
     const { mkdtempSync, writeFileSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

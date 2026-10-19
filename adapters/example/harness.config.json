@@ -186,5 +186,7 @@
     "08-Test-Evidence.md": 400,
     "09-Adversarial-Review.md": 400
   },
+  "_git": "#165: git.push = \"ask\" (default, also when the key is absent) pauses before every `git push` on every CLI: permissions.ask (Claude), .codex/rules prompt (Codex), the ask verdict of --guard (others). \"allow\" drops that pause — for a team that already authorises pushes up front. Re-run the installer after changing it (Codex rules are generated). Nothing else is configurable here: reset --hard / stash / clean / restore / checkout -- / .env stay denied, because they destroy work git cannot give back.",
+  "git": { "push": "ask" },
   "_tracker": "writeBack: what the coordinator does on the tracker when the task reaches `reviewing`. `off` = report only (default). `comment` = post one comment with the doc path and evidence. `status` = also move the ticket to `statusOnReview`. The harness does not call a vendor API: it asks the `tracker` MCP server, so whatever the team already authenticated is what gets used."
 }
