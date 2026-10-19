@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { AC_TRACE_SINCE, CFG, GROUP_PREFIX, REPO_ROOT, ROLE_STAGE, STAGE_ORDER, TASKS_DIR } from "./config.mjs";
 import { vectorInputErrors } from "./routing.mjs";
 // --advance (#61): the coordinator's whole per-stage bookkeeping as ONE command,
@@ -504,6 +504,16 @@ export async function selfCheck({ assert }) {
     assert.equal(pr({ currentStage: "fsd_write" }, "adversarial_review", "fsd-writer"), null, "two stages ahead is still a skip");
     assert.equal(pr({ currentStage: "implementation", branchType: "bugfix" }, "adversarial_review", "fixer")?.agents.fixer.status, "done", "routing: the fixer's handoff promotes a bugfix");
     assert.equal(pr({ currentStage: "adversarial_review" }, "reviewing", "adversary")?.status, "reviewing", "promotion into the last stage sets status=reviewing");
+  }
+
+  // #157: stagedTaskFolders() shipped a ReferenceError in 0.17.0 (`sep` was used
+  // on the pre-commit path, never imported), which blocked every commit in every
+  // project that had installed it. An import-walk cannot catch that — only
+  // CALLING the function can. It returns a Set, or null where git is absent (the
+  // publish workflow runs this self-test inside an unpacked tarball), never a throw.
+  {
+    const staged = stagedTaskFolders();
+    assert.ok(staged === null || staged instanceof Set, "stagedTaskFolders returns a Set, or null without git — it must never throw");
   }
 
   // escapeHatchStats: the feedback loop for tasks that skipped every gate. The
