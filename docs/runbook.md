@@ -27,6 +27,20 @@ Lệnh từ chối (exit 1) nếu log vẫn còn — không bao giờ ghi đè n
 
 **Xác nhận:** `node scripts/validate-tasks.mjs` không còn lỗi `#124`.
 
+## Task bị gửi về stage trước, `status` kẹt ở `reviewing`/`blocked` (#156)
+
+**Triệu chứng:** `status=reviewing but currentStage="adversarial_review" — gates were skipped`, và mọi `--advance <stage>` để gửi task về đều đỏ nên không role nào được dispatch để sửa.
+
+**Nguyên nhân:** gửi task về (back route) từng để nguyên `status`, nên cặp `status`/`currentStage` mâu thuẫn. Trước #156, cách duy nhất là tự sửa `task.agent.json` — field mà harness nói không coordinator nào được ghi.
+
+**Khôi phục:** chạy lại đúng lệnh `--advance` về stage cần sửa:
+```bash
+node scripts/validate-tasks.mjs --advance <task> <stage> --cli <cli>
+```
+Back route tự mở lại task: cờ `↩ --advance <stage>: back route — the task is reopened (status=in_progress)` và task không thể quay lại `reviewing` cho đến khi validator sạch.
+
+**Xác nhận:** `task.agent.json` có `status: "in_progress"`, `currentStage` giữ nguyên stage cũ, và validator không còn lỗi "gates were skipped".
+
 ## Key ký (`~/.spec-harness/stamp.key`) mất hoặc đổi máy
 
 **Triệu chứng:** mọi dòng cũ thành `has no validly signed _stamp.log line` sau khi đổi máy hoặc xoá key.

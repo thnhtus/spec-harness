@@ -115,6 +115,17 @@ export function gate1IsOwed(currentStage, stageOrder = STAGE_ORDER) {
 }
 
 
+// #156: 08 is Gate 4's artifact and `adversarial_review` is the first stage that
+// READS it. Validating it only at `status=reviewing` meant postcite #151 carried
+// two attestation blocks whose outputHash never verified from round 1 all the way
+// to the end of the pipeline -- and the defect surfaced at the one transition that
+// cannot dispatch a fixing role. Checked from the stage that consumes it instead.
+export function gate4EvidenceOwed(currentStage, stageOrder = STAGE_ORDER) {
+  const i = stageOrder.indexOf(currentStage);
+  return i >= 0 && i >= stageOrder.indexOf("adversarial_review");
+}
+
+
 // Which stages owe a complexity vector. `bootstrap` is INCLUDED: it is the stage
 // that writes the vector, and excluding it left "delete the block" silent at
 // exactly the moment it happens -- every later stage then inherits a task whose
@@ -416,6 +427,17 @@ export async function selfCheck({ assert }) {
     assert.equal(gate1IsOwed("fsd_write"), false, "the FSD is still being written at fsd_write");
     assert.equal(gate1IsOwed("bootstrap"), false, "no FSD exists at bootstrap");
     assert.equal(gate1IsOwed("typo-stage"), false, "an unknown stage is reported elsewhere, not here");
+  }
+
+  // #156: 08 is owed from the stage that READS it. Too early and the implementer is
+  // judged on an artifact it has not finished; only at `reviewing` and two bad
+  // attestation blocks rode from round 1 to the end of a real task unseen.
+  {
+    assert.ok(gate4EvidenceOwed("adversarial_review"), "adversarial_review is the first stage that reads 08");
+    assert.ok(gate4EvidenceOwed("reviewing"), "reviewing reads it too");
+    assert.equal(gate4EvidenceOwed("implementation"), false, "the implementer is still writing 08");
+    assert.equal(gate4EvidenceOwed("technical_plan"), false, "08 does not exist yet");
+    assert.equal(gate4EvidenceOwed("typo-stage"), false, "an unknown stage is reported elsewhere, not here");
   }
 
   // vectorIsOwed: the missing-vector rule used to start AFTER bootstrap, which
