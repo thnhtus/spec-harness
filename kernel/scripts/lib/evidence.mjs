@@ -13,16 +13,18 @@ import { CFG, EVIDENCE_RE, REPO_ROOT } from "./config.mjs";
 // A bare "4/5" also matches a path like src/test/4/5, which appears in the very
 // command being pasted. Require the ratio to be labelled as a count.
 export const RESULT_RE =
-  /\bpassed\b|exit 0|✓|no error|\d+\s*\/\s*\d+\s*(passed|failed|tests?|specs?|files?|ok\b)|(tests?|specs?|files?)\s*:?\s*\d+\s*\/\s*\d+/i;
+  /\bpassed\b|exit 0|✓|no error|\d+\s*\/\s*\d+\s*(passed|failed|tests?|specs?|files?|ok\b)|(tests?|specs?|files?)\s*:?\s*\d+\s*\/\s*\d+|#\s*pass\s+[1-9]\d*/i;
 
 
 // RESULT_RE asks "is the word passed present", not "are the tests green" -- and
 // `Tests: 11 passed, 1 failed` satisfies the former. That is precisely what
 // Gate 4 exists to stop, so there has to be a separate negative check. FAIL/✗
 // are anchored with `^` because they show up mid-prose ("stop on FAIL…");
-// `\d+ failed` needs no anchor.
+// `\d+ failed` needs no anchor. `# fail n` is TAP's own spelling of the same
+// thing: RESULT_RE learned `# pass n` (#156), so without this a suite that ran
+// 0 tests and failed 3 would read as a green result.
 export const FAILURE_RE =
-  /\b\d+\s+(failed|failing)\b|^\s*(FAIL|✗|✖|×)\s|\bexit (code )?[1-9]\d*\b|\bERR!/im;
+  /\b\d+\s+(failed|failing)\b|^\s*(FAIL|✗|✖|×)\s|\bexit (code )?[1-9]\d*\b|\bERR!|\b#\s*fail\s+[1-9]\d*\b/im;
 
 
 // The escape hatch for a DELIBERATELY red test (fixer reproduce-first: write
@@ -275,6 +277,12 @@ export async function selfCheck({ assert }) {
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\nTests 4 passed (4)\n```"), true, "fenced command + passed");
   assert.equal(hasRealEvidenceIn("everything passes"), false, "claim without a command");
   assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\n```"), false, "command without a result");
+  // #156: TAP writes `# tests 56` / `# pass 55` / `# fail 0` and never the words
+  // RESULT_RE hunted for, so a real `node --test` run pasted into 09 was rejected
+  // as "no command+result". TAP's own counters count -- but `# pass 0` must not,
+  // and FAILURE_RE has to learn `# fail n` or the new branch becomes a way in.
+  assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\n# tests 56\n# pass 55\n# fail 0\n```"), true, "TAP counters count as a result");
+  assert.equal(hasRealEvidenceIn("```\n$ " + sample + "\n# pass 0\n# fail 3\n```"), false, "zero passed with failures is not a result");
   assert.equal(
     hasRealEvidenceIn(`| Unit | \`${sample}\` | AC-01 | …/… passed | | |`),
     false,

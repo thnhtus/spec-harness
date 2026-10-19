@@ -58,7 +58,7 @@ import { changedSince, contentSnapshot, dirtyPaths, gitAt, ignoredPaths, missing
 import * as telemetry from "./lib/telemetry.mjs";
 import { KEY_FILE, budgetDefect, budgetSpent, cascadeDefects, contextBleed, dispatchGaps, ensureStampKey, lastChain, platformWhich, protectionVerdict, reportRows, restampLines, stampChainBreak, stampDefects, stampKey, stampLine } from "./lib/telemetry.mjs";
 import * as trace from "./lib/trace.mjs";
-import { acValueGaps, acsMissingFrom, declaredACs, gate1Defects, gate1IsOwed, hasRealEvidence, routeForUrl, routeMessage, vectorIsOwed } from "./lib/trace.mjs";
+import { acValueGaps, acsMissingFrom, declaredACs, gate1Defects, gate1IsOwed, gate4EvidenceOwed, hasRealEvidence, routeForUrl, routeMessage, vectorIsOwed } from "./lib/trace.mjs";
 import * as wiring from "./lib/wiring.mjs";
 import { ROLE_DIRS, adapterGaps, askGaps, codeownersGaps, denyGaps, findUpward, isolationWarning, keyMigratePlan, keyStoreAdvice, mcpGaps, ruleFloor, settingsReachable, statusMissing, unisolatedClis, writeBackDecision, writeBackRecordDefect } from "./lib/wiring.mjs";
 // #139 lives in its own side-effect-free module: install.mjs --self-test imports it, and importing
@@ -673,6 +673,19 @@ if (args.has("--advance")) {
   const promoted = promotion(JSON.parse(before), stage, { continues });
   // Any non-zero exit below (gate FAIL, lease, slice budget…) rolls the promotion back.
   if (promoted) { writeFileSync(jp, JSON.stringify(promoted, null, 2) + "\n"); process.on("exit", (c) => { if (c !== 0) writeFileSync(jp, before); }); }
+  // #156: a back route REOPENS the task. Sending a task back to an earlier stage used
+  // to leave `status` where it was (`reviewing`, or `blocked` from a Gate 5 FAIL),
+  // which the validator reads as `status=reviewing but currentStage="…" — gates were
+  // skipped`. The only way out was hand-editing task.agent.json — a field the harness
+  // says no coordinator writes — because every `--advance` that could have dispatched
+  // the fixing role refused on that very error. Measured on postcite #151.
+  const cur = JSON.parse(before);
+  const targetAt = STAGE_ORDER.indexOf(stage), atAt = STAGE_ORDER.indexOf(cur.currentStage);
+  const isBackRoute = targetAt >= 0 && atAt > targetAt;
+  if (!promoted && isBackRoute && cur.status !== "in_progress") {
+    writeFileSync(jp, JSON.stringify({ ...cur, status: "in_progress" }, null, 2) + "\n");
+    process.on("exit", (c) => { if (c !== 0) writeFileSync(jp, before); });
+  }
   const v = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--quiet", "--no-warn", "--task", dir, "--config", CONFIG_PATH], { encoding: "utf8" });
   if (v.status === 2) { process.stderr.write(v.stderr); usage(); }
   const data = JSON.parse(readFileSync(jp, "utf8"));
@@ -680,6 +693,7 @@ if (args.has("--advance")) {
     : advanceDecision(data, stage, { halted: (r) => handoffHalted(mem, r) });
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
   if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
+  if (isBackRoute) console.error(`↩ --advance ${stage}: back route — the task is reopened (status=in_progress); it cannot reach reviewing again until the validator is green`);
   // #121: budget cap — first, before the pre-filter spends a paid call. Only a dispatch can overspend; a going-back re-run (no attempt) is already counted.
   const bud = d.attempt ? budgetDefect(data.telemetry, CFG.budget?.maxTokensPerTask) : null;
   const accept = argv.includes("--accept-over-budget") ? (argv[argv.indexOf("--accept-over-budget") + 1] ?? "") : null;
@@ -1738,6 +1752,20 @@ for (const { sprint, task, path } of folders) {
     }
     const adv = GATE4_DONE.has(data.status) ? read(GATE4_ARTIFACTS.adversarial) : null;
     if (adv !== null) for (const x of adversaryCoverageDefects(adv, declared)) sink.push(`${GATE4_ARTIFACTS.adversarial}: ${x}`);
+  }
+
+  // #156: 08 is read from `adversarial_review` on. Checking its attestations only
+  // at `status=reviewing` hid two bad blocks in postcite #151 from every gate, and
+  // by the time they surfaced the only way out was hand-editing `status` (the
+  // transition that could have dispatched the fixing role refuses while red).
+  // Shipped-before-rule tasks keep the old leniency: a rule added later must not
+  // turn another repo's closed task red.
+  if (!GATE4_DONE.has(data.status) && gate4EvidenceOwed(data.currentStage)) {
+    const ev = join(path, GATE4_ARTIFACTS.evidence);
+    if (existsSync(ev)) {
+      const sink = templateRowsBlock(data) ? errors : warnings;
+      for (const d of attestationDefects(readFileSync(ev, "utf8"), GATE4_ARTIFACTS.evidence, EVIDENCE_MODE, treeCtx(data.status))) sink.push(d);
+    }
   }
 
   // 6. Gate-4 evidence when implementation is reported complete
