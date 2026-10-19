@@ -182,9 +182,18 @@ export const FINGERPRINT_SINCE = "2026-10-19";
 // that no longer existed, and nothing went red (postcite #151). From
 // FINGERPRINT_SINCE on, the transition that accepts the verdict demands the
 // witness: the evidence must name the tree being shipped.
+// The policy on its own — no I/O, no environment. Split out because treeCtx()
+// short-circuits in CI (a PR is checked out as a merge, so its tree legitimately
+// differs), and an assert written against treeCtx() therefore passes on a laptop
+// and throws in CI. The self-check asserts THIS, and it is the part that decides.
+export function treeCtxPolicy(status) {
+  return status === "reviewing" ? { requireWorktree: true, since: FINGERPRINT_SINCE } : {};
+}
+
 export function treeCtx(status) {
-  if (process.env.CI || process.env.GITHUB_ACTIONS || status !== "reviewing") return {};
-  return { current: currentWorktreeFingerprint(REPO_ROOT), requireWorktree: true, since: FINGERPRINT_SINCE };
+  const policy = treeCtxPolicy(status);
+  if (!Object.keys(policy).length || process.env.CI || process.env.GITHUB_ACTIONS) return {};
+  return { ...policy, current: currentWorktreeFingerprint(REPO_ROOT) };
 }
 
 
@@ -401,10 +410,15 @@ export async function selfCheck({ assert }) {
       [],
       "a block older than the rule is not failed for a field its kernel never wrote",
     );
-    assert.equal(Object.keys(treeCtx("done")).length, 0, "a shipped task is never re-fingerprinted");
-    assert.equal(Object.keys(treeCtx("in_progress")).length, 0, "while the code is still moving there is nothing to witness");
-    assert.equal(treeCtx("reviewing").requireWorktree, true,
+    assert.equal(Object.keys(treeCtxPolicy("done")).length, 0, "a shipped task is never re-fingerprinted");
+    assert.equal(Object.keys(treeCtxPolicy("in_progress")).length, 0, "while the code is still moving there is nothing to witness");
+    assert.equal(treeCtxPolicy("reviewing").requireWorktree, true,
       "#154: the transition that accepts the verdict demands the witness — a block with no fingerprint is not enough");
+    assert.equal(treeCtxPolicy("reviewing").since, FINGERPRINT_SINCE, "the cutoff travels with the requirement");
+    // CI is the one place treeCtx() must stay inert (the merge checkout differs by
+    // design), so the two branches assert different things — both are honest.
+    if (process.env.CI || process.env.GITHUB_ACTIONS) assert.deepEqual(treeCtx("reviewing"), {}, "in CI the tree is a merge checkout: no witness to demand");
+    else assert.equal(treeCtx("reviewing").current, currentWorktreeFingerprint(REPO_ROOT), "off CI the policy carries the tree's fingerprint (null when git cannot answer)");
     // #154: the subprocess path is the difference between "the tree matches" and
     // "nothing was compared". The #118 split broke it for four releases: the spawn
     // pointed at lib/run-evidence.mjs, every result was null, and null fails open.
