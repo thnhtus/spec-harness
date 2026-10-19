@@ -167,9 +167,44 @@ export function stageContract(stage, { stages = STAGE_ORDER, roleStage = ROLE_ST
 // same reading in one call, sliced to what the preamble names (SharedRules §4 §5
 // §6 §8 [+§9]), with re-runs cut to the newest `## Update` block.
 //   parts: rules (fixed per kernel) · prose (task artifacts) · machine (git output).
+// #155: the evidence file is a LOG, and the log is what a bundle drowns in. On a
+// real task (postcite#151) 08 alone was 171 KB of the adversary's 258 KB pack —
+// one `npm run test` fence of ~4,600 TAP lines. No role reviews the log: Gate 5
+// re-runs ProjectRules §7 itself and reads the result lines. So each long fence
+// in the evidence artifact is packed head+tail with the middle marked trimmed,
+// and the file named as where the whole output still lives on disk.
+// Constants, not config: a new required key would force every existing
+// harness.config.json to migrate for a packing detail, and the numbers are a
+// property of what a log fence looks like, not of a repo.
+export const EVIDENCE_FENCE_KEEP = { head: 25, tail: 15, minLines: 40 };
+
+// Pure: fences shorter than minLines are returned byte-for-byte, so no small
+// evidence block (the common case) changes shape.
+export function trimEvidenceLog(text, keep = EVIDENCE_FENCE_KEEP) {
+  const lines = text.split("\n");
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!/^\s*```/.test(lines[i])) { out.push(lines[i]); continue; }
+    let j = i + 1;
+    while (j < lines.length && !/^\s*```\s*$/.test(lines[j])) j++;
+    const body = lines.slice(i + 1, j);
+    if (j >= lines.length || body.length < keep.minLines) { out.push(...lines.slice(i, j + 1)); i = j; continue; }
+    const head = Math.max(1, keep.head), tail = Math.max(1, keep.tail);
+    const removed = body.length - head - tail;
+    if (removed <= 0) { out.push(...lines.slice(i, j + 1)); i = j; continue; }
+    out.push(lines[i], ...body.slice(0, head),
+      `[… ${removed} lines trimmed by --pack (#155) — this bundle keeps the command and the result lines; the full output is in the file on disk, read it only if you doubt a line here …]`,
+      ...body.slice(body.length - tail));
+    i = j;
+  }
+  return out.join("\n");
+}
+
 // Pure over its inputs so --self-check can assert the adversary's unfiltered view.
 export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, handoff = "", git = null, scope = [], contract = "", sliceOf = {} }) {
   const sections = (t, want) => t.split(/^(?=## )/m).filter((s) => want.some((n) => s.startsWith(`## ${n}.`))).join("");
+  // The evidence artifact is named by config, not guessed from the filename.
+  const evidenceFile = GATE4_ARTIFACTS.evidence;
   const rules = [
     `# Pack: ${stage} · role ${role} · attempt ${attempt}`,
     "Everything the preamble told you to read is below — do not open these files again.",
@@ -181,7 +216,14 @@ export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, hand
   ].join("\n");
   const newest = (t) => { const u = t.split(UPDATE_HEADING); return u.length > 1 ? "## Update — " + u.at(-1) : t; };
   const prose = [
-    ...Object.entries(artifacts).map(([f, t]) => `\n## ⟪${f}⟫${attempt > 1 && t.split(UPDATE_HEADING).length > 1 ? " (newest update block only — earlier rounds are distilled in the handoff)" : ""}\n${attempt > 1 ? newest(t) : t}`),
+    ...Object.entries(artifacts).map(([f, t]) => {
+      const newestOnly = attempt > 1 && t.split(UPDATE_HEADING).length > 1;
+      const body = newestOnly ? newest(t) : t;
+      const note = newestOnly ? " (newest update block only — earlier rounds are distilled in the handoff)" : "";
+      // #155: only the evidence log is trimmed; every other artifact is verbatim.
+      const packed = f === evidenceFile ? trimEvidenceLog(body) : body;
+      return `\n## ⟪${f}⟫${note}\n${packed}`;
+    }),
     ...(handoff ? ["\n## ⟪last handoff⟫", handoff] : []),
   ].join("\n");
   let machine = "";
@@ -207,7 +249,6 @@ export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, hand
 // ── self-check: moved here with the logic it tests ──────────────────
 export async function selfCheck({ assert }) {
   const { TASKS_DIR } = await import("./config.mjs");
-  const { scopeFiles } = await import("./scope.mjs");
   const { keyFrom, protectionVerdict } = await import("./telemetry.mjs");
   const sample = CFG.evidenceSampleCommand;
   // adversaryDefects: verdict + own run + the side-by-side table whose third
@@ -303,6 +344,24 @@ export async function selfCheck({ assert }) {
     for (const r of AC_REACHED) assert.ok(stageContract(r.fromStage ? STAGE_ORDER[STAGE_ORDER.indexOf(r.fromStage) - 1] : "implementation").includes(`${r.doc}\`: every declared AC`), `acTrace.reachedIn ${r.doc} reaches the contract of the stage writing it`);
     assert.ok(stageContract("implementation").includes(EVIDENCE_RE.source), "evidenceCommandPattern reaches the implementation contract");
     assert.ok(stageContract("adversarial_review").includes(GATE4_ARTIFACTS.adversarial), "09 reaches the adversary contract");
+  }
+
+  // #155: an evidence LOG is packed head+tail; every other artifact stays verbatim.
+  {
+    const long = (n) => Array.from({ length: n }, (_, i) => `ok ${i} - test ${i}`).join("\n");
+    const big = `## Command output\n\n\`\`\`\n$ npm run test\n${long(200)}\nTests 200 passed (200)\n\`\`\`\n`;
+    const small = "```\n$ npm run test\nTests 4 passed (4)\n```\n";
+    assert.equal(trimEvidenceLog(small), small, "a fence under the threshold is byte-for-byte unchanged");
+    assert.equal(trimEvidenceLog("no fences here"), "no fences here", "a file with no fence is untouched");
+    const cut = trimEvidenceLog(big);
+    assert.ok(cut.length < big.length / 2, "the log fence is cut, not nudged");
+    assert.match(cut, /\$ npm run test/, "the command line survives — it is what the reader matches against ProjectRules §7");
+    assert.match(cut, /Tests 200 passed \(200\)/, "the result lines survive — they are the claim 08 makes");
+    assert.match(cut, /\[… 162 lines trimmed by --pack \(#155\)/, "the trim says how many lines it removed");
+    assert.match(cut, /^```$/m, "the closing fence survives, so the markdown still parses");
+    const keep = (f, t) => packParts({ stage: "adversarial_review", role: "adversary", docs: { instructions: "", shared: "", roleFile: "r.md", role: "" }, artifacts: { [f]: t } }).prose;
+    assert.ok(!keep(GATE4_ARTIFACTS.evidence, big).includes("ok 100 - test 100"), "the evidence file's middle is not in the bundle");
+    assert.ok(keep("01-FSD.md", big).includes("ok 100 - test 100"), "only the evidence artifact is trimmed — 01 keeps every line");
   }
 
   // packParts / scopeFiles (#66): R3b — the adversary's view is unfiltered.
