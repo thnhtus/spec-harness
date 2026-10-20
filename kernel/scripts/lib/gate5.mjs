@@ -217,7 +217,7 @@ export function packParts({ stage, role, attempt = 1, docs, artifacts = {}, hand
   const newest = (t) => { const u = t.split(UPDATE_HEADING); return u.length > 1 ? "## Update — " + u.at(-1) : t; };
   const prose = [
     ...Object.entries(artifacts).map(([f, t]) => {
-      const newestOnly = attempt > 1 && t.split(UPDATE_HEADING).length > 1;
+      const newestOnly = (attempt > 1 || CFG.packTrim === true) && t.split(UPDATE_HEADING).length > 1;
       const body = newestOnly ? newest(t) : t;
       const note = newestOnly ? " (newest update block only — earlier rounds are distilled in the handoff)" : "";
       // #155: only the evidence log is trimmed; every other artifact is verbatim.

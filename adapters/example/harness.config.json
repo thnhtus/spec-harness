@@ -19,26 +19,84 @@
   "_models": "Per CLI: { \"<cli>\": { cheap|mid|strong: { model, effort? } } } — effort ∈ low/medium/high, rendered as `effort:` (Claude) / `model_reasoning_effort` (Codex) only. install.mjs renders each role's base tier (normal column of baseTier) into that CLI's role files; `--tier <role> <complexity> [attempt] --cli <cli>` resolves a dispatch. No key for a CLI = it routes nothing (session model). Model names live HERE only — the kernel never names one (vendorModelTokens). Add your CLI's key; claude's aliases below are Claude Code's own. Optional sliceBytes per entry (#77): that model's implementation byte budget, measured with `install.mjs --bench --stage implementation --unsliced --find-slice-bytes`; absent = top-level sliceBytes. No models.codex shipped (#96): the only measurement (#95, 448000) went through a proxy alias that does not exist on a direct OpenAI login. Add yours with your real model name, then measure.",
   "models": {
     "claude": {
-      "cheap": { "model": "haiku" },
-      "mid": { "model": "sonnet", "sliceBytes": 64000 },
-      "strong": { "model": "opus" }
+      "cheap": {
+        "model": "haiku"
+      },
+      "mid": {
+        "model": "sonnet",
+        "sliceBytes": 64000
+      },
+      "strong": {
+        "model": "opus"
+      }
     }
   },
   "_coordinatorTier": "The /start-task coordinator's tier. One value, not a baseTier row: its model is fixed when the session opens, before complexity exists. Rendered only into Claude's command frontmatter (the only CLI with a per-command model, current turn only). cheap was measured on a real run: it failed bootstrap and cost a retry.",
   "coordinatorTier": "mid",
   "_vendorModelTokens": "install --self-test fails when one of these appears in commands/ agents/ kernel/ outside a fence marked <!-- example -->.",
-  "vendorModelTokens": ["haiku", "sonnet", "opus", "gpt-", "gemini-", "composer-"],
+  "vendorModelTokens": [
+    "haiku",
+    "sonnet",
+    "opus",
+    "gpt-",
+    "gemini-",
+    "composer-"
+  ],
   "_repoCommandTokens": "#79 R4: install --self-test fails when one of these appears in skills/ agents/ commands/ kernel/docs/ outside a fence marked <!-- example -->. They are one repo's commands/paths; a shipped skill names ProjectRules §2/§3/§7 instead.",
-  "repoCommandTokens": ["E-TICKET", "VITE_", "test:scope", "test:run", "test:e2e", "tsc -b", "yarn build", "npx vite", "origin/develop", "apiClient", "react-query", "normalizeErrorHelper", "MR_DEV", "app.clickup.com/t/", "vitest"],
+  "repoCommandTokens": [
+    "E-TICKET",
+    "VITE_",
+    "test:scope",
+    "test:run",
+    "test:e2e",
+    "tsc -b",
+    "yarn build",
+    "npx vite",
+    "origin/develop",
+    "apiClient",
+    "react-query",
+    "normalizeErrorHelper",
+    "MR_DEV",
+    "app.clickup.com/t/",
+    "vitest"
+  ],
   "_baseTier": "Agents.md §5.3, as data. role -> [trivial, normal, high]. Was prose in three files (Agents.md, vi/Agents.md, start-task.md) that no check ever read — the same shape of drift docEnums was created to end. `scripts/validate-tasks.mjs --tier <role> <complexity> [attempt] --cli <cli>` resolves it, applying the §5.3.1 cascade.",
   "baseTier": {
-    "orchestrator": ["cheap", "cheap", "mid"],
-    "fsd-writer": ["cheap", "mid", "mid"],
-    "fsd-reviewer": ["mid", "mid", "strong"],
-    "technical-planner": ["mid", "mid", "strong"],
-    "implementer": ["mid", "mid", "strong"],
-    "fixer": ["mid", "mid", "strong"],
-    "adversary": ["mid", "mid", "strong"]
+    "orchestrator": [
+      "cheap",
+      "cheap",
+      "mid"
+    ],
+    "fsd-writer": [
+      "cheap",
+      "mid",
+      "mid"
+    ],
+    "fsd-reviewer": [
+      "mid",
+      "mid",
+      "strong"
+    ],
+    "technical-planner": [
+      "mid",
+      "mid",
+      "strong"
+    ],
+    "implementer": [
+      "mid",
+      "mid",
+      "strong"
+    ],
+    "fixer": [
+      "mid",
+      "mid",
+      "strong"
+    ],
+    "adversary": [
+      "mid",
+      "mid",
+      "strong"
+    ]
   },
   "repos": [
     {
@@ -116,7 +174,13 @@
   },
   "_acTrace": "reachedIn[].cell = \"first\": AC phải đứng ở ô đầu một dòng bảng (dòng coverage riêng của nó), không chỉ xuất hiện ở ô nào đó. Bỏ key = ô nào cũng tính (03 để AC ở cột Related AC).",
   "_packCap": "--pack <task> <stage>: byte cap on the rules+prose part of a dispatch bundle (exit 1 over it). packWarn: warning cap on the git-output part. No default — a missing key exits 2.",
-  "packCap": { "fsd_write": 60000, "fsd_review": 60000, "technical_plan": 60000, "implementation": 60000, "adversarial_review": 60000 },
+  "packCap": {
+    "fsd_write": 60000,
+    "fsd_review": 60000,
+    "technical_plan": 60000,
+    "implementation": 60000,
+    "adversarial_review": 60000
+  },
   "packWarn": 20000,
   "_sliceBytes": "Fallback byte budget for a model with no models.<cli>.<tier>.sliceBytes of its own. 03 Files to change whose paths already hold more than the dispatching model's budget (new files = 0) must give every row a Slice (S1, S2, …), no slice over it; `--advance implementation --cli <cli>` measures it once, before the first dispatch, and exits 1 (nothing written) naming the key the budget came from. Measure your model with `node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --agent …` and paste the number next to its model name. 64000 = claude/sonnet measured in #76 (64 KB → peak 132k/135k, 88 KB → auto-compact 1/2). No default — a missing key exits 2.",
   "sliceBytes": 64000,
@@ -139,19 +203,45 @@
   },
   "_evidenceMode": "BẮT BUỘC khai, không có mặc định. \"attested\" = Gate 4/5 đòi evidence sinh bởi scripts/run-evidence.mjs (đọc exitCode thật thay vì đọc chữ \"passed\"). \"legacy\" = evidence dán tay vẫn qua — chỉ dùng khi di trú một repo đã có evidence viết tay, project mới thì đừng.",
   "_fsdModal": "Từ khóa modal làm một dòng bảng trong §4 thành requirement (IEEE: \"The system shall …\"). Phải khai, không có mặc định: prose theo `docLanguage`, nên hardcode \"shall\" sẽ làm Gate 1 luôn đỏ với team không nói tiếng Anh. Khớp không phân biệt hoa thường.",
-  "fsdModal": ["shall", "phải"],
+  "fsdModal": [
+    "shall",
+    "phải"
+  ],
   "_docLanguage": "Ngôn ngữ VĂN XUÔI của task doc (01/02/03/06/09, handoff). ID kỹ thuật, ENUM, đường dẫn, lệnh, output luôn giữ nguyên gốc bất kể giá trị này. Kernel không giả định — một team nói tiếng Anh đặt \"English\".",
   "docLanguage": "Tiếng Việt",
   "_docEnums": "ENUM của các bảng markdown trong 02-FSD-Review. task.agent.json được JSON Schema canh; bảng doc thì không — giá trị hợp lệ từng chỉ nằm trong prose rồi bị chép tay vào regex validator, nên hai bên trôi lệch. Nay validator + template + docs đều đọc từ đây; sửa danh sách thì preflight bắt template phải cập nhật theo. `blocksOn`/`unresolved`: cặp giá trị làm Gate 2 đỏ.",
   "docEnums": {
     "question": {
-      "type": ["blocking", "non-blocking"],
-      "status": ["open", "answered", "deferred"],
+      "type": [
+        "blocking",
+        "non-blocking"
+      ],
+      "status": [
+        "open",
+        "answered",
+        "deferred"
+      ],
       "blocksOn": "blocking",
       "unresolved": "open"
     },
-    "ac": { "status": ["confirmed", "assumed", "open"] },
-    "risk": { "type": ["tech", "business"], "severity": ["high", "medium", "low"] }
+    "ac": {
+      "status": [
+        "confirmed",
+        "assumed",
+        "open"
+      ]
+    },
+    "risk": {
+      "type": [
+        "tech",
+        "business"
+      ],
+      "severity": [
+        "high",
+        "medium",
+        "low"
+      ]
+    }
   },
   "evidenceMode": "attested",
   "evidenceCommandPattern": "npm run (test:scope|test:run|test:all|test:e2e:run|test:coverage|lint|build)|npx (vitest run|tsc -b|tsc --noEmit|eslint)",
@@ -168,11 +258,19 @@
     "statusOnReview": ""
   },
   "_budget": "#121: maxTokensPerTask = fresh input + output summed from telemetry; --advance refuses a dispatch at/over it (0 = off). Override one dispatch with --accept-over-budget \"<reason>\".",
-  "budget": { "maxTokensPerTask": 0 },
+  "budget": {
+    "maxTokensPerTask": 0
+  },
   "retryBudget": 4,
   "splitEffort": 9,
   "_protectedBranches": "ProjectRules §3 as data: anchored regexes for branches --bootstrap refuses to start a task on. No default — a missing key exits 2.",
-  "protectedBranches": ["main", "master", "develop", "staging", "release/.*"],
+  "protectedBranches": [
+    "main",
+    "master",
+    "develop",
+    "staging",
+    "release/.*"
+  ],
   "roleStage": {
     "orchestrator": "bootstrap",
     "fsd-writer": "fsd_write",
@@ -187,6 +285,10 @@
     "09-Adversarial-Review.md": 400
   },
   "_git": "#165: git.push = \"ask\" (default, also when the key is absent) pauses before every `git push` on every CLI: permissions.ask (Claude), .codex/rules prompt (Codex), the ask verdict of --guard (others). \"allow\" drops that pause — for a team that already authorises pushes up front. Re-run the installer after changing it (Codex rules are generated). Nothing else is configurable here: reset --hard / stash / clean / restore / checkout -- / .env stay denied, because they destroy work git cannot give back.",
-  "git": { "push": "ask" },
-  "_tracker": "writeBack: what the coordinator does on the tracker when the task reaches `reviewing`. `off` = report only (default). `comment` = post one comment with the doc path and evidence. `status` = also move the ticket to `statusOnReview`. The harness does not call a vendor API: it asks the `tracker` MCP server, so whatever the team already authenticated is what gets used."
+  "git": {
+    "push": "ask"
+  },
+  "_tracker": "writeBack: what the coordinator does on the tracker when the task reaches `reviewing`. `off` = report only (default). `comment` = post one comment with the doc path and evidence. `status` = also move the ticket to `statusOnReview`. The harness does not call a vendor API: it asks the `tracker` MCP server, so whatever the team already authenticated is what gets used.",
+  "formatRepair": false,
+  "packTrim": false
 }
