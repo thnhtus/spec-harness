@@ -186,12 +186,29 @@ export const FINGERPRINT_SINCE = "2026-10-19";
 // short-circuits in CI (a PR is checked out as a merge, so its tree legitimately
 // differs), and an assert written against treeCtx() therefore passes on a laptop
 // and throws in CI. The self-check asserts THIS, and it is the part that decides.
-export function treeCtxPolicy(status) {
+function shippedSignal(status, outcome) {
+  if (status === "done") return true;
+  if (outcome && typeof outcome === "object" && outcome.closedAt) return true;
+  if (typeof outcome === "string" && outcome) return true;
+  return false;
+}
+
+// Accept either (status, outcome) or a task-shaped object (#168): a task is
+// "shipped" when status === "done" OR outcome.closedAt is set, even while it
+// still sits at status "reviewing".
+export function treeCtxPolicy(statusOrTask, outcome) {
+  let status = statusOrTask;
+  let oc = outcome;
+  if (statusOrTask && typeof statusOrTask === "object") {
+    status = statusOrTask.status;
+    oc = statusOrTask.outcome ?? statusOrTask;
+  }
+  if (shippedSignal(status, oc)) return {};
   return status === "reviewing" ? { requireWorktree: true, since: FINGERPRINT_SINCE } : {};
 }
 
-export function treeCtx(status) {
-  const policy = treeCtxPolicy(status);
+export function treeCtx(statusOrTask, outcome) {
+  const policy = treeCtxPolicy(statusOrTask, outcome);
   if (!Object.keys(policy).length || process.env.CI || process.env.GITHUB_ACTIONS) return {};
   return { ...policy, current: currentWorktreeFingerprint(REPO_ROOT) };
 }

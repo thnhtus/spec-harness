@@ -55,18 +55,19 @@ export function planSlices(plan = "", cap = Infinity, size = null) {
   const head = rows[0] ?? [], col = head.findIndex((c) => /^slice$/i.test(c));
   const body = rows.slice(1).filter((r) => !r.every((c) => /^:?-+:?$/.test(c)) && /`[^`]+`/.test(r[0] ?? ""));
   const errors = [], slices = {}, files = {};
+  const NO_SLICE = new Set(["", "-", "n/a", "na", "none", "no slice", "no-slice"]);
   for (const r of body) {
-    const s = col < 0 ? "" : r[col] ?? "";
-    if (s && !/^S\d+$/.test(s)) errors.push(`03 Files to change: Slice "${s}" for ${r[0]} is not S<n>`);
-    if (/^S\d+$/.test(s)) { (slices[s] ??= []).push(r[0]); (files[s] ??= []).push(...[...r[0].matchAll(/`([^`]+)`/g)].map((m) => m[1])); }
+    const s = (col < 0 ? "" : r[col] ?? "").trim().toLowerCase();
+    if (s && !NO_SLICE.has(s) && !/^s\d+$/.test(s)) errors.push(`03 Files to change: Slice "${r[col]}" for ${r[0]} is not S<n> — use S1, S2, … or remove the Slice column if the task is not sliced (#167)`);
+    if (/^s\d+$/i.test(s)) { const S = s.toUpperCase(); (slices[S] ??= []).push(r[0]); (files[S] ??= []).push(...[...r[0].matchAll(/`([^`]+)`/g)].map((m) => m[1])); }
   }
   const bytes = (r) => [...(r[0] ?? "").matchAll(/`([^`]+)`/g)].reduce((n, m) => n + size(m[1]), 0);
   if (size) {
     const total = body.reduce((n, r) => n + bytes(r), 0);
-    if (total > cap && (col < 0 || body.some((r) => !/^S\d+$/.test(r[col] ?? ""))))
+    if (total > cap && (col < 0 || body.some((r) => !/^S\d+$/i.test((r[col] ?? "").trim()))))
       errors.push(`03 Files to change: existing files hold ${total} B (> sliceBytes ${cap}) — every row needs a Slice (S1, S2, …) so no implementer dispatch reads them all`);
     for (const x of Object.keys(slices)) {
-      const b = body.filter((r) => r[col] === x).reduce((n, r) => n + bytes(r), 0);
+      const b = body.filter((r) => (r[col] ?? "").trim().toUpperCase() === x).reduce((n, r) => n + bytes(r), 0);
       if (b > cap) errors.push(`03 slice ${x} holds ${b} B of existing files (> sliceBytes ${cap}) — split it`);
     }
   }

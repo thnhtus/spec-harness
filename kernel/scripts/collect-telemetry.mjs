@@ -169,6 +169,52 @@ function walk(dir, acc = []) {
   return acc;
 }
 
+export function piEntries(text) {
+  const out = []; let cwd;
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let e; try { e = JSON.parse(line); } catch { continue; }
+    if (e?.type === "session") { cwd = e?.cwd; continue; }
+    if (e?.type !== "message") continue;
+    const m = e.message;
+    if (m?.role !== "toolResult" || m?.toolName !== "subagent") continue;
+    const ts = m.timestamp || e.timestamp;
+    const res = m.details?.results;
+    if (!Array.isArray(res)) continue;
+    for (const r of res) {
+      const u = r?.usage;
+      if (!u || typeof u !== "object") continue;
+      const known = "input" in u || "output" in u || "cacheRead" in u;
+      const usage = known
+        ? { input_tokens: u.input ?? 0, cache_read_input_tokens: u.cacheRead ?? 0, output_tokens: u.output ?? 0 }
+        : u;
+      out.push({ timestamp: ts, cwd, gitBranch: undefined, message: { usage } });
+    }
+  }
+  return out;
+}
+
+function walkPi(dir, acc = []) {
+  for (const f of readdirSync(dir)) {
+    const fp = join(dir, f); let st; try { st = statSync(fp); } catch { continue; }
+    if (st.isDirectory()) walkPi(fp, acc); else if (f.endsWith(".jsonl")) acc.push([fp, st]);
+  }
+  return acc;
+}
+
+function loadPi(since) {
+  const root = join(homedir(), ".pi", "agent", "sessions");
+  if (!existsSync(root)) return null;
+  const out = []; let read = 0, skipped = 0;
+  for (const [fp, st] of walkPi(root)) {
+    if (skipByMtime(st.mtimeMs, since)) { skipped++; continue; }
+    read++;
+    try { out.push(...piEntries(readFileSync(fp, "utf8"))); } catch {}
+  }
+  out.stats = { read, skipped };
+  return out;
+}
+
 function loadCodex(since) {
   const root = join(process.env.CODEX_HOME || join(homedir(), ".codex"), "sessions");
   if (!existsSync(root)) return null;
@@ -183,10 +229,10 @@ function loadCodex(since) {
 }
 
 function loadEntries(root = LOG_ROOT, since = 0) {
-  const a = loadClaude(root, since), b = loadCodex(since);
-  if (a === null && b === null) return null;
-  const out = [...(a ?? []), ...(b ?? [])];
-  out.stats = { read: (a?.stats.read ?? 0) + (b?.stats.read ?? 0), skipped: (a?.stats.skipped ?? 0) + (b?.stats.skipped ?? 0) };
+  const a = loadClaude(root, since), b = loadCodex(since), c = loadPi(since);
+  if (a === null && b === null && c === null) return null;
+  const out = [...(a ?? []), ...(b ?? []), ...(c ?? [])];
+  out.stats = { read: (a?.stats.read ?? 0) + (b?.stats.read ?? 0) + (c?.stats.read ?? 0), skipped: (a?.stats.skipped ?? 0) + (b?.stats.skipped ?? 0) + (c?.stats.skipped ?? 0) };
   return out;
 }
 

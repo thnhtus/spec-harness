@@ -44,6 +44,7 @@ const KEY = process.env.TYPESAFE_API_KEY;
 // a PASS. This one only guards the FAIL side, where the lowest correct FAIL
 // confidence measured was 0.84.
 const MIN_CONFIDENCE = Number(process.env.GATE5_PREFILTER_MIN_CONFIDENCE ?? 0.9);
+const CODE_CHECKS = process.env.GATE5_PREFILTER_CODE_CHECKS === "1";
 const MAX_STATE_BYTES = 24000; // model context is 32k tokens; stay well under
 
 const skip = (why) => { console.error(`gate5-prefilter: skipped — ${why}`); process.exit(0); };
@@ -159,12 +160,31 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   const base = process.argv[3] ?? "main"; // the task's target branch (00-Metadata), not always main
   const stage = STAGES[process.argv[4] ?? "adversarial_review"];
   if (!stage) skip(`no pre-filter for stage "${process.argv[4]}"`);
+  if (CODE_CHECKS) {
+    // #173: tests_fail_now is answered by running the test command, not by the
+    // model. Fail-open on crash/timeout.
+    let code = 0, out = "";
+    try { out = execFileSync("npm", ["run", "--silent", "test:scope"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    catch (e) {
+      if (typeof e?.status !== "number") skip(`test command crashed/timeout: ${e?.message ?? e}`);
+      code = e.status;
+      out = e.stdout ?? "";
+    }
+    if (code !== 0) {
+      console.error(`gate5-prefilter: FAIL — tests_fail_now (exit ${code})`);
+      console.error("This is a cheap pre-read, not a gate record: the real role still owns the artifact.");
+      process.exit(78);
+    }
+  }
   if (!KEY) skip("no TYPESAFE_API_KEY — the real role runs as usual");
+  const questions = CODE_CHECKS
+    ? Object.fromEntries(Object.entries(stage.questions).filter(([k]) => k !== "out_of_scope"))
+    : stage.questions;
   const state = stage.state(task, base);
   if (Buffer.byteLength(state) > MAX_STATE_BYTES) skip(`state ${Buffer.byteLength(state)}B over ${MAX_STATE_BYTES}B`);
 
   let r;
-  try { r = await decide(state, { questions: stage.questions }); } catch (e) { skip(`decision call failed: ${e.message}`); }
+  try { r = await decide(state, { questions }); } catch (e) { skip(`decision call failed: ${e.message}`); }
   if (r.skip) skip(r.skip);
   if (r.choice !== "FAIL") skip(`verdict ${r.choice} is not actionable on its own — a PASS here has been measured wrong at confidence 0.98`);
   if (r.confidence < MIN_CONFIDENCE) skip(`FAIL at confidence ${r.confidence.toFixed(2)} < ${MIN_CONFIDENCE}`);
