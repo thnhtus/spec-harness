@@ -52,6 +52,10 @@ An agent run from an already-open terminal needs a **new shell** (or
 
 Nothing to wire: `install` ships it as `scripts/gate5-prefilter.mjs`, and
 `validate-tasks.mjs --advance <task> <stage>` runs it on its own (#109, #113).
+That file belongs to the **project**, not the kernel: the kernel only spawns it and reads
+exit 78, so the installer writes it once and then leaves it alone (#162). Edit it to fit
+your repo's layout and an upgrade keeps your version; to take a newer adapter, delete
+`scripts/gate5-prefilter.mjs` and re-run the installer.
 It has an opinion at `technical_plan`, `implementation`, `adversarial_review`;
 any other stage exits 0. A coordinator that skips prose still cannot skip `--advance`.
 
