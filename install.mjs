@@ -142,8 +142,7 @@ function wouldClobber(P) {
   for (const f of KERNEL_LIB()) chk(f, join(P, "scripts/lib", f.split("/").pop()));
   chk(join(SRC, "hooks/pre-commit"), join(P, "hooks/pre-commit"));
   chk(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
-  chk(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
-  return out;
+  return out; // #162: scripts/gate5-prefilter.mjs is the project's hook (keep), so never listed here
 }
 
 // #99: --yes skips the confirmation that lists `wouldClobber()` and overwrites
@@ -594,9 +593,11 @@ function installInto(P, clis = [], coOwner = null) {
   // user — phần user chỉnh là khối `hooks` trong settings.json (giữ bằng keep).
   over(join(SRC, "adapters/claude-code/prompt-submit"), join(P, "hooks/prompt-submit"));
   try { chmodSync(join(P, "hooks/prompt-submit"), 0o755); } catch {}
-  // #108: optional Gate 5 pre-filter. Shipped like the kernel scripts so
-  // /start-task can call it, but inert without TYPESAFE_API_KEY (exit 0).
-  over(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
+  // #108: optional Gate 5 pre-filter, inert without TYPESAFE_API_KEY (exit 0). #162: it is the
+  // project's hook, not kernel — the kernel only spawns it and reads exit 78 — so a project that
+  // already has its own (postcite: 195 lines, exports its own helpers) keeps it. ponytail: a kept
+  // copy never picks up adapter updates; delete the file and re-run to refresh.
+  keep(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
   // skill fsd-writer gọi ở Gate 1 — thiếu nó thì stage fsd_write gọi hụt
   cpSync(join(SRC, "skills"), join(P, ".claude/skills"), { recursive: true });
 
@@ -1968,6 +1969,14 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
     fail(`wouldClobber lệch over(): [${pre}] vs [${rA.clobbered}]`);
   if (!rA.clobbered.includes("docs/README.md")) fail("đè file project mà không báo");
   if (read(join(A, "docs/README.md")).includes("project tôi")) fail("kernel docs đáng lẽ phải đè");
+  // #162: gate5-prefilter là hook của project, không phải kernel: lần đầu được cài, sau đó giữ nguyên
+  if (!existsSync(join(A, "scripts/gate5-prefilter.mjs"))) fail("#162: lần cài đầu phải ship prefilter");
+  writeFileSync(join(A, "scripts/gate5-prefilter.mjs"), "// PROJECT OWN\nexport const HEADINGS = 1;\n");
+  if (wouldClobber(A).some((f) => f.includes("gate5-prefilter"))) fail("#162: wouldClobber báo đè prefilter của project");
+  const rK = installInto(A);
+  if (!read(join(A, "scripts/gate5-prefilter.mjs")).includes("PROJECT OWN")) fail("#162: installer đè prefilter của project");
+  if (rK.clobbered.some((f) => f.includes("gate5-prefilter"))) fail("#162: báo đè prefilter dù đã giữ");
+  if (!rK.kept.some((f) => f.endsWith("scripts/gate5-prefilter.mjs"))) fail("#162: prefilter không nằm trong danh sách giữ nguyên");
   // cài lại: nội dung đã giống nhau → không được báo nhầm
   if (installInto(A).clobbered.length) fail("cài lại báo đè dù nội dung không đổi");
   if (existsSync(join(dirname(A), "CLAUDE.md"))) fail("bố cục A không được ghi CLAUDE.md ra thư mục cha");
