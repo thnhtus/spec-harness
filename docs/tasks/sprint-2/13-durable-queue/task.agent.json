@@ -1,0 +1,31 @@
+{
+  "taskId": "13",
+  "title": "PAO-003-D Durable queue",
+  "status": "in_progress",
+  "currentStage": "implementation",
+  "agents": {
+    "technical-planner": {
+      "status": "completed"
+    },
+    "fsd-reviewer": {
+      "status": "completed"
+    },
+    "implementer": {
+      "status": "in_progress"
+    },
+    "qc-tester": {
+      "status": "pending"
+    },
+    "adversary": {
+      "status": "pending"
+    }
+  },
+  "telemetry": {
+    "fsd_review": [
+      {
+        "attempt": 1,
+        "startedAt": "2026-10-20T04:40:00Z"
+      }
+    ]
+  }
+}

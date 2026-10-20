@@ -498,6 +498,7 @@ if (args.has("--pack")) {
   const role = roleOf(stage);
   // No pack for bootstrap: before it there is no task.agent.json to pack from.
   if (!role) usage(`"${stage}" is not a dispatched stage`);
+  if (args.has("--repair")) { process.stdout.write((stageContract(stage) ?? "") + "\n"); process.exit(0); }
   const D = join(REPO_ROOT, "docs"), rd = (p) => readFileSync(p, "utf8");
   const roleFile = readdirSync(join(D, "agents")).find((f) => f.endsWith(".md") && new RegExp("— role `" + role + "`").test(rd(join(D, "agents", f))));
   if (!roleFile) usage(`no docs/agents/*.md declares role \`${role}\``);
@@ -701,6 +702,8 @@ if (args.has("--advance")) {
   if (d.exit === 2) { console.error(`✖ --advance: ${d.why}`); usage(); }
   if (d.exit === 1) { if (v.stdout.trim()) process.stdout.write(v.stdout); console.error(`✖ --advance ${stage}: ${d.why}`); process.exit(1); }
   if (isBackRoute) console.error(`↩ --advance ${stage}: back route — the task is reopened (status=in_progress); it cannot reach reviewing again until the validator is green`);
+  const repairMode = CFG.formatRepair === true && (d.attempt ?? 0) > 1;
+  if (repairMode) console.error("repair: format-only");
   // #121: budget cap — first, before the pre-filter spends a paid call. Only a dispatch can overspend; a going-back re-run (no attempt) is already counted.
   const bud = d.attempt ? budgetDefect(data.telemetry, CFG.budget?.maxTokensPerTask) : null;
   const accept = argv.includes("--accept-over-budget") ? (argv[argv.indexOf("--accept-over-budget") + 1] ?? "") : null;
@@ -806,7 +809,7 @@ if (args.has("--advance")) {
     // Sliced: attempts.implementation = the worst slice's run count, so rework
     // readers (2c, --calibrate) see retries, not the planned one-run-per-slice.
     (data.attempts ??= {})[stage] = slice ? Math.max(data.attempts[stage] ?? 0, d.attempt) : d.attempt;
-    r = resolveTier(d.role, data.taskComplexity, d.attempt, CFG, cli);
+    r = resolveTier(d.role, data.taskComplexity, repairMode ? 1 : d.attempt, CFG, cli);
     if (r.error) { console.error(`✖ --advance: ${r.error}`); process.exit(2); }
     const scopeSnap = slice ? sliceSnapshot(repoDir) : null;
     if (slice && !scopeSnap) { console.error(`✖ --advance: cannot read git in ${repoDir} — a slice needs a scope snapshot`); process.exit(1); }
@@ -1776,7 +1779,7 @@ for (const { sprint, task, path } of folders) {
     const ev = join(path, GATE4_ARTIFACTS.evidence);
     if (existsSync(ev)) {
       const sink = templateRowsBlock(data) ? errors : warnings;
-      for (const d of attestationDefects(readFileSync(ev, "utf8"), GATE4_ARTIFACTS.evidence, EVIDENCE_MODE, treeCtx(data.status))) sink.push(d);
+      for (const d of attestationDefects(readFileSync(ev, "utf8"), GATE4_ARTIFACTS.evidence, EVIDENCE_MODE, treeCtx(data.status, data.outcome))) sink.push(d);
     }
   }
 
@@ -1788,7 +1791,7 @@ for (const { sprint, task, path } of folders) {
     else if (!hasRealEvidence(ev))
       errors.push(`${evName} has no real command+result evidence (Gate 4 honesty)`);
     if (existsSync(ev))
-      for (const d of attestationDefects(readFileSync(ev, "utf8"), evName, EVIDENCE_MODE, treeCtx(data.status))) errors.push(d);
+      for (const d of attestationDefects(readFileSync(ev, "utf8"), evName, EVIDENCE_MODE, treeCtx(data.status, data.outcome))) errors.push(d);
     if (GATE4_ARTIFACTS.notes && !existsSync(join(path, GATE4_ARTIFACTS.notes)))
       warnings.push(`status=${data.status} but ${GATE4_ARTIFACTS.notes} missing`);
     // Gate 5: reviewing means the adversary passed it, so its review must exist.
@@ -1804,7 +1807,7 @@ for (const { sprint, task, path } of folders) {
           errors.push(`${GATE4_ARTIFACTS.adversarial}: ${d}`);
         // Gate 5 RE-RUNS the commands, so it must be attested too — otherwise the
         // adversary can still invent its own output and both gates go blind.
-        for (const d of attestationDefects(advText, GATE4_ARTIFACTS.adversarial, EVIDENCE_MODE, treeCtx(data.status))) errors.push(d);
+        for (const d of attestationDefects(advText, GATE4_ARTIFACTS.adversarial, EVIDENCE_MODE, treeCtx(data.status, data.outcome))) errors.push(d);
       }
     }
   }

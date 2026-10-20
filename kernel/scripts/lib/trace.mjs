@@ -19,6 +19,11 @@ export const FSD_SECTIONS = ["Introduction", "Overall Description", "External In
 // copy cannot satisfy the traceability check by accident.
 export const AC_PLACEHOLDERS = new Set(["AC-ID", "AC-nn", "AC-NN"]);
 
+// Same scaffolding idea as AC_PLACEHOLDERS, for the BA question table: "Q-ID" is
+// the header row and "Q-nn"/"Q-NN" are unfilled placeholders, so an untouched
+// template must not be read as a real question (#167).
+export const Q_PLACEHOLDERS = new Set(["Q-ID", "Q-nn", "Q-NN"]);
+
 
 export function gate1Defects(text, { modal = CFG.fsdModal } = {}) {
   // Fail closed: no configured modal would silently delete the wording rule.

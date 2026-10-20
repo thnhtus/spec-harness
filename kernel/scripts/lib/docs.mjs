@@ -65,14 +65,22 @@ export function rel(p) {
 
 
 // { open: ids blocking the gate, unparsed: ids whose type/status is not an ENUM }
+// Template scaffolding, never a real question: "Q-ID" is the table header and
+// "Q-nn"/"Q-NN" are unfilled placeholders (#167).
+export const Q_PLACEHOLDERS = new Set(["Q-ID", "Q-nn", "Q-NN"]);
+
 export function classifyQuestions(lines) {
   const open = [], unparsed = [];
   for (const l of lines) {
     const m = Q_ROW.exec(l);
     if (!m) continue;
+    // Template scaffolding and the header row are not real questions (#167).
+    if (Q_PLACEHOLDERS.has(m[1])) continue;
+    const cells = l.split("|").map((c) => c.trim());
+    if (cells[3] === "Type" && cells[4] === "Status") continue;
     // An untouched template row (`| Q-01 |  | …`) states nothing -- skipping it
     // is "no data", which is the one case that legitimately stays quiet.
-    if (!l.split("|").map((c) => c.trim())[2]) continue;
+    if (!cells[2]) continue;
     if (!Q_TYPE.test(l) || !Q_STATUS.test(l)) { unparsed.push(m[1]); continue; }
     if (Q_BLOCKS.test(l) && Q_UNRESOLVED.test(l)) open.push(m[1]);
   }
