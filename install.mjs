@@ -598,6 +598,7 @@ function installInto(P, clis = [], coOwner = null) {
   // already has its own (postcite: 195 lines, exports its own helpers) keeps it. ponytail: a kept
   // copy never picks up adapter updates; delete the file and re-run to refresh.
   keep(join(SRC, "adapters/gate5-prefilter/prefilter.mjs"), join(P, "scripts/gate5-prefilter.mjs"));
+  keep(join(SRC, "adapters/budget-gate/budget-gate.mjs"), join(P, "scripts/budget-gate.mjs"));
   // skill fsd-writer gọi ở Gate 1 — thiếu nó thì stage fsd_write gọi hụt
   cpSync(join(SRC, "skills"), join(P, ".claude/skills"), { recursive: true });
 
@@ -1309,6 +1310,8 @@ ev({ type: "result", duration_api_ms: 1, total_cost_usd: 0, num_turns: 1, modelU
   // the project, and must stay fail-open — so its self-check runs from SRC.
   if (spawnSync(process.execPath, [join(SRC, "adapters/gate5-prefilter/self-check.mjs")],
     { encoding: "utf8" }).status !== 0) fail("adapters/gate5-prefilter/self-check.mjs đỏ");
+  if (spawnSync(process.execPath, [join(SRC, "adapters/budget-gate/self-check.mjs")],
+    { encoding: "utf8" }).status !== 0) fail("adapters/budget-gate/self-check.mjs đỏ");
   if (spawnSync(process.execPath, ["scripts/collect-telemetry.mjs", "--self-check"],
       { cwd: T, stdio: "ignore" }).status !== 0) fail("collect-telemetry.mjs thiếu hoặc self-check đỏ");
   if (!existsSync(join(T, ".mcp.json"))) fail("thiếu .mcp.json");
