@@ -1,14 +1,14 @@
 {
-  "date": "2026-10-12",
-  "agent": "claude -p --agent adversary --permission-mode bypassPermissions --strict-mcp-config",
+  "date": "2026-10-21",
+  "agent": "codex exec --dangerously-bypass-approvals-and-sandbox -",
   "passed": 8,
   "total": 8,
   "inputs": {
     "agents/adversary.md": "d98d7dea186644ca",
     "kernel/docs/agents/Adversary.md": "e75fd52f833a4206",
-    "kernel/docs/agents/Adversary-Mutation.md": "ee374ed5486801c9",
+    "kernel/docs/agents/Adversary-Mutation.md": "3f7b69174eb48df2",
     "kernel/docs/agents/SharedRules.md": "4657c96cba67b76b",
-    "kernel/docs/Instructions.md": "818fd2b67c1ace94",
+    "kernel/docs/Instructions.md": "e8dda85b4cc473f9",
     "kernel/eval/adversary/cases.json": "7956bce34e7ec51d",
     "kernel/eval/adversary/feature/src/discount.js": "f929d93e3b67077b",
     "kernel/eval/adversary/feature/test/discount.test.js": "71e429e994b07ac8",
