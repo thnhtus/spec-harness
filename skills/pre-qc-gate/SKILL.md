@@ -153,7 +153,9 @@ An **UNCERTAIN** the user has not answered yet → the result is **UNCERTAIN**, 
 
 ### 7. Evidence — ONE file
 
-`docs/tasks/fixes/preqc-{taskId}-{slug}.md`, prose in `harness.config.json → docLanguage`, real output, no sugar-coating:
+`docs/tasks/fixes/preqc-{taskId}-{slug}/evidence.md`, prose in `harness.config.json → docLanguage`, real output, no sugar-coating:
+
+Create the folder first: `mkdir -p docs/tasks/fixes/preqc-{taskId}-{slug}`.
 
 ```markdown
 # Pre-QC {taskId} — {task name}

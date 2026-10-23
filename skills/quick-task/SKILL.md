@@ -56,7 +56,8 @@ Run **exactly the ProjectRules §7 command set** (scoped test · type-check · l
 each one through the wrapper into the evidence file of step 6:
 
 ```bash
-node scripts/run-evidence.mjs --append docs/tasks/fixes/<taskId>-<slug>.md -- <§7 command>
+mkdir -p docs/tasks/fixes/<taskId>-<slug>
+node scripts/run-evidence.mjs --append docs/tasks/fixes/<taskId>-<slug>/evidence.md -- <§7 command>
 ```
 Non-trivial logic → leave **one** runnable test behind (add it to an existing test
 file for the same feature if there is one; do not stand up a new suite).
@@ -119,18 +120,20 @@ host does **not** carry over to your local port — you still log in with the
 `run-evidence.mjs` like every other check.
 
 ### 6. Evidence file, gate, report
-Evidence goes in `docs/tasks/fixes/{taskId}-{slug}.md` — same file shape as
+Evidence goes in `docs/tasks/fixes/{taskId}-{slug}/evidence.md` — a minimal
+tracking folder for this quick task (one evidence file only), same file shape as
 `fix-bug` §6: a `## Evidence` section holding the `run-evidence.mjs` blocks of
-step 5. Then the gate:
+step 5. Create the folder first (`mkdir -p docs/tasks/fixes/{taskId}-{slug}`);
+there is no `task.agent.json`, no `.agent-memory/`, no FSD. Then the gate:
 
 ```bash
-node scripts/validate-tasks.mjs --lite-check docs/tasks/fixes/{taskId}-{slug}.md   # exit 0 or you are not done
+node scripts/validate-tasks.mjs --lite-check docs/tasks/fixes/{taskId}-{slug}/evidence.md   # exit 0 or you are not done
 ```
 
 Summarize: what you changed, which files, the evidence file path, what is left undone.
 `git commit` / `git push` / changing the tracker status: **only when the user asks**.
 
 ## Do not
-- Do not create a task folder (`docs/tasks/<group>/…`) — only the one `docs/tasks/fixes/` file; no `task.agent.json`, no `.agent-memory/`.
+- Do create a minimal tracking folder `docs/tasks/fixes/{taskId}-{slug}/` with the single `evidence.md` file above. Do **not** create a harness task folder (`docs/tasks/<group>/…`) with `task.agent.json` / `.agent-memory/` / FSD — that is `/start-task`'s job.
 - Do not touch `docs/srs/`, `docs/fsd/`, `docs/api/` (autogen).
 - Do not dispatch subagents — quick means one context.

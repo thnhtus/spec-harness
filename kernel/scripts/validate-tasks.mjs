@@ -397,8 +397,18 @@ if (args.has("--escape-outcome")) {
   // nothing -- reporting a bug must never be harder than hiding one.
   if (result === "clean") {
     const dir = join(TASKS_DIR, "fixes");
-    const file = existsSync(dir) && readdirSync(dir).find((f) => f.startsWith(`${taskId}-`) && f.endsWith(".md"));
-    const d = file ? liteDefects(readFileSync(join(dir, file), "utf8"), treeCtx("reviewing")) : [`no ${relative(REPO_ROOT, dir)}/${taskId}-<slug>.md`];
+    let file = null;
+    if (existsSync(dir)) {
+      for (const entry of readdirSync(dir)) {
+        if (entry.startsWith(`${taskId}-`) && entry.endsWith(".md")) { file = entry; break; }
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory() && entry.startsWith(`${taskId}-`)) {
+          const inner = readdirSync(full).find((f) => f.endsWith(".md"));
+          if (inner) { file = join(entry, inner); break; }
+        }
+      }
+    }
+    const d = file ? liteDefects(readFileSync(join(dir, file), "utf8"), treeCtx("reviewing")) : [`no ${relative(REPO_ROOT, dir)}/${taskId}-<slug>.md (or ${taskId}-<slug>/evidence.md)`];
     if (d.length) {
       console.error(`✖ --escape-outcome ${taskId} clean: the evidence does not pass --lite-check — ${d.join("; ")}`);
       process.exit(2);

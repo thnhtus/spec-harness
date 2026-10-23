@@ -1,6 +1,6 @@
 ---
 name: fix-bug
-description: Use when the user wants a ClickUp bug fixed fast, without the docs/ FE harness — e.g. "fix bug <id>", "fix bug <url>, skip the harness", "debug this ticket then fix it". Reads the ticket, isolates a worktree, reproduces the bug with a failing test, fixes the root cause, verifies, and writes ONE evidence file. No FSD, no SRS, no task folder, no gates, no subagents.
+description: Use when the user wants a ClickUp bug fixed fast, without the docs/ FE harness — e.g. "fix bug <id>", "fix bug <url>, skip the harness", "debug this ticket then fix it". Reads the ticket, isolates a worktree, reproduces the bug with a failing test, fixes the root cause, verifies, and writes ONE evidence file. No FSD, no SRS, no harness task folder, no gates, no subagents. (A minimal tracking folder `docs/tasks/fixes/{taskId}-{slug}/` with one `evidence.md` is still created.)
 ---
 
 # fix-bug — ticket → worktree → repro → fix → evidence
@@ -103,7 +103,8 @@ The ProjectRules §7 command set (scoped test · type-check · lint), each one
 through the wrapper, straight into the evidence file of §6:
 
 ```bash
-node scripts/run-evidence.mjs --append docs/tasks/fixes/{taskId}-{slug}.md -- <§7 command>
+mkdir -p docs/tasks/fixes/{taskId}-{slug}
+node scripts/run-evidence.mjs --append docs/tasks/fixes/{taskId}-{slug}/evidence.md -- <§7 command>
 ```
 
 The whole-repo test command **only if** you touched a shared module. The base
@@ -128,7 +129,7 @@ Smoke ≥ 1 neighbouring flow (test or browser) — bugs tend to breed bugs.
 
 ## 6. Evidence — ONE file
 
-`docs/tasks/fixes/{taskId}-{slug}.md`, prose in `harness.config.json → docLanguage`, short:
+`docs/tasks/fixes/{taskId}-{slug}/evidence.md`, prose in `harness.config.json → docLanguage`, short:
 
 ```markdown
 # {taskId} — {task name}
@@ -159,7 +160,7 @@ What risk is left + how it is reduced (leave empty if none).
 did not run it. Then the gate:
 
 ```bash
-node scripts/validate-tasks.mjs --lite-check docs/tasks/fixes/{taskId}-{slug}.md   # exit 0 or you are not done
+node scripts/validate-tasks.mjs --lite-check docs/tasks/fixes/{taskId}-{slug}/evidence.md   # exit 0 or you are not done
 ```
 
 ## 7. Stop
