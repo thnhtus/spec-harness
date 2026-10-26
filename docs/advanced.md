@@ -191,6 +191,25 @@ Một việc nữa `--preflight` không tự biết (chỉ cảnh báo ở #97, 
 ```bash
 node install.mjs --bench --stage implementation --unsliced --find-slice-bytes --agent '<CLI + model thật của bạn>'
 # dán số ra vào models.<cli>.<tier>.sliceBytes
+
+### Khai báo model cho một CLI mới (setup)
+
+1. Xác định tên model thật của CLI (docs/vendor), không dùng alias.
+2. Thêm vào `harness.config.json`:
+```json
+"models": {
+  "<cli>": {
+    "cheap":  { "model": "<cheap-model>" },
+    "mid":    { "model": "<mid-model>", "sliceBytes": 64000 },
+    "strong": { "model": "<strong-model>" }
+  }
+}
+```
+3. Đo `sliceBytes` cho tier dùng implementation (xem lệnh bench ở trên) và dán số thật.
+4. Chạy `node install.mjs --tier <role> <complexity> --cli <cli>` để verify resolve.
+5. Chạy `node scripts/validate-tasks.mjs --self-check` (hoặc `--preflight`).
+
+Nếu không khai báo: CLI đó chạy trên session model (warning `unroutedClis`), không có cascade/budget riêng.
 ```
 
 `--preflight` chạy `--self-check` cộng thêm những thứ nằm ngoài file config mà self-check không thấy:
